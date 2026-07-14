@@ -1,0 +1,39 @@
+{
+  "name": "travelbuff",
+  "version": "1.0.0",
+  "description": "Self-hosted travel log, planning and trip app",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --use-system-ca server.js",
+    "server": "nodemon --use-system-ca server.js",
+    "client": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "dev": "concurrently \"npm run server\" \"npm run client\""
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dexie": "^4.0.10",
+    "dexie-react-hooks": "^4.0.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.395.0",
+    "multer": "^1.4.5-lts.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sqlite3": "^5.1.7",
+    "tesseract.js": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.2",
+    "vite": "^5.2.11"
+  }
+}
