@@ -1,0 +1,24 @@
+{
+  "short_name": "TravelBuff",
+  "name": "TravelBuff - Travel Planner & Log",
+  "description": "Your ultimate self-hosted companion for logging, planning, and executing trips.",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#121214",
+  "theme_color": "#8b5cf6",
+  "display": "standalone",
+  "orientation": "portrait"
+}
