@@ -46,4 +46,4 @@ COPY --from=frontend-builder /app/dist ./dist
 RUN mkdir -p /data/uploads
 
 # Run server on start
-CMD ["node", "--use-system-ca", "server.js"]
+CMD ["node", "server.js"]
