@@ -745,48 +745,6 @@ export default function TripPlanning({ token }) {
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <h2 style={{ margin: 0 }}>Trip Planner</h2>
-          <div className="desktop-only-flex" style={{ alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '0.8rem', color: !tripModeActive ? '#fff' : 'var(--text-secondary)', fontWeight: 600 }}>Planning</span>
-            <div style={{ display: 'inline-flex', background: 'rgba(255,255,255,0.05)', borderRadius: '20px', padding: '2px', border: '1px solid var(--border-glass)' }}>
-              <button 
-                onClick={() => setTripModeActive(false)}
-                style={{
-                  background: !tripModeActive ? 'var(--accent-primary)' : 'none',
-                  color: !tripModeActive ? '#000' : '#fff',
-                  border: 'none',
-                  padding: '6px 10px',
-                  borderRadius: '18px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all 0.2s'
-                }}
-                title="Planning Mode"
-              >
-                <Edit size={14} />
-              </button>
-              <button 
-                onClick={() => setTripModeActive(true)}
-                style={{
-                  background: tripModeActive ? 'var(--accent-primary)' : 'none',
-                  color: tripModeActive ? '#000' : '#fff',
-                  border: 'none',
-                  padding: '6px 10px',
-                  borderRadius: '18px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all 0.2s'
-                }}
-                title="Trip Mode"
-              >
-                <Map size={14} />
-              </button>
-            </div>
-            <span style={{ fontSize: '0.8rem', color: tripModeActive ? '#fff' : 'var(--text-secondary)', fontWeight: 600 }}>Trip Mode</span>
-          </div>
         </div>
         <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto', padding: '10px' }}>
           <span className="desktop-only-text">Plan New Trip</span>

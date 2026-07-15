@@ -1530,17 +1530,6 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
         </button>
       </div>
 
-      {/* Empty State */}
-      {locations.length === 0 && !showAddForm && (
-        <div className="empty-state">
-          <MapPin size={48} className="empty-state-icon" />
-          <h3>No Locations Yet</h3>
-          <p>Start tracking your travel map by adding your first location or country.</p>
-          <button className="btn btn-primary" onClick={() => setShowAddForm(true)}>
-            Add Location
-          </button>
-        </div>
-      )}
 
       {/* Add Location Overlay Dialog */}
       {showAddForm && (
@@ -1830,6 +1819,18 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
           />
         </div>
       </div>
+
+      {/* Empty State */}
+      {locations.length === 0 && !showAddForm && (
+        <div className="empty-state" style={{ marginBottom: '20px' }}>
+          <MapPin size={48} className="empty-state-icon" />
+          <h3>No Locations Yet</h3>
+          <p>Start tracking your travel map by adding your first location or country.</p>
+          <button className="btn btn-primary" onClick={() => setShowAddForm(true)}>
+            Add Location
+          </button>
+        </div>
+      )}
 
       {/* Grid of Locations */}
       <div className="grid">

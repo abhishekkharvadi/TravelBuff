@@ -25,12 +25,12 @@ RUN apk add --no-cache python3 make g++
 
 # Set production environment variables
 ENV NODE_ENV=production
-ENV PORT=5000
+ENV PORT=5005
 ENV DATABASE_DIR=/data
 ENV UPLOADS_DIR=/data/uploads
 
 # Expose port
-EXPOSE 5000
+EXPOSE 5005
 
 # Copy package configurations and install production dependencies
 COPY package.json ./
@@ -46,4 +46,4 @@ COPY --from=frontend-builder /app/dist ./dist
 RUN mkdir -p /data/uploads
 
 # Run server on start
-CMD ["node", "server.js"]
+CMD ["node", "--use-system-ca", "server.js"]

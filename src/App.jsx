@@ -189,17 +189,19 @@ export default function App() {
             <button
               className={`mode-btn ${activeMode === 'planning' ? 'active' : ''}`}
               onClick={() => setActiveMode('planning')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
               title="Planning"
             >
-              <Edit size={16} className="mobile-only-icon" />
+              <Edit size={16} />
               <span className="desktop-only-text">Planning</span>
             </button>
             <button
               className={`mode-btn ${activeMode === 'trip' ? 'active' : ''}`}
               onClick={() => setActiveMode('trip')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
               title="Trip Mode"
             >
-              <Map size={16} className="mobile-only-icon" />
+              <Map size={16} />
               <span className="desktop-only-text">Trip Mode</span>
             </button>
           </div>
