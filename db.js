@@ -64,6 +64,7 @@ export async function initDatabase() {
       user_id TEXT PRIMARY KEY,
       immich_url TEXT,
       immich_key TEXT,
+      immich_alt_url TEXT,
       owntracks_key TEXT NOT NULL UNIQUE,
       base_currency TEXT DEFAULT 'USD',
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -213,6 +214,7 @@ export async function initDatabase() {
   // Safely add state & country columns if they don't exist in older databases
   await db.run('ALTER TABLE locations ADD COLUMN state TEXT').catch(() => {});
   await db.run('ALTER TABLE locations ADD COLUMN country TEXT').catch(() => {});
+  await db.run('ALTER TABLE user_configs ADD COLUMN immich_alt_url TEXT').catch(() => {});
 
   // Seed custom categories for all existing users
   try {

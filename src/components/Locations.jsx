@@ -68,6 +68,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   // Immich States
   const [immichUrl, setImmichUrl] = useState('');
   const [immichKey, setImmichKey] = useState('');
+  const [immichAltUrl, setImmichAltUrl] = useState('');
   const [isImmichConfigured, setIsImmichConfigured] = useState(false);
   const [allImmichAlbums, setAllImmichAlbums] = useState([]);
   const [albumSearch, setAlbumSearch] = useState('');
@@ -424,6 +425,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
         if (data.config && data.config.immich_url && data.config.immich_key) {
           setImmichUrl(data.config.immich_url);
           setImmichKey(data.config.immich_key);
+          setImmichAltUrl(data.config.immich_alt_url || '');
           setIsImmichConfigured(true);
         } else {
           setIsImmichConfigured(false);
@@ -869,9 +871,38 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                             {t.name}
                           </div>
                         ))}
+                      {tagSearch.trim() && !tags.some(t => t.name.toLowerCase() === tagSearch.trim().toLowerCase()) && (
+                        <div
+                          onClick={async () => {
+                            const newTagId = generateUUID();
+                            const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
+                            const randomColor = colors[Math.floor(Math.random() * colors.length)];
+                            const newTag = {
+                              id: newTagId,
+                              name: tagSearch.trim(),
+                              color: randomColor
+                            };
+                            await queueSyncAction('tags', 'insert', newTag);
+                            await queueSyncAction('entity_tags', 'insert', { entity_id: selectedLocation.id, tag_id: newTagId });
+                            setTagSearch('');
+                            setShowTagDropdown(false);
+                          }}
+                          style={{
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            fontSize: '0.85rem',
+                            borderBottom: '1px solid var(--border-glass)',
+                            color: 'var(--accent-primary-hover)',
+                            fontWeight: '600',
+                            background: 'transparent'
+                          }}
+                        >
+                          + Create Tag "{tagSearch.trim()}"
+                        </div>
+                      )}
                       {tags
                         .filter(t => !getEntityTagsList(selectedLocation.id).map(et => et.id).includes(t.id))
-                        .filter(t => t.name.toLowerCase().includes(tagSearch.toLowerCase())).length === 0 && (
+                        .filter(t => t.name.toLowerCase().includes(tagSearch.toLowerCase())).length === 0 && !tagSearch.trim() && (
                         <div style={{ padding: '8px 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                           No matching tags
                         </div>
@@ -1443,7 +1474,8 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                           end = albumObj.endDate;
                           albumName = `${albumObj.albumName} (${albumObj.assetCount || 0})`;
                         }
-                        albumUrl = `${immichUrl.replace(/\/$/, '')}/albums/${visit.id}`;
+                        const targetUrl = immichAltUrl || immichUrl;
+                        albumUrl = `${targetUrl.replace(/\/$/, '')}/albums/${visit.id}`;
                       }
                       return {
                         ...visit,
@@ -1525,7 +1557,6 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
       <div className="page-header">
         <h2>Locations & Regions</h2>
         <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto' }}>
-          <Plus size={18} />
           Add Location
         </button>
       </div>
@@ -1841,7 +1872,10 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
               const q = listSearchQuery.toLowerCase();
               const nameMatch = loc.name?.toLowerCase().includes(q);
               const notesMatch = loc.notes?.toLowerCase().includes(q);
-              if (!nameMatch && !notesMatch) return false;
+              const placeMatch = places
+                .filter(p => p.location_id === loc.id)
+                .some(p => p.name?.toLowerCase().includes(q) || p.notes?.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q));
+              if (!nameMatch && !notesMatch && !placeMatch) return false;
             }
             // Country
             if (filterCountry && loc.country !== filterCountry) return false;

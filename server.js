@@ -9,6 +9,8 @@ import fs from 'fs';
 import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
+import { WebSocketServer } from 'ws';
+import url from 'url';
 import { db, initDatabase, seedDefaultTags, seedDefaultCategories } from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -18,6 +20,46 @@ const JWT_SECRET = process.env.JWT_SECRET || 'travelbuff-super-secret-key-12345'
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// Wrap express with HTTP server
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+// Handle WebSocket connection upgrade with JWT validation
+server.on('upgrade', (request, socket, head) => {
+  const parsed = url.parse(request.url, true);
+  if (parsed.pathname === '/api/ws') {
+    const token = parsed.query.token;
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        ws.userId = decoded.id;
+        wss.emit('connection', ws, request);
+      });
+    } catch (err) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+    }
+  } else {
+    socket.destroy();
+  }
+});
+
+// Broadcast changes to user's client sockets
+function notifyUserClients(userId, excludeWs = null) {
+  wss.clients.forEach((client) => {
+    if (client.userId === userId && client.readyState === 1 && client !== excludeWs) {
+      client.send(JSON.stringify({ type: 'SYNC_REQUIRED' }));
+    }
+  });
+}
+
+wss.on('connection', (ws) => {
+  console.log(`[WebSocket] Client connected for user ID: ${ws.userId}`);
+  ws.on('close', () => {
+    console.log(`[WebSocket] Client disconnected for user ID: ${ws.userId}`);
+  });
+});
 
 // Ensure upload directory exists
 const UPLOADS_DIR = process.env.UPLOADS_DIR || join(__dirname, 'data', 'uploads');
@@ -144,11 +186,11 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 // Config & Integration API
 // ==========================================
 app.post('/api/config', authenticateToken, async (req, res) => {
-  const { immich_url, immich_key, base_currency } = req.body;
+  const { immich_url, immich_key, immich_alt_url, base_currency } = req.body;
   try {
     await db.run(
-      `UPDATE user_configs SET immich_url = ?, immich_key = ?, base_currency = ? WHERE user_id = ?`,
-      [immich_url || null, immich_key || null, base_currency || 'USD', req.user.id]
+      `UPDATE user_configs SET immich_url = ?, immich_key = ?, immich_alt_url = ?, base_currency = ? WHERE user_id = ?`,
+      [immich_url || null, immich_key || null, immich_alt_url || null, base_currency || 'USD', req.user.id]
     );
     res.json({ success: true });
   } catch (err) {
@@ -177,7 +219,9 @@ app.post('/api/owntracks/webhook/:token', async (req, res) => {
         `INSERT INTO gps_logs (id, user_id, latitude, longitude, accuracy, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
         [id, config.user_id, lat, lon, acc || null, timestamp]
       );
-      return res.json({ status: 'ok', msg: 'Coordinate logged' });
+      res.json({ status: 'ok', msg: 'Coordinate logged' });
+      notifyUserClients(config.user_id);
+      return;
     }
 
     res.json({ status: 'ignored', msg: 'Not a location payload' });
@@ -505,6 +549,7 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
 
     await db.exec('COMMIT');
     res.json({ success: true });
+    notifyUserClients(userId);
   } catch (err) {
     try {
       await db.exec('ROLLBACK');
@@ -1362,6 +1407,9 @@ app.post('/api/backup/restore', async (req, res) => {
       restored_count: restoredCount,
       duplicated_count: duplicatedCount
     });
+    if (currentUserId) {
+      notifyUserClients(currentUserId);
+    }
   } catch (err) {
     console.error('Backup restore failed:', err);
     res.status(500).json({ error: err.message });
@@ -1384,7 +1432,7 @@ app.get('*', (req, res, next) => {
 (async () => {
   try {
     await initDatabase();
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`TravelBuff server is listening on port ${PORT}`);
     });
   } catch (err) {

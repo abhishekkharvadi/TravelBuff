@@ -17,6 +17,8 @@ export default function TripMode({ token }) {
 
   // Local State
   const [activeTrip, setActiveTrip] = useState(null);
+  const [isAutoSelected, setIsAutoSelected] = useState(false);
+  const [forceUpdate, setForceUpdate] = useState(0);
   const [currentDayStr, setCurrentDayStr] = useState('');
   
   // Quick Expense Modal
@@ -36,20 +38,59 @@ export default function TripMode({ token }) {
   useEffect(() => {
     if (trips.length > 0) {
       const today = new Date().toISOString().split('T')[0];
-      // Find trip where today is between start and end
-      const ongoing = trips.find(t => t.start_date && t.end_date && today >= t.start_date && today <= t.end_date);
-      if (ongoing) {
-        setActiveTrip(ongoing);
+      
+      // 1. First priority: Check localStorage for explicit active trip
+      const storedActiveId = localStorage.getItem('active_trip_id');
+      const storedActiveTrip = storedActiveId ? trips.find(t => t.id.toString() === storedActiveId) : null;
+      
+      if (storedActiveTrip) {
+        setActiveTrip(storedActiveTrip);
+        setIsAutoSelected(false);
       } else {
-        // Fallback to latest trip
-        const sorted = [...trips].sort((a, b) => b.start_date?.localeCompare(a.start_date || '') || 0);
-        setActiveTrip(sorted[0]);
+        // 2. Filter out past trips, only allow ongoing and upcoming
+        const ongoingAndUpcoming = trips.filter(t => {
+          const start = t.start_date || '';
+          const end = t.end_date || '';
+          const isOngoing = start && end && today >= start && today <= end;
+          const isUpcoming = start && start > today;
+          return isOngoing || isUpcoming;
+        });
+
+        if (ongoingAndUpcoming.length > 0) {
+          // Sort them by priority: ongoing first (latest start date first if multiple), then upcoming (soonest start date first)
+          const sorted = [...ongoingAndUpcoming].sort((a, b) => {
+            const aStart = a.start_date || '';
+            const aEnd = a.end_date || '';
+            const bStart = b.start_date || '';
+            const bEnd = b.end_date || '';
+            
+            const aIsOngoing = aStart && aEnd && today >= aStart && today <= aEnd;
+            const bIsOngoing = bStart && bEnd && today >= bStart && today <= bEnd;
+            
+            if (aIsOngoing && !bIsOngoing) return -1;
+            if (!aIsOngoing && bIsOngoing) return 1;
+            if (aIsOngoing && bIsOngoing) {
+              return bStart.localeCompare(aStart);
+            }
+            // Both are upcoming
+            return aStart.localeCompare(bStart);
+          });
+          
+          setActiveTrip(sorted[0]);
+          setIsAutoSelected(true);
+        } else {
+          setActiveTrip(null);
+          setIsAutoSelected(false);
+        }
       }
+    } else {
+      setActiveTrip(null);
+      setIsAutoSelected(false);
     }
     
     // Set local date string
     setCurrentDayStr(new Date().toISOString().split('T')[0]);
-  }, [trips]);
+  }, [trips, forceUpdate]);
 
   // Pull OwnTracks distance data
   const handlePullOwnTracks = async () => {
@@ -144,22 +185,38 @@ export default function TripMode({ token }) {
   const activeDayStops = itineraries.filter(i => activeTrip && i.trip_id === activeTrip.id && i.date === displayDayStr)
                                     .sort((a, b) => a.sequence_order - b.sequence_order);
 
+  const storedActiveId = localStorage.getItem('active_trip_id');
+  const isCurrentlyActive = activeTrip && storedActiveId === activeTrip.id.toString();
+
   return (
     <div className="container" style={{ maxWidth: '480px', padding: '16px' }}>
       
-      {/* Selector */}
-      {trips.length > 1 && (
-        <div style={{ marginBottom: '16px' }}>
-          <select 
-            className="form-control" 
-            value={activeTrip?.id || ''} 
-            onChange={(e) => setActiveTrip(trips.find(t => t.id === e.target.value))}
-            style={{ fontWeight: 600, background: '#1c1b22', border: '1px solid var(--border-glass)' }}
+      {/* Auto-selected banner */}
+      {activeTrip && isAutoSelected && !isCurrentlyActive && (
+        <div style={{
+          background: 'rgba(139, 92, 246, 0.15)',
+          border: '1px solid rgba(139, 92, 246, 0.3)',
+          borderRadius: 'var(--radius-md)',
+          padding: '12px 16px',
+          marginBottom: '16px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary-hover)' }}>
+            ℹ️ This trip is auto-selected. Set it as active to pin it.
+          </span>
+          <button 
+            className="btn btn-primary"
+            onClick={() => {
+              localStorage.setItem('active_trip_id', activeTrip.id);
+              setForceUpdate(prev => prev + 1);
+            }}
+            style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', margin: 0 }}
           >
-            {trips.map(t => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
+            Set as Active
+          </button>
         </div>
       )}
 
@@ -300,6 +357,7 @@ export default function TripMode({ token }) {
               <div className="form-group">
                 <label>Category</label>
                 <select className="form-control" value={expCategory} onChange={(e) => setExpCategory(e.target.value)}>
+                  <option value="Food">🍽️ Food / Dining</option>
                   <option value="Snacks">☕ Snacks / Cafe</option>
                   <option value="Lunch">🍲 Lunch</option>
                   <option value="Dinner">🍽️ Dinner</option>

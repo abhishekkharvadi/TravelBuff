@@ -19,10 +19,15 @@ export default function SettingsComponent({ token, userId, onLogout }) {
   // Integrations state
   const [immichUrl, setImmichUrl] = useState('');
   const [immichKey, setImmichKey] = useState('');
+  const [immichAltUrl, setImmichAltUrl] = useState('');
   const [baseCurrency, setBaseCurrency] = useState('USD');
   const [owntracksKey, setOwnTracksKey] = useState('');
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  
+  // Tooltip states
+  const [showEndpointTooltip, setShowEndpointTooltip] = useState(false);
+  const [showAltTooltip, setShowAltTooltip] = useState(false);
   
   // Immich test state
   const [immichTestStatus, setImmichTestStatus] = useState(null); // 'success', 'error', 'testing', or null
@@ -43,12 +48,23 @@ export default function SettingsComponent({ token, userId, onLogout }) {
         if (data.config) {
           setImmichUrl(data.config.immich_url || '');
           setImmichKey(data.config.immich_key || '');
+          setImmichAltUrl(data.config.immich_alt_url || '');
           setBaseCurrency(data.config.base_currency || 'USD');
           setOwnTracksKey(data.config.owntracks_key || '');
         }
       })
       .catch(err => console.error('Failed to load configs:', err));
   }, [token]);
+
+  useEffect(() => {
+    if (!showEndpointTooltip && !showAltTooltip) return;
+    const handleOutsideClick = () => {
+      setShowEndpointTooltip(false);
+      setShowAltTooltip(false);
+    };
+    document.addEventListener('click', handleOutsideClick);
+    return () => document.removeEventListener('click', handleOutsideClick);
+  }, [showEndpointTooltip, showAltTooltip]);
 
   const handleSaveConfigs = async (e) => {
     e.preventDefault();
@@ -65,6 +81,7 @@ export default function SettingsComponent({ token, userId, onLogout }) {
         body: JSON.stringify({
           immich_url: immichUrl,
           immich_key: immichKey,
+          immich_alt_url: immichAltUrl,
           base_currency: baseCurrency
         })
       });
@@ -270,13 +287,111 @@ export default function SettingsComponent({ token, userId, onLogout }) {
             <form onSubmit={handleSaveConfigs}>
               <h4 style={{ color: 'var(--accent-secondary)', fontSize: '0.9rem', marginBottom: '12px' }}>Immich Server Settings</h4>
               <div className="form-group">
-                <label>Immich Server Endpoint URL</label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative' }}>
+                  Immich Server Endpoint URL
+                  <span 
+                    onMouseEnter={() => setShowEndpointTooltip(true)}
+                    onMouseLeave={() => setShowEndpointTooltip(false)}
+                    onClick={(e) => { e.stopPropagation(); setShowEndpointTooltip(!showEndpointTooltip); }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '15px',
+                      height: '15px',
+                      borderRadius: '50%',
+                      background: 'var(--accent-primary)',
+                      color: '#000',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      userSelect: 'none'
+                    }}
+                  >
+                    i
+                  </span>
+                  {showEndpointTooltip && (
+                    <span style={{
+                      position: 'absolute',
+                      bottom: '22px',
+                      left: '0',
+                      background: '#1a1a24',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: '4px',
+                      padding: '8px 12px',
+                      color: '#fff',
+                      fontSize: '0.75rem',
+                      width: '260px',
+                      zIndex: 100,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                      pointerEvents: 'none',
+                      fontWeight: 'normal',
+                      lineHeight: '1.3'
+                    }}>
+                      This is the backend Immich URL. Add the URL without the trailing '/' at the end (e.g. http://localhost:port only).
+                    </span>
+                  )}
+                </label>
                 <input 
                   type="url" 
                   className="form-control" 
                   placeholder="https://immich.yourdomain.com"
                   value={immichUrl}
                   onChange={(e) => setImmichUrl(e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative' }}>
+                  Immich Alternative URL
+                  <span 
+                    onMouseEnter={() => setShowAltTooltip(true)}
+                    onMouseLeave={() => setShowAltTooltip(false)}
+                    onClick={(e) => { e.stopPropagation(); setShowAltTooltip(!showAltTooltip); }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '15px',
+                      height: '15px',
+                      borderRadius: '50%',
+                      background: 'var(--accent-primary)',
+                      color: '#000',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      userSelect: 'none'
+                    }}
+                  >
+                    i
+                  </span>
+                  {showAltTooltip && (
+                    <span style={{
+                      position: 'absolute',
+                      bottom: '22px',
+                      left: '0',
+                      background: '#1a1a24',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: '4px',
+                      padding: '8px 12px',
+                      color: '#fff',
+                      fontSize: '0.75rem',
+                      width: '260px',
+                      zIndex: 100,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                      pointerEvents: 'none',
+                      fontWeight: 'normal',
+                      lineHeight: '1.3'
+                    }}>
+                      Adding this field will use this URL to open Albums which are added to the Locations. When empty, it will use the Endpoint URL instead.
+                    </span>
+                  )}
+                </label>
+                <input 
+                  type="url" 
+                  className="form-control" 
+                  placeholder="https://immich-alt.yourdomain.com"
+                  value={immichAltUrl}
+                  onChange={(e) => setImmichAltUrl(e.target.value)}
                 />
               </div>
               <div className="form-group">

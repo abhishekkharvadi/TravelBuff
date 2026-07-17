@@ -1,7 +1,40 @@
-import { db, registerSyncTrigger } from './clientDb.js';
+import { db, registerSyncTrigger, populateLocalDb } from './clientDb.js';
 
 let isSyncing = false;
 let syncStatusCallback = () => {};
+let ws = null;
+
+function connectWebSocket(getToken) {
+  const token = getToken();
+  if (!token) return;
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/api/ws?token=${encodeURIComponent(token)}`;
+
+  ws = new WebSocket(wsUrl);
+
+  ws.onmessage = async (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      if (message.type === 'SYNC_REQUIRED') {
+        console.log('[WebSocket Sync] Database update notification received. Refreshing...');
+        await populateLocalDb(token);
+      }
+    } catch (err) {
+      console.error('[WebSocket Sync] Error handling message:', err);
+    }
+  };
+
+  ws.onclose = () => {
+    console.log('[WebSocket Sync] Closed. Reconnecting in 5 seconds...');
+    setTimeout(() => connectWebSocket(getToken), 5000);
+  };
+
+  ws.onerror = (err) => {
+    console.error('[WebSocket Sync] Connection error:', err);
+    ws.close();
+  };
+}
 
 export function registerSyncStatusListener(callback) {
   syncStatusCallback = callback;
@@ -67,6 +100,9 @@ export async function performSync(token) {
 
 // Bind to browser online events
 export function initSyncManager(getToken) {
+  // Establish WebSocket connection
+  connectWebSocket(getToken);
+
   // Bind online event listener
   window.addEventListener('online', () => {
     console.log('[PWA Sync] Device is online. Attempting synchronization...');

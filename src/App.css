@@ -909,21 +909,48 @@ dialog::backdrop {
 /* Trip Details Overlay Scroll Fix and Header Alignment */
 .trip-details-overlay {
   position: fixed;
+  top: 8%;
+  bottom: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80%;
+  max-width: 1000px;
+  background: var(--bg-surface);
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-glass);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.modal-backdrop {
+  position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--bg-surface);
-  z-index: 999;
-  display: flex;
-  flex-direction: column;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
 }
 
 @media (max-width: 768px) {
   .trip-details-overlay {
     top: 57px !important; /* aligns below the main universal header on mobile */
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    transform: none !important;
+    width: 100% !important;
+    border-radius: 0 !important;
+    border: none !important;
     z-index: 99 !important; /* lower than universal header (100) and bottom navigation (1000) */
     padding-bottom: 72px !important; /* spaces out bottom mobile nav overlap */
+  }
+  .modal-backdrop {
+    display: none !important;
   }
 }
 
