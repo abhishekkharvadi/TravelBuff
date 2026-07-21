@@ -48,7 +48,11 @@ export default function Login({ onLoginSuccess }) {
     <div className="login-container">
       <div className="login-card">
         <div className="login-header">
-          <h2>TravelBuff</h2>
+          <img 
+            src={document.body.classList.contains('light-theme') ? '/logo-light.png' : '/logo-dark.png'} 
+            alt="TravelBuff" 
+            style={{ height: '36px', display: 'block', margin: '0 auto 12px auto', objectFit: 'contain' }}
+          />
           <p>{isRegister ? 'Create an account to start your logs' : 'Sign in to access your travel planner'}</p>
         </div>
 

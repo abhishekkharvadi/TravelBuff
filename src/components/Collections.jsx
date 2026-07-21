@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
-import { Plus, X, Folder, Eye, Compass, Trash2, Edit } from 'lucide-react';
+import { Plus, X, Folder, Eye, Compass, Trash2, Edit, Search } from 'lucide-react';
 import MapView from './MapView.jsx';
 
 export default function Collections({ selectedCol, setSelectedCol }) {
@@ -12,6 +12,19 @@ export default function Collections({ selectedCol, setSelectedCol }) {
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const entityTags = useLiveQuery(() => db.entity_tags.toArray()) || [];
   const customCategories = useLiveQuery(() => db.custom_categories.toArray()) || [];
+  const photos = useLiveQuery(() => db.entity_photos.toArray()) || [];
+
+  const getFeaturedPhoto = (entityId) => {
+    const loc = locations.find(l => l.id === entityId);
+    if (loc && loc.local_file_data) return loc.local_file_data;
+
+    const place = places.find(p => p.id === entityId);
+    if (place && place.local_file_data) return place.local_file_data;
+
+    const pList = photos.filter(p => p.entity_id === entityId);
+    const featured = pList.find(p => p.is_featured === 1);
+    return featured ? featured.file_path : (pList[0] ? pList[0].file_path : 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600');
+  };
 
   // System Defined Collections
   const systemCollections = [
@@ -52,6 +65,7 @@ export default function Collections({ selectedCol, setSelectedCol }) {
   const [locSearchQuery, setLocSearchQuery] = useState('');
   const [placeSearchQuery, setPlaceSearchQuery] = useState('');
   const [colFilter, setColFilter] = useState('ALL'); // 'ALL', 'MANUAL', 'AUTO'
+  const [colSearchQuery, setColSearchQuery] = useState('');
   const [selectedRuleCategoryNames, setSelectedRuleCategoryNames] = useState([]);
   const [editSelectedRuleCategoryNames, setEditSelectedRuleCategoryNames] = useState([]);
 
@@ -297,29 +311,37 @@ export default function Collections({ selectedCol, setSelectedCol }) {
                             <div 
                               key={loc.id} 
                               style={{
-                                background: '#191924', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
-                                padding: '16px'
+                                background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
+                                padding: '16px', display: 'flex', gap: '16px', alignItems: 'center'
                               }}
                             >
-                              <h4 style={{ color: 'var(--accent-primary-hover)', margin: '0 0 8px 0' }}>{loc.name}</h4>
-                              {locPlaces.length > 0 ? (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
-                                  {locPlaces.map(p => (
-                                    <span 
-                                      key={p.id} 
-                                      style={{
-                                        fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', padding: '2px 8px',
-                                        border: '1px solid var(--border-glass)', borderRadius: '4px',
-                                        color: p.visited === 1 ? 'var(--success)' : 'var(--text-primary)'
-                                      }}
-                                    >
-                                      {p.visited === 1 ? '✓ ' : ''}{p.name}
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', margin: 0 }}>No places to visit registered yet.</p>
-                              )}
+                              <img 
+                                src={getFeaturedPhoto(loc.id)} 
+                                alt={loc.name} 
+                                style={{ width: '60px', height: '60px', borderRadius: '6px', objectFit: 'cover', flexShrink: 0 }}
+                                onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'}
+                              />
+                              <div style={{ flexGrow: 1 }}>
+                                <h4 style={{ color: 'var(--accent-primary-hover)', margin: '0 0 8px 0' }}>{loc.name}</h4>
+                                {locPlaces.length > 0 ? (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                                    {locPlaces.map(p => (
+                                      <span 
+                                        key={p.id} 
+                                        style={{
+                                          fontSize: '0.75rem', background: 'var(--bg-app)', padding: '2px 8px',
+                                          border: '1px solid var(--border-glass)', borderRadius: '4px',
+                                          color: p.visited === 1 ? 'var(--success)' : 'var(--text-primary)'
+                                        }}
+                                      >
+                                        {p.visited === 1 ? '✓ ' : ''}{p.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', margin: 0 }}>No places to visit registered yet.</p>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
@@ -337,11 +359,17 @@ export default function Collections({ selectedCol, setSelectedCol }) {
                             <div 
                               key={p.id} 
                               style={{
-                                background: '#191924', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
-                                padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                                background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
+                                padding: '16px', display: 'flex', gap: '16px', alignItems: 'center'
                               }}
                             >
-                              <div>
+                              <img 
+                                src={getFeaturedPhoto(p.id)} 
+                                alt={p.name} 
+                                style={{ width: '60px', height: '60px', borderRadius: '6px', objectFit: 'cover', flexShrink: 0 }}
+                                onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'}
+                              />
+                              <div style={{ flexGrow: 1 }}>
                                 <h4 style={{ color: p.visited === 1 ? 'var(--success)' : 'var(--text-primary)', margin: '0 0 4px 0' }}>
                                   {p.visited === 1 ? '✓ ' : ''}{p.name}
                                 </h4>
@@ -349,7 +377,7 @@ export default function Collections({ selectedCol, setSelectedCol }) {
                                   📍 {parentLoc ? parentLoc.name : 'Unknown Location'}
                                 </span>
                               </div>
-                              <span className="tag-badge" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
+                              <span className="tag-badge" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-secondary)', fontSize: '0.7rem', flexShrink: 0 }}>
                                 {p.category}
                               </span>
                             </div>
@@ -576,26 +604,40 @@ export default function Collections({ selectedCol, setSelectedCol }) {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '8px', background: 'rgba(255, 255, 255, 0.03)', padding: '4px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginBottom: '24px', alignSelf: 'flex-start', width: 'fit-content' }}>
-        {['ALL', 'MANUAL', 'AUTO'].map(type => (
-          <button
-            key={type}
-            onClick={() => setColFilter(type)}
-            style={{
-              padding: '6px 14px',
-              fontSize: '0.8rem',
-              borderRadius: '4px',
-              border: 'none',
-              cursor: 'pointer',
-              background: colFilter === type ? 'var(--accent-primary)' : 'transparent',
-              color: colFilter === type ? '#000' : 'var(--text-secondary)',
-              fontWeight: 600,
-              transition: 'all 0.2s'
-            }}
-          >
-            {type === 'ALL' ? 'All' : type === 'MANUAL' ? 'Manual Selection' : 'Auto-Group'}
-          </button>
-        ))}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', gap: '8px', background: 'rgba(255, 255, 255, 0.03)', padding: '4px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', alignSelf: 'flex-start', width: 'fit-content' }}>
+          {['ALL', 'MANUAL', 'AUTO'].map(type => (
+            <button
+              key={type}
+              onClick={() => setColFilter(type)}
+              style={{
+                padding: '6px 14px',
+                fontSize: '0.8rem',
+                borderRadius: '4px',
+                border: 'none',
+                cursor: 'pointer',
+                background: colFilter === type ? 'var(--accent-primary)' : 'transparent',
+                color: colFilter === type ? '#000' : 'var(--text-secondary)',
+                fontWeight: 600,
+                transition: 'all 0.2s'
+              }}
+            >
+              {type === 'ALL' ? 'All' : type === 'MANUAL' ? 'Manual Selection' : 'Auto-Group'}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ position: 'relative', width: '220px' }}>
+          <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+          <input
+            type="text"
+            className="form-control"
+            style={{ padding: '6px 12px 6px 30px', fontSize: '0.8rem', backgroundColor: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-sm)', width: '100%', color: 'var(--text-primary)' }}
+            placeholder="Search collections..."
+            value={colSearchQuery}
+            onChange={(e) => setColSearchQuery(e.target.value)}
+          />
+        </div>
       </div>
 
       {collections.length === 0 && !showAddForm && (
@@ -791,6 +833,11 @@ export default function Collections({ selectedCol, setSelectedCol }) {
       <div className="grid">
         {(() => {
           const filteredCollections = allCollections.filter(col => {
+            if (colSearchQuery.trim() !== '') {
+              if (!col.name.toLowerCase().includes(colSearchQuery.toLowerCase())) {
+                return false;
+              }
+            }
             if (colFilter === 'ALL') return true;
             const rules = col.rules ? (typeof col.rules === 'string' ? JSON.parse(col.rules) : col.rules) : [];
             const hasRules = rules && rules.length > 0;

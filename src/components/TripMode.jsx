@@ -164,26 +164,43 @@ export default function TripMode({ token }) {
   };
 
   // Date list helper
-  const getDates = (start, end) => {
-    const list = [];
-    if (!start || !end) return list;
-    let d = new Date(start);
-    const endD = new Date(end);
-    while (d <= endD) {
-      list.push(d.toISOString().split('T')[0]);
-      d.setDate(d.getDate() + 1);
+  const getItineraryDays = (trip) => {
+    if (!trip) return [];
+    const len = trip.length || 1;
+    const days = [];
+    for (let i = 1; i <= len; i++) {
+      let dateStr = `Day ${i}`;
+      let actualDate = '';
+      if (trip.start_date && trip.start_date !== 'null' && !isNaN(Date.parse(trip.start_date))) {
+        const startDateObj = new Date(trip.start_date);
+        startDateObj.setDate(startDateObj.getDate() + (i - 1));
+        actualDate = startDateObj.toISOString().split('T')[0];
+        dateStr = `Day ${i} (${actualDate})`;
+      }
+      days.push({
+        dayNumber: i,
+        label: dateStr,
+        date: actualDate || `Day ${i}`
+      });
     }
-    return list;
+    return days;
   };
 
-  const tripDates = activeTrip ? getDates(activeTrip.start_date, activeTrip.end_date) : [];
+  const formatStartDate = (date) => {
+    if (!date || date === 'null' || date === 'undefined') return 'No Date Set';
+    return date;
+  };
+
+  const itineraryDays = getItineraryDays(activeTrip);
 
   // Determine active date showing in UI
-  const displayDayStr = tripDates.includes(currentDayStr) ? currentDayStr : (tripDates[0] || '');
+  const displayDayStr = itineraryDays.map(d => d.date).includes(currentDayStr) ? currentDayStr : (itineraryDays[0]?.date || '');
 
   // Active day stops
   const activeDayStops = itineraries.filter(i => activeTrip && i.trip_id === activeTrip.id && i.date === displayDayStr)
                                     .sort((a, b) => a.sequence_order - b.sequence_order);
+
+  const activeDayObj = itineraryDays.find(d => d.date === displayDayStr);
 
   const storedActiveId = localStorage.getItem('active_trip_id');
   const isCurrentlyActive = activeTrip && storedActiveId === activeTrip.id.toString();
@@ -204,29 +221,28 @@ export default function TripMode({ token }) {
           alignItems: 'center',
           gap: '12px'
         }}>
-          <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary-hover)' }}>
-            ℹ️ This trip is auto-selected. Set it as active to pin it.
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            Showing <strong>{activeTrip.name}</strong> based on current date.
           </span>
           <button 
             className="btn btn-primary"
+            style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px' }}
             onClick={() => {
               localStorage.setItem('active_trip_id', activeTrip.id);
               setForceUpdate(prev => prev + 1);
             }}
-            style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', margin: 0 }}
           >
-            Set as Active
+            Pin active
           </button>
         </div>
       )}
 
-      {/* Main Active Trip view */}
       {activeTrip ? (
         <div>
-          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-lg)', padding: '20px', marginBottom: '20px' }}>
-            <h3 style={{ fontSize: '1.25rem' }}>{activeTrip.name}</h3>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              Trip status: <b>Active</b> | Today's Date: <b>{currentDayStr}</b>
+          <div style={{ background: '#1c1b22', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
+            <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{activeTrip.name}</h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              {formatStartDate(activeTrip.start_date)} ({activeTrip.length || 1} {activeTrip.length === 1 ? 'day' : 'days'})
             </p>
 
             {/* OwnTracks Distance logging */}
@@ -252,15 +268,15 @@ export default function TripMode({ token }) {
           {/* Today's Stops */}
           <div style={{ marginBottom: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ fontSize: '1.1rem' }}>Itinerary Day: {displayDayStr}</h3>
-              {tripDates.length > 1 && (
+              <h3 style={{ fontSize: '1.1rem' }}>Itinerary Day: {activeDayObj ? activeDayObj.label : displayDayStr}</h3>
+              {itineraryDays.length > 1 && (
                 <select 
-                  value={currentDayStr} 
+                  value={displayDayStr} 
                   onChange={(e) => setCurrentDayStr(e.target.value)}
                   style={{ background: 'transparent', border: 'none', color: 'var(--accent-primary-hover)', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer' }}
                 >
-                  {tripDates.map(date => (
-                    <option key={date} value={date}>{date}</option>
+                  {itineraryDays.map(day => (
+                    <option key={day.date} value={day.date}>{day.label}</option>
                   ))}
                 </select>
               )}

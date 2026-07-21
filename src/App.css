@@ -792,6 +792,22 @@ dialog::backdrop {
   .timeline::before {
     background: #cccccc;
   }
+  .print-only {
+    display: block !important;
+  }
+  .trip-details-overlay {
+    position: static !important;
+    left: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
 }
 
 /* Location Details Two-Column Page Layout */
@@ -934,6 +950,9 @@ dialog::backdrop {
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(4px);
   z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @media (max-width: 768px) {
@@ -949,8 +968,132 @@ dialog::backdrop {
     z-index: 99 !important; /* lower than universal header (100) and bottom navigation (1000) */
     padding-bottom: 72px !important; /* spaces out bottom mobile nav overlap */
   }
-  .modal-backdrop {
+}
+
+.desktop-only-block {
+  display: block;
+}
+@media (max-width: 768px) {
+  .desktop-only-block {
     display: none !important;
   }
+}
+
+body.light-theme {
+  --bg-app: #f3f4f6;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f0f2f5;
+  --bg-glass: rgba(255, 255, 255, 0.85);
+  --border-glass: rgba(0, 0, 0, 0.08);
+
+  --accent-primary: #9B87ED;       /* User requested pastel purple */
+  --accent-primary-hover: #8A75D8;
+  --accent-primary-glow: rgba(155, 135, 237, 0.15);
+
+  --accent-secondary: #0891b2;
+
+  --text-primary: #111827;         /* Gray 900 */
+  --text-secondary: #4b5563;       /* Gray 600 */
+  --text-muted: #9ca3af;           /* Gray 400 */
+
+  --shadow-panel: 0 10px 30px rgba(0, 0, 0, 0.06);
+}
+
+/* Light Theme Component & UI Polishes */
+body.light-theme h1,
+body.light-theme h2,
+body.light-theme h3,
+body.light-theme h4,
+body.light-theme h5,
+body.light-theme h6,
+body.light-theme .brand h1,
+body.light-theme .login-header h2 {
+  color: var(--text-primary) !important;
+  background: none !important;
+  -webkit-text-fill-color: initial !important;
+}
+
+body.light-theme .login-card,
+body.light-theme .modal-overlay,
+body.light-theme .modal-backdrop,
+body.light-theme .modal,
+body.light-theme .card,
+body.light-theme .account-modal-content,
+body.light-theme .user-menu-dropdown,
+body.light-theme .mobile-user-dropdown {
+  background: var(--bg-surface) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-glass) !important;
+}
+
+body.light-theme .form-control,
+body.light-theme input[type="text"],
+body.light-theme input[type="password"],
+body.light-theme input[type="email"],
+body.light-theme input[type="number"],
+body.light-theme textarea,
+body.light-theme select {
+  background-color: var(--bg-surface) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid rgba(0, 0, 0, 0.25) !important;
+}
+
+body.light-theme .form-control::placeholder,
+body.light-theme input::placeholder,
+body.light-theme textarea::placeholder {
+  color: var(--text-muted) !important;
+}
+
+body.light-theme .mode-switch-wrapper {
+  background: var(--bg-surface-elevated) !important;
+}
+
+body.light-theme .mode-btn {
+  color: #4b5563 !important;
+}
+
+body.light-theme .mode-btn.active {
+  background: var(--bg-surface) !important;
+  color: var(--accent-primary) !important;
+}
+
+body.light-theme .user-menu-dropdown button,
+body.light-theme .mobile-user-dropdown button {
+  color: var(--text-primary) !important;
+}
+
+body.light-theme .user-menu-dropdown button:hover,
+body.light-theme .mobile-user-dropdown button:hover {
+  background-color: var(--bg-surface-elevated) !important;
+}
+
+body.light-theme .mobile-user-dropdown span,
+body.light-theme .user-menu-dropdown span {
+  color: var(--text-secondary) !important;
+}
+
+body.light-theme .sync-btn-container button {
+  color: #047857 !important; /* darker emerald */
+  background-color: rgba(16, 185, 129, 0.1) !important;
+}
+
+body.light-theme .empty-state,
+body.light-theme .empty-state p {
+  color: var(--text-secondary) !important;
+}
+
+body.light-theme .btn-secondary {
+  background-color: #e5e7eb !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  color: var(--text-primary) !important;
+}
+
+body.light-theme .btn-secondary:hover {
+  background-color: #d1d5db !important;
+}
+
+body.light-theme .nav-link:hover {
+  color: var(--text-primary) !important;
+  background: rgba(0, 0, 0, 0.05) !important;
 }
 

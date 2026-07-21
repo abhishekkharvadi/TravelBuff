@@ -7,7 +7,49 @@ import {
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import MapView from './MapView.jsx';
 
-export default function Locations({ token, selectedLocation, setSelectedLocation }) {
+function FolderCover({ folderId, locations, getFeaturedPhoto }) {
+  const getAllChildLocationIds = (fId) => {
+    let ids = [];
+    const children = locations.filter(l => {
+      const pId = l.parent_id;
+      return pId && (String(pId) === String(fId));
+    });
+    for (const child of children) {
+      ids.push(child.id);
+      if (child.is_folder === 1) {
+        ids = ids.concat(getAllChildLocationIds(child.id));
+      }
+    }
+    return ids;
+  };
+
+  const allLocIds = getAllChildLocationIds(folderId);
+  const images = allLocIds
+    .map(id => getFeaturedPhoto(id))
+    .filter(img => img && img !== 'null' && img !== 'undefined' && !img.includes('placeholder'));
+
+  const [index, setIndex] = React.useState(0);
+
+  React.useEffect(() => {
+    if (images.length <= 1) return;
+    const interval = setInterval(() => {
+      setIndex(prev => (prev + 1) % images.length);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [images.length]);
+
+  const activeImg = images[index] || '/placeholder.jpg';
+
+  return (
+    <img 
+      src={activeImg} 
+      onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }} 
+      alt="Folder Cover" 
+    />
+  );
+}
+
+export default function Locations({ token, selectedLocation, setSelectedLocation, currentFolderId, setCurrentFolderId }) {
   // Dexie Queries (Reactive Live Updates)
   const locations = useLiveQuery(() => db.locations.toArray()) || [];
   const places = useLiveQuery(() => db.places.toArray()) || [];
@@ -17,10 +59,12 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   const customCategories = useLiveQuery(() => db.custom_categories.where('type').equals('place').toArray()) || [];
 
   // Local State
+  const [folderToDelete, setFolderToDelete] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [dragOverFolderId, setDragOverFolderId] = useState(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState('');
   const [tempLat, setTempLat] = useState('');
@@ -34,6 +78,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   const [locLat, setLocLat] = useState('');
   const [locLon, setLocLon] = useState('');
   const [locNotes, setLocNotes] = useState('');
+  const [isFolderChecked, setIsFolderChecked] = useState(false);
 
   // List Filter/Sort State
   const [listSearchQuery, setListSearchQuery] = useState('');
@@ -43,6 +88,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   const [filterCategory, setFilterCategory] = useState('');
   const [filterDateAdded, setFilterDateAdded] = useState('');
   const [filterVisited, setFilterVisited] = useState(''); // '', 'visited', 'not-visited'
+  const [filterSource, setFilterSource] = useState('');
   const [sortBy, setSortBy] = useState('date-desc');
 
   // Searchable Tag State
@@ -80,6 +126,9 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   const [manualEndDate, setManualEndDate] = useState('');
   const [manualAlbumLink, setManualAlbumLink] = useState('');
   const [visitError, setVisitError] = useState('');
+
+  const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const [isSavingPlace, setIsSavingPlace] = useState(false);
 
   // Tag creation modal states inside locations
   const [selectedTagToAdd, setSelectedTagToAdd] = useState('');
@@ -186,11 +235,84 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     }
   }, [selectedLocation, token]);
 
+  // Drag & Drop handlers for folder grouping
+  const handleDragStart = (e, id) => {
+    e.dataTransfer.setData('text/plain', id);
+  };
+
+  const handleDragOver = (e, targetLoc) => {
+    if (targetLoc.is_folder === 1) {
+      e.preventDefault();
+      setDragOverFolderId(targetLoc.id);
+    }
+  };
+
+  const handleDrop = async (e, targetFolder) => {
+    e.preventDefault();
+    setDragOverFolderId(null);
+    const draggedId = e.dataTransfer.getData('text/plain');
+    if (!draggedId || draggedId === targetFolder.id) return;
+
+    const draggedLoc = locations.find(l => l.id === draggedId);
+    if (!draggedLoc) return;
+
+    const confirmDrop = window.confirm(`Are you sure you want to move "${draggedLoc.name}" into the folder "${targetFolder.name}"?`);
+    if (confirmDrop) {
+      const updatedLoc = { ...draggedLoc, parent_id: targetFolder.id };
+      await db.locations.update(draggedId, { parent_id: targetFolder.id });
+      await queueSyncAction('locations', 'update', updatedLoc);
+    }
+  };
+
   // Helper: Get featured image or fallback placeholder
   const getFeaturedPhoto = (entityId) => {
+    const loc = locations.find(l => l.id === entityId);
+    if (loc && loc.local_file_data) return loc.local_file_data;
+
+    const place = places.find(p => p.id === entityId);
+    if (place && place.local_file_data) return place.local_file_data;
+
     const pList = photos.filter(p => p.entity_id === entityId);
     const featured = pList.find(p => p.is_featured === 1);
     return featured ? featured.file_path : (pList[0] ? pList[0].file_path : '/placeholder.jpg');
+  };
+
+  // Helper: Get folder hierarchy path breadcrumbs
+  const getBreadcrumbs = () => {
+    if (!currentFolderId) return [];
+    const path = [];
+    let currentId = currentFolderId;
+    while (currentId) {
+      const loc = locations.find(l => String(l.id) === String(currentId));
+      if (!loc) break;
+      path.unshift(loc);
+      const pId = loc.parent_id;
+      if (pId && pId !== 'null' && pId !== 'undefined') {
+        currentId = pId;
+      } else {
+        currentId = null;
+      }
+    }
+    return path;
+  };
+
+  // Helper: Get folder hierarchy path breadcrumbs for selected location detail view
+  const getSelectedLocationBreadcrumbs = () => {
+    if (!selectedLocation || !selectedLocation.parent_id || selectedLocation.parent_id === 'null' || selectedLocation.parent_id === 'undefined') return [];
+    const path = [];
+    let currentId = selectedLocation.parent_id;
+    while (currentId) {
+      const loc = locations.find(l => String(l.id) === String(currentId));
+      if (!loc) break;
+      path.unshift(loc);
+      const pId = loc.parent_id;
+      if (pId && pId !== 'null' && pId !== 'undefined') {
+        currentId = pId;
+      } else {
+        currentId = null;
+      }
+    }
+    return path;
   };
 
   // Helper: Get tags for an entity
@@ -202,24 +324,92 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   // Create new location
   const handleCreateLocation = async (e) => {
     if (e) e.preventDefault();
-    if (!locName.trim()) return;
+    if (!locName.trim() || isSavingLocation) return;
+
+    setIsSavingLocation(true);
 
     const newLocId = generateUUID();
+    const cleanCountry = locCountry.trim();
+    let finalName = locName.trim();
+    if (cleanCountry && !finalName.endsWith(cleanCountry)) {
+      finalName = `${finalName}, ${cleanCountry}`;
+    }
+
+    const latitudeVal = locLat ? parseFloat(locLat) : null;
+    const longitudeVal = locLon ? parseFloat(locLon) : null;
+
     const newLoc = {
       id: newLocId,
-      name: locName,
+      name: finalName,
       state: locState.trim() || null,
       country: locCountry.trim() || null,
-      latitude: locLat ? parseFloat(locLat) : null,
-      longitude: locLon ? parseFloat(locLon) : null,
+      latitude: latitudeVal,
+      longitude: longitudeVal,
       visited: 0,
       notes: locNotes,
+      local_file_data: null,
       immich_album_id: null,
+      parent_id: currentFolderId,
+      is_folder: isFolderChecked ? 1 : 0,
+      photo_sync_status: 'pending',
       created_at: new Date().toISOString()
     };
 
-    // Save to IndexedDB and queue sync
+    // Save to IndexedDB and queue sync instantly
     await queueSyncAction('locations', 'insert', newLoc);
+
+    // Fire background photo fetching without holding up the UI
+    fetch('/api/import/search-photo', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ query: finalName, latitude: latitudeVal, longitude: longitudeVal })
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(async (data) => {
+        if (data) {
+          const updates = { photo_sync_status: 'completed' };
+          if (data.fileUrl) updates.local_file_data = data.fileUrl;
+          if (data.description && !locNotes.trim()) {
+            updates.notes = data.description;
+          }
+
+          // Update local IndexedDB
+          await db.locations.update(newLocId, updates);
+          // Queue update sync
+          await queueSyncAction('locations', 'update', {
+            ...newLoc,
+            ...updates
+          });
+
+          if (data.fileUrl) {
+            // Insert entity_photos link
+            await queueSyncAction('entity_photos', 'insert', {
+              id: generateUUID(),
+              entity_id: newLocId,
+              file_path: data.fileUrl,
+              is_featured: 1,
+              created_at: new Date().toISOString()
+            });
+          }
+        } else {
+          await db.locations.update(newLocId, { photo_sync_status: 'failed' });
+          await queueSyncAction('locations', 'update', {
+            ...newLoc,
+            photo_sync_status: 'failed'
+          });
+        }
+      })
+      .catch(async (err) => {
+        console.error('Background location photo fetch failed:', err);
+        await db.locations.update(newLocId, { photo_sync_status: 'failed' });
+        await queueSyncAction('locations', 'update', {
+          ...newLoc,
+          photo_sync_status: 'failed'
+        });
+      });
 
     // Reset Form
     setLocName('');
@@ -229,7 +419,9 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     setLocLon('');
     setLocNotes('');
     setSearchQuery('');
+    setIsFolderChecked(false);
     setShowAddForm(false);
+    setIsSavingLocation(false);
   };
 
   // Select Search result
@@ -260,7 +452,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   // Toggle visited status for location
   const handleToggleVisited = async (loc) => {
     const newStatus = loc.visited === 1 ? 0 : 1;
-    const updatedLoc = { ...loc, visited: newStatus };
+    const updatedLoc = { ...loc, visited: newStatus, created_at: new Date().toISOString() };
 
     await queueSyncAction('locations', 'update', updatedLoc);
     setSelectedLocation(updatedLoc);
@@ -268,9 +460,16 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
 
   // Delete Location
   const handleDeleteLocation = async (locId) => {
-    if (window.confirm('Are you sure you want to delete this location? All places within it will also be deleted.')) {
-      await queueSyncAction('locations', 'delete', { id: locId });
-      setSelectedLocation(null);
+    const loc = locations.find(l => l.id === locId);
+    if (!loc) return;
+
+    if (loc.is_folder === 1) {
+      setFolderToDelete(loc);
+    } else {
+      if (window.confirm('Are you sure you want to delete this location? This will permanently delete the location, all places of visit within it, and all associated photo files.')) {
+        await queueSyncAction('locations', 'delete', { id: locId });
+        setSelectedLocation(null);
+      }
     }
   };
 
@@ -310,23 +509,84 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   // Add Place to Visit
   const handleAddPlace = async (e) => {
     e.preventDefault();
-    if (!placeName.trim() || !selectedLocation) return;
+    if (!placeName.trim() || !selectedLocation || isSavingPlace) return;
+
+    setIsSavingPlace(true);
 
     const newPlaceId = generateUUID();
+    const latitudeVal = placeLat ? parseFloat(placeLat) : null;
+    const longitudeVal = placeLon ? parseFloat(placeLon) : null;
+    const cleanSearchQuery = `${placeName.trim()} ${selectedLocation.name}`.trim();
+
     const newPlace = {
       id: newPlaceId,
       location_id: selectedLocation.id,
       name: placeName,
       category: placeCategory,
-      latitude: placeLat ? parseFloat(placeLat) : null,
-      longitude: placeLon ? parseFloat(placeLon) : null,
+      latitude: latitudeVal,
+      longitude: longitudeVal,
       visited: 0,
       notes: placeNotes,
+      local_file_data: null,
       immich_album_id: null,
       created_at: new Date().toISOString()
     };
 
+    // Save to IndexedDB instantly
     await queueSyncAction('places', 'insert', newPlace);
+
+    // Fire background photo fetching without holding up the UI
+    fetch('/api/import/search-photo', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ query: cleanSearchQuery, latitude: latitudeVal, longitude: longitudeVal })
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(async (data) => {
+        if (data) {
+          const updates = { photo_sync_status: 'completed' };
+          if (data.fileUrl) updates.local_file_data = data.fileUrl;
+          if (data.description && !placeNotes.trim()) {
+            updates.notes = data.description;
+          }
+
+          // Update local IndexedDB
+          await db.places.update(newPlaceId, updates);
+          // Queue update sync
+          await queueSyncAction('places', 'update', {
+            ...newPlace,
+            ...updates
+          });
+
+          if (data.fileUrl) {
+            // Insert entity_photos link
+            await queueSyncAction('entity_photos', 'insert', {
+              id: generateUUID(),
+              entity_id: newPlaceId,
+              file_path: data.fileUrl,
+              is_featured: 1,
+              created_at: new Date().toISOString()
+            });
+          }
+        } else {
+          await db.places.update(newPlaceId, { photo_sync_status: 'failed' });
+          await queueSyncAction('places', 'update', {
+            ...newPlace,
+            photo_sync_status: 'failed'
+          });
+        }
+      })
+      .catch(async (err) => {
+        console.error('Background place photo fetch failed:', err);
+        await db.places.update(newPlaceId, { photo_sync_status: 'failed' });
+        await queueSyncAction('places', 'update', {
+          ...newPlace,
+          photo_sync_status: 'failed'
+        });
+      });
 
     // Reset Form
     setPlaceName('');
@@ -334,6 +594,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     setPlaceLon('');
     setPlaceNotes('');
     setShowAddPlaceForm(false);
+    setIsSavingPlace(false);
   };
 
   // Toggle visited status for place
@@ -407,7 +668,8 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
         ...selectedLocation, 
         name: tempName,
         latitude: latVal && !isNaN(latVal) ? latVal : null,
-        longitude: lonVal && !isNaN(lonVal) ? lonVal : null
+        longitude: lonVal && !isNaN(lonVal) ? lonVal : null,
+        created_at: new Date().toISOString()
       };
       setSelectedLocation(updated);
       await queueSyncAction('locations', 'update', updated);
@@ -541,7 +803,8 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     const updatedLoc = { 
       ...selectedLocation, 
       immich_album_id: JSON.stringify(updatedVisits),
-      visited: 1 // Automatically mark location as visited
+      visited: 1, // Automatically mark location as visited
+      created_at: new Date().toISOString()
     };
     
     setSelectedLocation(updatedLoc);
@@ -570,7 +833,8 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     const updatedLoc = {
       ...selectedLocation,
       immich_album_id: updatedVisits.length ? JSON.stringify(updatedVisits) : null,
-      visited: newVisited
+      visited: newVisited,
+      created_at: new Date().toISOString()
     };
 
     setSelectedLocation(updatedLoc);
@@ -606,7 +870,8 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     const updatedLoc = {
       ...selectedLocation,
       immich_album_id: JSON.stringify(updatedVisits),
-      visited: 1 // Automatically mark location as visited
+      visited: 1, // Automatically mark location as visited
+      created_at: new Date().toISOString()
     };
 
     setSelectedLocation(updatedLoc);
@@ -731,6 +996,28 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
               </div>
             ) : (
               <div>
+                {(() => {
+                  const crumbs = getSelectedLocationBreadcrumbs();
+                  if (crumbs.length === 0) return null;
+                  return (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      {crumbs.map((crumb, idx) => (
+                        <React.Fragment key={crumb.id}>
+                          <span
+                            onClick={() => {
+                              setSelectedLocation(null);
+                              setCurrentFolderId(crumb.id);
+                            }}
+                            style={{ cursor: 'pointer', color: 'var(--accent-secondary)' }}
+                          >
+                            {crumb.name}
+                          </span>
+                          <span style={{ color: 'var(--text-muted)' }}>&gt;</span>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  );
+                })()}
                 <h2 
                   onClick={() => { 
                     setIsEditingName(true); 
@@ -765,6 +1052,55 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
               }}
             >
               {selectedLocation.visited === 1 ? '✓ Visited' : '○ Not Visited'}
+            </button>
+            <button 
+              onClick={async () => {
+                const newIsFolder = selectedLocation.is_folder === 1 ? 0 : 1;
+                const updated = { ...selectedLocation, is_folder: newIsFolder };
+                await db.locations.update(selectedLocation.id, { is_folder: newIsFolder });
+                await queueSyncAction('locations', 'update', updated);
+                setSelectedLocation(updated);
+
+                if (newIsFolder === 1 && (!selectedLocation.notes || !selectedLocation.notes.trim() || !selectedLocation.local_file_data)) {
+                  fetch('/api/import/search-photo', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                      query: selectedLocation.name,
+                      latitude: selectedLocation.latitude,
+                      longitude: selectedLocation.longitude
+                    })
+                  })
+                    .then(res => res.ok ? res.json() : null)
+                    .then(async (data) => {
+                      if (data) {
+                        const updates = { photo_sync_status: 'completed' };
+                        if (data.fileUrl) updates.local_file_data = data.fileUrl;
+                        if (data.description && (!selectedLocation.notes || !selectedLocation.notes.trim())) {
+                          updates.notes = data.description;
+                        }
+                        await db.locations.update(selectedLocation.id, updates);
+                        await queueSyncAction('locations', 'update', {
+                          ...updated,
+                          ...updates
+                        });
+                        setSelectedLocation(prev => prev && prev.id === selectedLocation.id ? { ...prev, ...updates } : prev);
+                      }
+                    })
+                    .catch(err => console.error('Wikipedia fetch on folder conversion failed:', err));
+                }
+              }}
+              style={{
+                background: selectedLocation.is_folder === 1 ? 'var(--accent-primary-glow)' : 'rgba(255,255,255,0.05)',
+                border: '1px solid var(--border-glass)', borderRadius: '20px', padding: '8px 16px',
+                fontSize: '0.8rem', fontWeight: 600, color: selectedLocation.is_folder === 1 ? 'var(--accent-primary-hover)' : 'var(--text-secondary)',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+              }}
+            >
+              {selectedLocation.is_folder === 1 ? '📂 Folder' : '📄 Convert to Folder'}
             </button>
             <button 
               onClick={() => handleDeleteLocation(selectedLocation.id)} 
@@ -927,7 +1263,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                 rows="4"
                 value={selectedLocation.notes}
                 onChange={(e) => {
-                  const updated = { ...selectedLocation, notes: e.target.value };
+                  const updated = { ...selectedLocation, notes: e.target.value, created_at: new Date().toISOString() };
                   setSelectedLocation(updated);
                   queueSyncAction('locations', 'update', updated);
                 }}
@@ -1087,8 +1423,8 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                     <button type="button" className="btn btn-secondary" onClick={() => setShowAddPlaceForm(false)}>
                       Cancel
                     </button>
-                    <button type="submit" className="btn btn-primary">
-                      Save Place to Visit
+                    <button type="submit" className="btn btn-primary" disabled={isSavingPlace}>
+                      {isSavingPlace ? 'Saving...' : 'Save Place to Visit'}
                     </button>
                   </div>
                 </form>
@@ -1102,7 +1438,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                     <div 
                       key={place.id} 
                       style={{
-                        background: '#191924', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
+                        background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
                         display: 'flex', overflow: 'hidden', padding: '8px'
                       }}
                     >
@@ -1167,7 +1503,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
                           <h4>Edit Details: {place.name}</h4>
                           <Trash2 size={16} style={{ color: 'var(--error)', cursor: 'pointer' }} onClick={async () => {
-                            if (window.confirm('Delete this place?')) {
+                            if (window.confirm('Are you sure you want to delete this place? This will permanently delete the place of visit and all its associated photo files.')) {
                               await queueSyncAction('places', 'delete', { id: place.id });
                               setSelectedPlaceId(null);
                             }
@@ -1555,12 +1891,108 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   return (
     <div className="container">
       <div className="page-header">
-        <h2>Locations & Regions</h2>
-        <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto' }}>
-          Add Location
-        </button>
+        {!currentFolderId ? (
+          <h2>Locations & Regions</h2>
+        ) : (
+          <h2 style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', margin: 0 }}>
+            {(() => {
+              const crumbs = getBreadcrumbs() || [];
+              return crumbs.map((crumb, idx) => {
+                const isLast = idx === crumbs.length - 1;
+                return (
+                  <React.Fragment key={crumb.id}>
+                    <span
+                      onClick={() => !isLast && setCurrentFolderId(crumb.id)}
+                      style={{
+                        cursor: isLast ? 'default' : 'pointer',
+                        color: isLast ? 'var(--text-primary)' : 'var(--text-secondary)'
+                      }}
+                    >
+                      {crumb.name}
+                    </span>
+                    {!isLast && <span style={{ color: 'var(--text-muted)' }}>&gt;</span>}
+                  </React.Fragment>
+                );
+              });
+            })()}
+          </h2>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {currentFolderId && (
+            <button 
+              onClick={() => handleDeleteLocation(currentFolderId)} 
+              style={{ 
+                width: '36px', height: '36px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                background: 'rgba(239, 68, 68, 0.15)', color: 'var(--error)', border: '1px solid var(--error-glow)', 
+                borderRadius: '50%', cursor: 'pointer' 
+              }}
+              title="Delete Active Folder"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto' }}>
+            Add Location
+          </button>
+        </div>
       </div>
 
+
+      {/* Delete Folder Custom Dialog Modal */}
+      {folderToDelete && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100,
+          padding: '20px'
+        }}>
+          <div className="login-card" style={{ maxWidth: '450px', width: '100%', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h3 style={{ margin: 0 }}>Delete Folder</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0 }}>
+              Are you sure you want to delete the folder <strong>{folderToDelete.name}</strong>?
+            </p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0, lineHeight: '1.4' }}>
+              You can choose to permanently delete all contents inside this folder, or preserve them and move them back to the root Locations list.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+              <button 
+                onClick={async () => {
+                  await queueSyncAction('locations', 'delete_folder', { id: folderToDelete.id, deleteContents: true });
+                  if (currentFolderId === folderToDelete.id) {
+                    setCurrentFolderId(folderToDelete.parent_id || null);
+                  }
+                  setFolderToDelete(null);
+                  setSelectedLocation(null);
+                }}
+                className="btn"
+                style={{ backgroundColor: 'var(--error)', color: '#fff', border: 'none', fontWeight: '600' }}
+              >
+                Delete All Contents
+              </button>
+              <button 
+                onClick={async () => {
+                  await queueSyncAction('locations', 'delete_folder', { id: folderToDelete.id, deleteContents: false });
+                  if (currentFolderId === folderToDelete.id) {
+                    setCurrentFolderId(folderToDelete.parent_id || null);
+                  }
+                  setFolderToDelete(null);
+                  setSelectedLocation(null);
+                }}
+                className="btn btn-secondary"
+                style={{ fontWeight: '600' }}
+              >
+                Move to Locations
+              </button>
+              <button 
+                onClick={() => setFolderToDelete(null)}
+                className="btn"
+                style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', fontWeight: '600' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Location Overlay Dialog */}
       {showAddForm && (
@@ -1668,6 +2100,19 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                 </div>
               </div>
 
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <input
+                  type="checkbox"
+                  id="createAsFolder"
+                  checked={isFolderChecked}
+                  onChange={(e) => setIsFolderChecked(e.target.checked)}
+                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                <label htmlFor="createAsFolder" style={{ cursor: 'pointer', fontSize: '0.85rem', userSelect: 'none', margin: 0 }}>
+                  Create as Folder (allows grouping other locations inside)
+                </label>
+              </div>
+
               <div className="form-group">
                 <label>Notes</label>
                 <textarea
@@ -1682,8 +2127,8 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                 <button type="button" className="btn btn-secondary" onClick={() => setShowAddForm(false)}>
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  Save Location
+                <button type="submit" className="btn btn-primary" disabled={isSavingLocation}>
+                  {isSavingLocation ? 'Saving...' : 'Save Location'}
                 </button>
               </div>
             </form>
@@ -1696,7 +2141,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
         display: 'flex',
         flexDirection: 'column',
         gap: '12px',
-        background: '#191924',
+        background: 'var(--bg-surface-elevated)',
         padding: '12px 16px',
         borderRadius: 'var(--radius-md)',
         border: '1px solid var(--border-glass)',
@@ -1721,6 +2166,40 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
             >
               <option value="">All Countries</option>
               {Array.from(new Set(locations.map(l => l.country).filter(Boolean))).sort().map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {/* Filter by Source Website */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Source Website</label>
+            <select
+              className="form-control"
+              value={filterSource}
+              onChange={(e) => setFilterSource(e.target.value)}
+              style={{ minWidth: '120px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+            >
+              <option value="">All Sources</option>
+              {(() => {
+                const allSources = new Set();
+                locations.forEach(loc => {
+                  if (loc.source_urls) {
+                    try {
+                      const urls = JSON.parse(loc.source_urls);
+                      if (Array.isArray(urls)) {
+                        urls.forEach(u => {
+                          try {
+                            const host = new URL(u).hostname.replace('www.', '');
+                            if (host) allSources.add(host);
+                          } catch (_) {}
+                        });
+                      }
+                    } catch (_) {}
+                  }
+                });
+                return Array.from(allSources).sort().map(src => (
+                  <option key={src} value={src}>{src}</option>
+                ));
+              })()}
             </select>
           </div>
 
@@ -1863,10 +2342,22 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
         </div>
       )}
 
+
+
       {/* Grid of Locations */}
       <div className="grid">
         {(() => {
           const processedLocations = locations.filter(loc => {
+            // Filter by folder scope
+            if (!listSearchQuery.trim()) {
+              const parentId = loc.parent_id;
+              const hasParent = parentId && parentId !== 'null' && parentId !== 'undefined';
+              if (currentFolderId === null) {
+                if (hasParent) return false;
+              } else {
+                if (parentId !== currentFolderId) return false;
+              }
+            }
             // Search query
             if (listSearchQuery.trim()) {
               const q = listSearchQuery.toLowerCase();
@@ -1879,6 +2370,24 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
             }
             // Country
             if (filterCountry && loc.country !== filterCountry) return false;
+            // Source Website
+            if (filterSource) {
+              if (!loc.source_urls) return false;
+              try {
+                const urls = JSON.parse(loc.source_urls);
+                if (!Array.isArray(urls)) return false;
+                const hasMatch = urls.some(u => {
+                  try {
+                    return new URL(u).hostname.replace('www.', '').toLowerCase() === filterSource.toLowerCase();
+                  } catch (_) {
+                    return false;
+                  }
+                });
+                if (!hasMatch) return false;
+              } catch (_) {
+                return false;
+              }
+            }
             // State
             if (filterState && loc.state !== filterState) return false;
             // Tag
@@ -1919,14 +2428,21 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
             }
             return true;
           }).sort((a, b) => {
+            const parseDate = (str) => {
+              if (!str) return new Date(0);
+              if (typeof str === 'string' && !str.includes('T') && str.includes(' ')) {
+                return new Date(str.replace(' ', 'T'));
+              }
+              return new Date(str);
+            };
             if (sortBy === 'date-desc') {
-              const dA = a.created_at ? new Date(a.created_at) : new Date(0);
-              const dB = b.created_at ? new Date(b.created_at) : new Date(0);
+              const dA = parseDate(a.created_at);
+              const dB = parseDate(b.created_at);
               return dB - dA;
             }
             if (sortBy === 'date-asc') {
-              const dA = a.created_at ? new Date(a.created_at) : new Date(0);
-              const dB = b.created_at ? new Date(b.created_at) : new Date(0);
+              const dA = parseDate(a.created_at);
+              const dB = parseDate(b.created_at);
               return dA - dB;
             }
             if (sortBy === 'name-asc') {
@@ -1949,21 +2465,90 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
           const locTags = getEntityTagsList(loc.id);
 
           return (
-            <div key={loc.id} className="card" onClick={() => setSelectedLocation(loc)}>
+            <div 
+              key={loc.id} 
+              className="card" 
+              onClick={() => loc.is_folder === 1 ? setCurrentFolderId(loc.id) : setSelectedLocation(loc)}
+              draggable={loc.is_folder !== 1}
+              onDragStart={(e) => handleDragStart(e, loc.id)}
+              onDragOver={(e) => handleDragOver(e, loc)}
+              onDragLeave={() => setDragOverFolderId(null)}
+              onDrop={(e) => handleDrop(e, loc)}
+              style={{
+                border: dragOverFolderId === loc.id 
+                  ? '2px dashed var(--accent-primary)' 
+                  : (loc.is_folder === 1 
+                      ? '1px dashed var(--accent-secondary)' 
+                      : '1px solid var(--border-glass)'),
+                boxShadow: loc.is_folder === 1 ? 'var(--shadow-glow)' : 'var(--shadow-panel)'
+              }}
+            >
               <div className="card-media">
-                <img 
-                  src={featuredImg} 
-                  onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'} 
-                  alt={loc.name} 
-                />
-                <div className={`card-badge ${loc.visited === 1 ? 'visited' : ''}`}>
-                  {loc.visited === 1 ? 'Visited' : 'Not Visited'}
+                {loc.is_folder === 1 ? (
+                  <FolderCover folderId={loc.id} locations={locations} getFeaturedPhoto={getFeaturedPhoto} />
+                ) : (
+                  <img 
+                    src={featuredImg} 
+                    onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'} 
+                    alt={loc.name} 
+                  />
+                )}
+                <div style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', gap: '6px', zIndex: 10 }}>
+                  {loc.is_folder === 1 && (
+                    <div className="card-badge folder" style={{ position: 'static', background: 'var(--accent-secondary)' }}>
+                      📂 Folder
+                    </div>
+                  )}
+                  <div className={`card-badge ${loc.visited === 1 ? 'visited' : ''}`} style={{ position: 'static' }}>
+                    {loc.visited === 1 ? 'Visited' : 'Not Visited'}
+                  </div>
                 </div>
               </div>
               <div className="card-content">
                 <h3>{loc.name}</h3>
-                {loc.notes && <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', flexGrow: 1 }}>{loc.notes.substring(0, 100)}...</p>}
+                {loc.notes && <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', flexGrow: 1, marginBottom: '4px' }}>{loc.notes.substring(0, 100)}...</p>}
                 
+                {/* Source URLs Links */}
+                {(() => {
+                  if (!loc.source_urls) return null;
+                  try {
+                    const urls = JSON.parse(loc.source_urls);
+                    if (!Array.isArray(urls) || urls.length === 0) return null;
+                    return (
+                      <div className="location-sources" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }} onClick={(e) => e.stopPropagation()}>
+                        {urls.map((u, idx) => {
+                          let display = 'Source';
+                          try { display = new URL(u).hostname.replace('www.', ''); } catch (_) {}
+                          return (
+                            <a 
+                              key={idx} 
+                              href={u} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              style={{ 
+                                fontSize: '0.7rem', 
+                                background: 'rgba(255,255,255,0.06)', 
+                                padding: '2px 6px', 
+                                borderRadius: '4px', 
+                                border: '1px solid var(--border-glass)',
+                                color: 'var(--accent-primary)',
+                                textDecoration: 'none',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '2px'
+                              }}
+                            >
+                              🔗 {display}
+                            </a>
+                          );
+                        })}
+                      </div>
+                    );
+                  } catch (_) {
+                    return null;
+                  }
+                })()}
+
                 <div className="card-tags">
                   {locTags.map(t => (
                     <span key={t.id} className="tag-badge" style={{ backgroundColor: t.color, color: '#000' }}>

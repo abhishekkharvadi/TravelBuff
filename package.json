@@ -13,7 +13,9 @@
     "dev": "concurrently \"npm run server\" \"npm run client\""
   },
   "dependencies": {
+    "axios": "^1.18.1",
     "bcryptjs": "^2.4.3",
+    "cheerio": "^1.2.0",
     "cors": "^2.8.5",
     "dexie": "^4.0.10",
     "dexie-react-hooks": "^4.0.2",
@@ -23,6 +25,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.395.0",
     "multer": "^1.4.5-lts.1",
+    "playwright": "^1.61.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sqlite3": "^5.1.7",

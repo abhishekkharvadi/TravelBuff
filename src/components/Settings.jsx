@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, queueSyncAction, generateUUID, clearLocalDb, populateLocalDb } from '../clientDb.js';
-import { Plus, Trash2, Tag, Compass, Settings, Server, Key, DollarSign, X, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Tag, Compass, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock } from 'lucide-react';
 
-export default function SettingsComponent({ token, userId, onLogout }) {
+export default function SettingsComponent({ token, userId, onLogout, onResumeMarkdown }) {
   // Dexie live queries
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const customCategories = useLiveQuery(() => db.custom_categories.toArray()) || [];
@@ -22,8 +22,20 @@ export default function SettingsComponent({ token, userId, onLogout }) {
   const [immichAltUrl, setImmichAltUrl] = useState('');
   const [baseCurrency, setBaseCurrency] = useState('USD');
   const [owntracksKey, setOwnTracksKey] = useState('');
+  
+  // AI Settings state
+  const [aiProvider, setAiProvider] = useState('Gemini');
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [aiEndpointUrl, setAiEndpointUrl] = useState('');
+  const [aiModel, setAiModel] = useState('gemini-1.5-pro');
+  const [firecrawlKey, setFirecrawlKey] = useState('');
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  
+  const [renamingId, setRenamingId] = useState(null);
+  const [activeMenuId, setActiveMenuId] = useState(null);
+  
+  const savedGuides = useLiveQuery(() => db.saved_markdowns ? db.saved_markdowns.toArray() : Promise.resolve([])) || [];
   
   // Tooltip states
   const [showEndpointTooltip, setShowEndpointTooltip] = useState(false);
@@ -51,6 +63,16 @@ export default function SettingsComponent({ token, userId, onLogout }) {
           setImmichAltUrl(data.config.immich_alt_url || '');
           setBaseCurrency(data.config.base_currency || 'USD');
           setOwnTracksKey(data.config.owntracks_key || '');
+          if (data.config.ai_settings) {
+            try {
+              const aiOpts = JSON.parse(data.config.ai_settings);
+              setAiProvider(aiOpts.provider || 'Gemini');
+              setAiApiKey(aiOpts.apiKey || '');
+              setAiEndpointUrl(aiOpts.endpointUrl || '');
+              setAiModel(aiOpts.model || 'gemini-1.5-pro');
+              setFirecrawlKey(aiOpts.firecrawlKey || '');
+            } catch (e) { console.error('Failed to parse ai_settings'); }
+          }
         }
       })
       .catch(err => console.error('Failed to load configs:', err));
@@ -82,7 +104,14 @@ export default function SettingsComponent({ token, userId, onLogout }) {
           immich_url: immichUrl,
           immich_key: immichKey,
           immich_alt_url: immichAltUrl,
-          base_currency: baseCurrency
+          base_currency: baseCurrency,
+          ai_settings: JSON.stringify({
+            provider: aiProvider,
+            apiKey: aiApiKey,
+            endpointUrl: aiEndpointUrl,
+            model: aiModel,
+            firecrawlKey: firecrawlKey
+          })
         })
       });
       if (res.ok) {
@@ -428,6 +457,110 @@ export default function SettingsComponent({ token, userId, onLogout }) {
               </div>
 
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-glass)', margin: '20px 0' }} />
+
+              <h4 style={{ color: 'var(--accent-secondary)', fontSize: '0.9rem', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Sparkles size={16} /> AI Assistant Configuration
+              </h4>
+              <div className="form-group">
+                <label>AI Provider</label>
+                <select className="form-control" value={aiProvider} onChange={(e) => setAiProvider(e.target.value)}>
+                  <option value="OpenAI">OpenAI</option>
+                  <option value="Claude">Claude</option>
+                  <option value="Gemini">Gemini</option>
+                  <option value="Ollama">Ollama</option>
+                  <option value="Local AI">Local AI</option>
+                </select>
+              </div>
+
+              {['OpenAI', 'Claude', 'Gemini'].includes(aiProvider) && (
+                <div className="form-group">
+                  <label>API Key</label>
+                  <input
+                    type="password"
+                    className="form-control"
+                    placeholder={`Enter ${aiProvider} API Key`}
+                    value={aiApiKey}
+                    onChange={(e) => setAiApiKey(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>Firecrawl API Key (Optional)</label>
+                <input
+                  type="password"
+                  className="form-control"
+                  placeholder="Enter Firecrawl API Key"
+                  value={firecrawlKey}
+                  onChange={(e) => setFirecrawlKey(e.target.value)}
+                />
+              </div>
+
+              {['Ollama', 'Local AI', 'OpenAI', 'Claude'].includes(aiProvider) && (
+                <div className="form-group">
+                  <label>Endpoint URL (Optional for Cloud Providers)</label>
+                  <input
+                    type="url"
+                    className="form-control"
+                    placeholder="https://api... or http://localhost..."
+                    value={aiEndpointUrl}
+                    onChange={(e) => setAiEndpointUrl(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {(() => {
+                const standardModels = {
+                  Gemini: ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-flash-latest', 'gemini-pro-latest'],
+                  OpenAI: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+                  Claude: ['claude-3-5-sonnet-20240620', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
+                  Ollama: ['llama3', 'mistral', 'phi3', 'gemma'],
+                  'Local AI': ['llama3', 'mistral']
+                }[aiProvider] || [];
+
+                const isCustom = aiModel && !standardModels.includes(aiModel);
+
+                return (
+                  <>
+                    <div className="form-group">
+                      <label>Model Selector</label>
+                      <select
+                        className="form-control"
+                        value={isCustom ? 'custom' : aiModel}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === 'custom') {
+                            setAiModel('');
+                          } else {
+                            setAiModel(val);
+                          }
+                        }}
+                      >
+                        {standardModels.map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                        <option value="custom">Custom Model...</option>
+                      </select>
+                    </div>
+
+                    {(isCustom || aiModel === '') && (
+                      <div className="form-group">
+                        <label>Custom Model Name</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="Enter model identifier"
+                          value={aiModel}
+                          onChange={(e) => setAiModel(e.target.value)}
+                          required
+                        />
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-glass)', margin: '20px 0' }} />
               
               <h4 style={{ color: 'var(--accent-secondary)', fontSize: '0.9rem', marginBottom: '12px' }}>General Configurations</h4>
               <div className="form-group">
@@ -597,6 +730,126 @@ export default function SettingsComponent({ token, userId, onLogout }) {
           </div>
 
         </div>
+      </div>
+
+      {/* SAVED GUIDES SECTION */}
+      <div style={{ marginTop: '40px', background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+          <Sparkles size={22} style={{ color: 'var(--accent-primary)' }} />
+          <h3 style={{ margin: 0 }}>Saved Travel Guides & Markdowns</h3>
+        </div>
+        
+        {savedGuides.length === 0 ? (
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>No saved guides yet. Import some guides using the URL import tool!</p>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+            {savedGuides.map(guide => (
+              <div 
+                key={guide.id} 
+                className="card" 
+                style={{ 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  gap: '12px', 
+                  padding: '16px', 
+                  cursor: 'pointer',
+                  border: guide.status === 'completed' ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid var(--border-glass)',
+                  transition: 'border-color 0.2s ease, transform 0.2s ease'
+                }}
+                onClick={() => onResumeMarkdown(guide)}
+                onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'space-between' }}>
+                  {renamingId === guide.id ? (
+                    <input 
+                      type="text" 
+                      className="form-control"
+                      style={{ fontWeight: '600', fontSize: '1rem', background: '#0f0f16', border: '1px solid var(--border)', padding: '4px', flexGrow: 1 }}
+                      value={guide.name}
+                      autoFocus
+                      onChange={async (e) => {
+                        const newName = e.target.value;
+                        await queueSyncAction('saved_markdowns', 'update', { ...guide, name: newName });
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') setRenamingId(null);
+                      }}
+                      onBlur={() => setRenamingId(null)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <h4 style={{ margin: 0, fontWeight: '600', fontSize: '1rem', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '180px' }}>
+                      {guide.name}
+                    </h4>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
+                    {guide.status === 'completed' ? (
+                      <span style={{ color: 'var(--success)', display: 'inline-flex', alignItems: 'center', padding: '4px', borderRadius: '50%', backgroundColor: 'rgba(74, 222, 128, 0.1)' }} title="Completed">
+                        <Check size={14} />
+                      </span>
+                    ) : (
+                      <span style={{ color: '#eab308', display: 'inline-flex', alignItems: 'center', padding: '4px', borderRadius: '50%', backgroundColor: 'rgba(234, 179, 8, 0.1)' }} title="Incomplete">
+                        <Clock size={14} />
+                      </span>
+                    )}
+                    
+                    {/* Meatballs dropdown menu */}
+                    <div style={{ position: 'relative' }}>
+                      <button 
+                        style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                        onClick={() => setActiveMenuId(activeMenuId === guide.id ? null : guide.id)}
+                      >
+                        <MoreVertical size={16} />
+                      </button>
+                      {activeMenuId === guide.id && (
+                        <div style={{
+                          position: 'absolute',
+                          right: 0,
+                          top: '24px',
+                          backgroundColor: '#191924',
+                          border: '1px solid var(--border-glass)',
+                          borderRadius: '4px',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                          zIndex: 10,
+                          minWidth: '100px'
+                        }}>
+                          <button 
+                            style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '0.8rem' }}
+                            onClick={() => {
+                              setRenamingId(guide.id);
+                              setActiveMenuId(null);
+                            }}
+                          >
+                            Rename
+                          </button>
+                          <button 
+                            style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', background: 'transparent', border: 'none', color: 'var(--error)', cursor: 'pointer', fontSize: '0.8rem' }}
+                            onClick={async () => {
+                              setActiveMenuId(null);
+                              if (window.confirm(`Delete "${guide.name}"?`)) {
+                                await queueSyncAction('saved_markdowns', 'delete', { id: guide.id });
+                              }
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Source: {guide.url || 'Manual Paste'}
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  <span>Saved: {new Date(guide.created_at || Date.now()).toLocaleDateString()}</span>
+                  <span>Size: {(guide.content ? (guide.content.length / 1024).toFixed(1) : '0.0')} KB</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

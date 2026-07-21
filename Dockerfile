@@ -20,8 +20,10 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 
-# Install native compilation dependencies for packages like sqlite3
-RUN apk add --no-cache python3 make g++
+# Install native compilation dependencies for packages like sqlite3 and native chromium for Playwright
+RUN apk add --no-cache python3 make g++ chromium nss freetype harfbuzz ca-certificates ttf-freefont
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Set production environment variables
 ENV NODE_ENV=production
@@ -37,7 +39,7 @@ COPY package.json ./
 RUN npm install --omit=dev
 
 # Copy backend scripts
-COPY db.js server.js ./
+COPY db.js server.js importService.js ./
 
 # Copy built frontend assets from Stage 1
 COPY --from=frontend-builder /app/dist ./dist

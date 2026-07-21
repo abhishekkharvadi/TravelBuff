@@ -1,0 +1,82 @@
+[2026-07-19T13:02:39.348Z] Failed to search photo for query "Coimbatore, India": Failed to download Wikimedia image: Forbidden
+Stack: Error: Failed to download Wikimedia image: Forbidden
+    at file:///app/server.js:593:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T14:56:41.224Z] Sync failed: SQLITE_ERROR: no such column: local_file_data
+Stack: Error: SQLITE_ERROR: no such column: local_file_data
+
+[2026-07-19T14:56:45.066Z] Sync failed: SQLITE_ERROR: no such column: local_file_data
+Stack: Error: SQLITE_ERROR: no such column: local_file_data
+
+[2026-07-19T14:56:47.796Z] Sync failed: SQLITE_ERROR: no such column: local_file_data
+Stack: Error: SQLITE_ERROR: no such column: local_file_data
+
+[2026-07-19T14:58:38.939Z] Sync failed: SQLITE_ERROR: no such column: local_file_data
+Stack: Error: SQLITE_ERROR: no such column: local_file_data
+
+[2026-07-19T15:01:58.026Z] Failed to search photo for query "Tokyo, Japan": Wikimedia Search failed: Too Many Requests
+Stack: Error: Wikimedia Search failed: Too Many Requests
+    at file:///app/server.js:614:15
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:02:43.735Z] Failed to search photo for query "Paris, France": Wikimedia Search failed: Too Many Requests
+Stack: Error: Wikimedia Search failed: Too Many Requests
+    at file:///app/server.js:614:15
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:56.591Z] Failed to search photo for query "Chatham Saw Mill India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:56.642Z] Failed to search photo for query "Radhanagar Beach India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:57.904Z] Failed to search photo for query "Ross Island India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:58.081Z] Failed to search photo for query "Cellular Jail India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:58.853Z] Failed to search photo for query "Science Museum India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:59.098Z] Failed to search photo for query "Marine Museum India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:59.103Z] Failed to search photo for query "Corbyn Cove Sea Beach India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:59.799Z] Failed to search photo for query "Chidiya Tapu Sea Beach India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:59.908Z] Failed to search photo for query "Baratang Island India": Failed to download Wikimedia image: Too many requests - please contact noc@wikimedia.org to discuss a less disruptive approach or instead use thumbnail images in sizes listed on https://w.wiki/GHai. (0c640b1)
+Stack: Error: Failed to download Wikimedia image: Too many requests - please contact noc@wikimedia.org to discuss a less disruptive approach or instead use thumbnail images in sizes listed on https://w.wiki/GHai. (0c640b1)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-19T15:31:59.941Z] Failed to search photo for query "Jolly Buoy Island India": Failed to download Wikimedia image: Too many requests - please contact noc@wikimedia.org to discuss a less disruptive approach or instead use thumbnail images in sizes listed on https://w.wiki/GHai. (0c640b1)
+Stack: Error: Failed to download Wikimedia image: Too many requests - please contact noc@wikimedia.org to discuss a less disruptive approach or instead use thumbnail images in sizes listed on https://w.wiki/GHai. (0c640b1)
+    at file:///app/server.js:651:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+[2026-07-20T18:15:06.111Z] Failed to search photo for query "Mylavaram Dam India": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:657:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+

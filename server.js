@@ -12,6 +12,8 @@ import https from 'https';
 import { WebSocketServer } from 'ws';
 import url from 'url';
 import { db, initDatabase, seedDefaultTags, seedDefaultCategories } from './db.js';
+import { processMarkdownImport, geocode } from './importService.js';
+import axios from 'axios';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 5000;
@@ -166,6 +168,7 @@ app.post('/api/auth/login', async (req, res) => {
       token, 
       username: user.username, 
       userId: user.id,
+      profilePicture: user.profile_picture,
       owntracksKey: config ? config.owntracks_key : null
     });
   } catch (err) {
@@ -176,7 +179,8 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const config = await db.get('SELECT * FROM user_configs WHERE user_id = ?', [req.user.id]);
-    res.json({ id: req.user.id, username: req.user.username, config });
+    const user = await db.get('SELECT profile_picture FROM users WHERE id = ?', [req.user.id]);
+    res.json({ id: req.user.id, username: req.user.username, config, profilePicture: user ? user.profile_picture : null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -186,12 +190,58 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 // Config & Integration API
 // ==========================================
 app.post('/api/config', authenticateToken, async (req, res) => {
-  const { immich_url, immich_key, immich_alt_url, base_currency } = req.body;
+  const { immich_url, immich_key, immich_alt_url, base_currency, ai_settings } = req.body;
   try {
     await db.run(
-      `UPDATE user_configs SET immich_url = ?, immich_key = ?, immich_alt_url = ?, base_currency = ? WHERE user_id = ?`,
-      [immich_url || null, immich_key || null, immich_alt_url || null, base_currency || 'USD', req.user.id]
+      `UPDATE user_configs SET immich_url = ?, immich_key = ?, immich_alt_url = ?, base_currency = ?, ai_settings = ? WHERE user_id = ?`,
+      [immich_url || null, immich_key || null, immich_alt_url || null, base_currency || 'USD', ai_settings || null, req.user.id]
     );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// Account Management API
+// ==========================================
+app.get('/api/user/profile', authenticateToken, async (req, res) => {
+  try {
+    const user = await db.get('SELECT username, profile_picture FROM users WHERE id = ?', [req.user.id]);
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/user/profile-picture', authenticateToken, upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  const fileUrl = `/uploads/${req.file.filename}`;
+  try {
+    await db.run('UPDATE users SET profile_picture = ? WHERE id = ?', [fileUrl, req.user.id]);
+    res.json({ profilePicture: fileUrl });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/user/change-password', authenticateToken, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current and new password are required' });
+  }
+
+  try {
+    const user = await db.get('SELECT password_hash FROM users WHERE id = ?', [req.user.id]);
+    const valid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!valid) {
+      return res.status(400).json({ error: 'Incorrect current password' });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hashed, req.user.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -465,6 +515,176 @@ app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => 
   res.json({ fileUrl });
 });
 
+app.post('/api/import/download-url', authenticateToken, async (req, res) => {
+  const { url } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.statusText}`);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    let ext = '.jpg';
+    if (contentType.includes('image/png')) ext = '.png';
+    else if (contentType.includes('image/webp')) ext = '.webp';
+    else if (contentType.includes('image/gif')) ext = '.gif';
+    
+    const filename = `downloaded-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`;
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+    const filePath = join(UPLOADS_DIR, filename);
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    fs.writeFileSync(filePath, buffer);
+    res.json({ fileUrl: `/uploads/${filename}` });
+  } catch (err) {
+    console.error('Failed to download image URL:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
+  const { query, latitude, longitude } = req.body;
+  if (!query) {
+    return res.status(400).json({ error: 'Query is required' });
+  }
+  try {
+    const headers = { 'User-Agent': 'TravelBuffPersonalApp/1.2 (contact-abhishek@example.com; Developer Test Instance)' };
+    let imageUrl = null;
+    let description = null;
+
+    // 1. Geosearch (Coordinates-Based)
+    if (latitude && longitude) {
+      try {
+        const geoUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=geosearch&gscoord=${latitude}|${longitude}&gsradius=10000&gslimit=15&format=json&origin=*`;
+        const geoRes = await fetch(geoUrl, { headers });
+        if (geoRes.ok) {
+          const geoData = await geoRes.json();
+          const geoItems = geoData?.query?.geosearch || [];
+          
+          // Find the first geotagged file with a valid image extension
+          const validGeo = geoItems.find(item => {
+            const title = (item.title || '').toLowerCase();
+            return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
+          });
+          
+          if (validGeo) {
+            const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(validGeo.title)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
+            const infoRes = await fetch(infoUrl, { headers });
+            if (infoRes.ok) {
+              const infoData = await infoRes.json();
+              const pages = infoData?.query?.pages || {};
+              const pageId = Object.keys(pages)[0];
+              imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Wikimedia Geosearch failed:', err);
+      }
+    }
+
+    // Clean query for Wikipedia Page Images & Extracts API
+    let wikiQuery = query;
+    if (query.includes(',')) {
+      wikiQuery = query.split(',')[0].trim();
+    }
+
+    // 2. Wikipedia Page Images & Extracts API (Main Article Info Box Image + Summary)
+    try {
+      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiQuery)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exchars=300&format=json&origin=*&redirects=1`;
+      const wikiRes = await fetch(wikiUrl, { headers });
+      if (wikiRes.ok) {
+        const wikiData = await wikiRes.json();
+        const pages = wikiData?.query?.pages || {};
+        const pageId = Object.keys(pages)[0];
+        if (pages[pageId]) {
+          if (!imageUrl) {
+            imageUrl = pages[pageId]?.thumbnail?.source || null;
+          }
+          description = pages[pageId]?.extract || null;
+        }
+      }
+    } catch (err) {
+      console.error('Wikipedia Page Image/Extract API failed:', err);
+    }
+
+    // 3. Fallback: Wikimedia Commons Text Search
+    if (!imageUrl) {
+      const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srnamespace=6&format=json&origin=*`;
+      const searchRes = await fetch(searchUrl, { headers });
+      if (!searchRes.ok) {
+        throw new Error(`Wikimedia Search failed: ${searchRes.statusText}`);
+      }
+      const searchData = await searchRes.json();
+      const searchItems = searchData?.query?.search || [];
+      
+      const validImage = searchItems.find(item => {
+        const title = (item.title || '').toLowerCase();
+        return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
+      });
+
+      if (!validImage) {
+        return res.status(404).json({ error: 'No image found' });
+      }
+      
+      const fileTitle = validImage.title;
+      const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(fileTitle)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
+      const infoRes = await fetch(infoUrl, { headers });
+      if (!infoRes.ok) {
+        throw new Error(`Wikimedia Info failed: ${infoRes.statusText}`);
+      }
+      const infoData = await infoRes.json();
+      const pages = infoData?.query?.pages || {};
+      const pageId = Object.keys(pages)[0];
+      imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
+    }
+
+    if (!imageUrl) {
+      return res.status(404).json({ error: 'No image URL resolved' });
+    }
+
+    // Now download it locally
+    const response = await fetch(imageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to download Wikimedia image: ${response.statusText}`);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    let ext = '.jpg';
+    if (contentType.includes('image/png')) ext = '.png';
+    else if (contentType.includes('image/webp')) ext = '.webp';
+    else if (contentType.includes('image/gif')) ext = '.gif';
+    
+    const filename = `wiki-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`;
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+    const filePath = join(UPLOADS_DIR, filename);
+    
+    const arrayBuffer = await response.arrayBuffer();
+    fs.writeFileSync(filePath, Buffer.from(arrayBuffer));
+    res.json({ fileUrl: `/uploads/${filename}`, description });
+  } catch (err) {
+    console.error('Failed to search or download image:', err);
+    try {
+      const dataDir = process.env.DATABASE_DIR || join(__dirname, 'data');
+      const logPath = join(dataDir, 'server_error.log');
+      const logMessage = `[${new Date().toISOString()}] Failed to search photo for query "${query}": ${err.message}\nStack: ${err.stack}\n\n`;
+      fs.appendFileSync(logPath, logMessage);
+    } catch (logErr) {
+      console.error('Failed to write to error log:', logErr);
+    }
+    res.json({ fileUrl: null, description: null, error: err.message });
+  }
+});
+
 // ==========================================
 // Sync Endpoint (Offline sync queue)
 // ==========================================
@@ -487,7 +707,9 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
       'tags',
       'collections',
       'trips',
-      'gps_logs'
+      'gps_logs',
+      'ai_imports',
+      'saved_markdowns'
     ];
 
     for (const op of actions) {
@@ -530,6 +752,82 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
           );
         }
       } 
+      else if (action === 'delete_folder') {
+        if (table === 'locations') {
+          const id = data.id;
+          if (id) {
+            const deletePhotosForEntity = async (entityId) => {
+              try {
+                const photos = await db.all('SELECT file_path FROM entity_photos WHERE entity_id = ?', [entityId]);
+                for (const p of photos) {
+                  if (p.file_path && p.file_path.startsWith('/uploads/')) {
+                    const filename = p.file_path.replace('/uploads/', '');
+                    const filePath = join(UPLOADS_DIR, filename);
+                    if (fs.existsSync(filePath)) {
+                      fs.unlinkSync(filePath);
+                    }
+                  }
+                }
+                await db.run('DELETE FROM entity_photos WHERE entity_id = ?', [entityId]);
+              } catch (err) {
+                console.error('Failed to delete photos for entity:', entityId, err);
+              }
+            };
+
+            const deleteLocationRecursively = async (locId) => {
+              const childLocs = await db.all('SELECT id FROM locations WHERE parent_id = ? AND user_id = ?', [locId, userId]);
+              for (const child of childLocs) {
+                await deleteLocationRecursively(child.id);
+              }
+              const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [locId]);
+              if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
+                const filename = loc.local_file_data.replace('/uploads/', '');
+                const filePath = join(UPLOADS_DIR, filename);
+                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+              }
+              await deletePhotosForEntity(locId);
+
+              const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [locId]);
+              for (const sp of subPlaces) {
+                if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
+                  const filename = sp.local_file_data.replace('/uploads/', '');
+                  const filePath = join(UPLOADS_DIR, filename);
+                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                }
+                await deletePhotosForEntity(sp.id);
+                await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
+              }
+              await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [locId, userId]);
+            };
+
+            const deleteContents = data.deleteContents;
+            if (deleteContents) {
+              await deleteLocationRecursively(id);
+            } else {
+              await db.run('UPDATE locations SET parent_id = NULL WHERE parent_id = ? AND user_id = ?', [id, userId]);
+              const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [id]);
+              if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
+                const filename = loc.local_file_data.replace('/uploads/', '');
+                const filePath = join(UPLOADS_DIR, filename);
+                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+              }
+              await deletePhotosForEntity(id);
+
+              const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [id]);
+              for (const sp of subPlaces) {
+                if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
+                  const filename = sp.local_file_data.replace('/uploads/', '');
+                  const filePath = join(UPLOADS_DIR, filename);
+                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                }
+                await deletePhotosForEntity(sp.id);
+                await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
+              }
+              await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+            }
+          }
+        }
+      }
       else if (action === 'delete') {
         if (table === 'entity_tags') {
           // entity_tags uses composite key [entity_id, tag_id]
@@ -538,6 +836,56 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
         } else {
           const id = data.id;
           if (!id) continue;
+
+          // Perform cascading photo file deletions on the host filesystem
+          const deletePhotosForEntity = async (entityId) => {
+            try {
+              const photos = await db.all('SELECT file_path FROM entity_photos WHERE entity_id = ?', [entityId]);
+              for (const p of photos) {
+                if (p.file_path && p.file_path.startsWith('/uploads/')) {
+                  const filename = p.file_path.replace('/uploads/', '');
+                  const filePath = join(UPLOADS_DIR, filename);
+                  if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                  }
+                }
+              }
+              await db.run('DELETE FROM entity_photos WHERE entity_id = ?', [entityId]);
+            } catch (err) {
+              console.error('Failed to delete photos for entity:', entityId, err);
+            }
+          };
+
+          if (table === 'locations') {
+            const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [id]);
+            if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
+              const filename = loc.local_file_data.replace('/uploads/', '');
+              const filePath = join(UPLOADS_DIR, filename);
+              if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+            }
+            await deletePhotosForEntity(id);
+
+            // Cascade delete sub-places and their files
+            const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [id]);
+            for (const sp of subPlaces) {
+              if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
+                const filename = sp.local_file_data.replace('/uploads/', '');
+                const filePath = join(UPLOADS_DIR, filename);
+                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+              }
+              await deletePhotosForEntity(sp.id);
+              await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
+            }
+          } else if (table === 'places') {
+            const pl = await db.get('SELECT local_file_data FROM places WHERE id = ?', [id]);
+            if (pl && pl.local_file_data && pl.local_file_data.startsWith('/uploads/')) {
+              const filename = pl.local_file_data.replace('/uploads/', '');
+              const filePath = join(UPLOADS_DIR, filename);
+              if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+            }
+            await deletePhotosForEntity(id);
+          }
+
           if (hasUserId) {
             await db.run(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`, [id, userId]);
           } else {
@@ -555,6 +903,14 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
       await db.exec('ROLLBACK');
     } catch (rollbackErr) {
       console.warn('Rollback failed (possibly no transaction active):', rollbackErr.message);
+    }
+    try {
+      const dataDir = process.env.DATABASE_DIR || join(__dirname, 'data');
+      const logPath = join(dataDir, 'server_error.log');
+      const logMessage = `[${new Date().toISOString()}] Sync failed: ${err.message}\nStack: ${err.stack}\n\n`;
+      fs.appendFileSync(logPath, logMessage);
+    } catch (logErr) {
+      console.error('Failed to write to error log:', logErr);
     }
     res.status(500).json({ error: err.message });
   }
@@ -575,13 +931,13 @@ app.get('/api/locations', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/locations', authenticateToken, async (req, res) => {
-  const { id, name, latitude, longitude, visited, notes, immich_album_id } = req.body;
+  const { id, name, latitude, longitude, visited, notes, immich_album_id, parent_id, is_folder } = req.body;
   const locId = id || crypto.randomUUID();
   try {
     await db.run(
-      `INSERT INTO locations (id, user_id, name, latitude, longitude, visited, notes, immich_album_id) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [locId, req.user.id, name, latitude || null, longitude || null, visited || 0, notes || '', immich_album_id || null]
+      `INSERT INTO locations (id, user_id, name, latitude, longitude, visited, notes, immich_album_id, parent_id, is_folder) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [locId, req.user.id, name, latitude || null, longitude || null, visited || 0, notes || '', immich_album_id || null, parent_id || null, is_folder || 0]
     );
     const result = await db.get('SELECT * FROM locations WHERE id = ?', [locId]);
     res.json(result);
@@ -592,12 +948,12 @@ app.post('/api/locations', authenticateToken, async (req, res) => {
 
 app.put('/api/locations/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { name, latitude, longitude, visited, notes, immich_album_id } = req.body;
+  const { name, latitude, longitude, visited, notes, immich_album_id, parent_id, is_folder } = req.body;
   try {
     await db.run(
-      `UPDATE locations SET name = ?, latitude = ?, longitude = ?, visited = ?, notes = ?, immich_album_id = ? 
+      `UPDATE locations SET name = ?, latitude = ?, longitude = ?, visited = ?, notes = ?, immich_album_id = ?, parent_id = ?, is_folder = ? 
        WHERE id = ? AND user_id = ?`,
-      [name, latitude, longitude, visited, notes, immich_album_id, id, req.user.id]
+      [name, latitude, longitude, visited, notes, immich_album_id, parent_id, is_folder, id, req.user.id]
     );
     const result = await db.get('SELECT * FROM locations WHERE id = ?', [id]);
     res.json(result);
@@ -607,9 +963,227 @@ app.put('/api/locations/:id', authenticateToken, async (req, res) => {
 });
 
 app.delete('/api/locations/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [req.params.id, userId]);
+    notifyUserClients(userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// AI Imports
+// ==========================================
+app.get('/api/ai_imports', authenticateToken, async (req, res) => {
+  try {
+    const imports = await db.all('SELECT * FROM ai_imports WHERE user_id = ?', [req.user.id]);
+    res.json(imports);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/import/markdown', authenticateToken, async (req, res) => {
+  const { url, scraper, imageDirection } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+
+  try {
+    let firecrawlKey = '';
+    const config = await db.get('SELECT ai_settings FROM user_configs WHERE user_id = ?', [req.user.id]);
+    if (config && config.ai_settings) {
+      try {
+        const parsed = JSON.parse(config.ai_settings);
+        firecrawlKey = parsed.firecrawlKey || '';
+      } catch (e) {
+        console.warn('Failed to parse ai_settings', e);
+      }
+    }
+
+    const { markdown, places } = await processMarkdownImport(url, scraper || 'jina', firecrawlKey, imageDirection || 'below');
+    res.json({ success: true, markdown, places });
+  } catch (err) {
+    console.error('Import error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/import/geocode', authenticateToken, async (req, res) => {
+  const { query } = req.query;
+  if (!query) return res.status(400).json({ error: 'Query is required' });
+
+  try {
+    const coords = await geocode(query);
+    if (coords) {
+      res.json([coords]); // return as array to maintain compatibility with client expectations
+    } else {
+      res.json([]);
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
+  const { places, city, state, country, prompt } = req.body;
+  if (!places || !Array.isArray(places)) {
+    return res.status(400).json({ error: 'Places array is required' });
+  }
+
+  try {
+    const config = await db.get('SELECT ai_settings FROM user_configs WHERE user_id = ?', [req.user.id]);
+    if (!config || !config.ai_settings) {
+      return res.status(400).json({ error: 'AI settings not configured. Please go to Settings -> AI Settings to configure.' });
+    }
+
+    const aiSettings = JSON.parse(config.ai_settings);
+    const provider = aiSettings.provider || 'Gemini';
+    const apiKey = aiSettings.apiKey || '';
+    const model = aiSettings.model || 'gemini-1.5-pro';
+    const endpoint = aiSettings.endpointUrl || '';
+
+    if (!apiKey && ['Gemini', 'OpenAI', 'Claude'].includes(provider)) {
+      return res.status(400).json({ error: `API Key is missing for provider ${provider}.` });
+    }
+
+    const systemPrompt = `You are a geocoding extraction assistant. Extract details for the list of places.
+Context: City = "${city || ''}", State = "${state || ''}", Country = "${country || ''}".
+Expected Output Format: JSON array of objects, containing:
+- id: match the place's input id exactly
+- name: place name
+- address: full formatted address
+- latitude: number (e.g. 48.8584)
+- longitude: number (e.g. 2.2945)
+- category: one of 'Attraction', 'Dining', 'Lodging', 'Transit', 'Shopping', 'Other'
+- description: a short 1-2 sentence description summarizing what this place is (retaining or enhancing any input description provided)
+
+Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`\`\`json).`;
+
+    const userMessage = `${prompt || 'Extract details for these places.'}\n\nPlaces Input:\n${JSON.stringify(places.map(p => ({ id: p.id, name: p.name, description: p.description || '' })), null, 2)}`;
+
+    let responseText = '';
+
+    if (provider === 'Gemini') {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const response = await axios.post(url, {
+        contents: [{
+          parts: [{
+            text: `${systemPrompt}\n\n${userMessage}`
+          }]
+        }]
+      });
+      responseText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    } else if (provider === 'OpenAI') {
+      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ]
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}` }
+      });
+      responseText = response.data?.choices?.[0]?.message?.content || '';
+    } else if (provider === 'Claude') {
+      const response = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: model,
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }]
+      }, {
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        }
+      });
+      responseText = response.data?.content?.[0]?.text || '';
+    } else {
+      const targetUrl = endpoint || 'http://localhost:11434/api/generate';
+      const response = await axios.post(targetUrl, {
+        model: model,
+        prompt: `${systemPrompt}\n\n${userMessage}`,
+        stream: false
+      });
+      responseText = response.data?.response || response.data?.choices?.[0]?.message?.content || '';
+    }
+
+    let cleanedText = responseText.trim();
+    if (cleanedText.startsWith('```json')) {
+      cleanedText = cleanedText.substring(7);
+    }
+    if (cleanedText.startsWith('```')) {
+      cleanedText = cleanedText.substring(3);
+    }
+    if (cleanedText.endsWith('```')) {
+      cleanedText = cleanedText.substring(0, cleanedText.length - 3);
+    }
+    cleanedText = cleanedText.trim();
+
+    try {
+      const parsedResults = JSON.parse(cleanedText);
+      res.json(parsedResults);
+    } catch (e) {
+      console.error('Failed to parse AI output', responseText);
+      res.status(500).json({ error: 'AI returned invalid JSON format. Raw output: ' + responseText });
+    }
+  } catch (err) {
+    console.error('AI extraction API error:', err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+// Saved Markdowns Endpoints
+app.get('/api/import/saved-markdowns', authenticateToken, async (req, res) => {
+  try {
+    const markdowns = await db.all('SELECT * FROM saved_markdowns WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
+    res.json(markdowns);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/import/saved-markdowns', authenticateToken, async (req, res) => {
+  const { id, name, url, content } = req.body;
+  if (!name || !content) return res.status(400).json({ error: 'Name and content are required' });
+  const mdId = id || crypto.randomUUID();
+
+  try {
+    await db.run(
+      `INSERT INTO saved_markdowns (id, user_id, name, url, content) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name=excluded.name, content=excluded.content, url=excluded.url`,
+      [mdId, req.user.id, name, url || null, content]
+    );
+    const result = await db.get('SELECT * FROM saved_markdowns WHERE id = ?', [mdId]);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/import/saved-markdowns/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { name, content } = req.body;
+  try {
+    if (name !== undefined && content !== undefined) {
+      await db.run('UPDATE saved_markdowns SET name = ?, content = ? WHERE id = ? AND user_id = ?', [name, content, id, req.user.id]);
+    } else if (name !== undefined) {
+      await db.run('UPDATE saved_markdowns SET name = ? WHERE id = ? AND user_id = ?', [name, id, req.user.id]);
+    } else if (content !== undefined) {
+      await db.run('UPDATE saved_markdowns SET content = ? WHERE id = ? AND user_id = ?', [content, id, req.user.id]);
+    }
+    const result = await db.get('SELECT * FROM saved_markdowns WHERE id = ?', [id]);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/import/saved-markdowns/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
-    await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    await db.run('DELETE FROM saved_markdowns WHERE id = ? AND user_id = ?', [id, req.user.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -890,14 +1464,14 @@ app.get('/api/trips', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/trips', authenticateToken, async (req, res) => {
-  const { id, name, start_date, end_date, visited, notes, rates } = req.body;
+  const { id, name, start_date, end_date, length, visited, notes, rates } = req.body;
   const tId = id || crypto.randomUUID();
   try {
     await db.exec('BEGIN TRANSACTION');
 
     await db.run(
-      'INSERT INTO trips (id, user_id, name, start_date, end_date, visited, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [tId, req.user.id, name, start_date || null, end_date || null, visited || 0, notes || '']
+      'INSERT INTO trips (id, user_id, name, start_date, end_date, length, visited, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [tId, req.user.id, name, start_date || null, end_date || null, length || 1, visited || 0, notes || '']
     );
 
     // Save rates
@@ -930,14 +1504,14 @@ app.post('/api/trips', authenticateToken, async (req, res) => {
 
 app.put('/api/trips/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { name, start_date, end_date, visited, notes, rates } = req.body;
+  const { name, start_date, end_date, length, visited, notes, rates } = req.body;
   try {
     await db.exec('BEGIN TRANSACTION');
 
     await db.run(
-      `UPDATE trips SET name = ?, start_date = ?, end_date = ?, visited = ?, notes = ? 
+      `UPDATE trips SET name = ?, start_date = ?, end_date = ?, length = ?, visited = ?, notes = ? 
        WHERE id = ? AND user_id = ?`,
-      [name, start_date, end_date, visited, notes, id, req.user.id]
+      [name, start_date, end_date, length || 1, visited, notes, id, req.user.id]
     );
 
     // Update rates
@@ -1427,6 +2001,191 @@ app.get('*', (req, res, next) => {
 });
 
 // ==========================================
+// Scheduled Background Retry Job (Every 6 Hours)
+// ==========================================
+async function runBackgroundPhotoSyncRetry() {
+  console.log('[Scheduler] Checking for failed or pending cover photos/descriptions to retry...');
+  try {
+    const failedLocations = await db.all(
+      `SELECT id, user_id, name, latitude, longitude FROM locations WHERE photo_sync_status = 'failed' OR (photo_sync_status = 'pending' AND local_file_data IS NULL)`
+    );
+    const failedPlaces = await db.all(
+      `SELECT p.id, p.user_id, p.name, p.latitude, p.longitude, l.name as loc_name FROM places p JOIN locations l ON p.location_id = l.id WHERE p.photo_sync_status = 'failed' OR (p.photo_sync_status = 'pending' AND p.local_file_data IS NULL)`
+    );
+
+    const queue = [];
+    for (const loc of failedLocations) {
+      queue.push({ id: loc.id, userId: loc.user_id, type: 'location', query: loc.name, lat: loc.latitude, lon: loc.longitude });
+    }
+    for (const pl of failedPlaces) {
+      const cleanSearchQuery = `${pl.name} ${pl.loc_name}`.trim();
+      queue.push({ id: pl.id, userId: pl.user_id, type: 'place', query: cleanSearchQuery, lat: pl.latitude, lon: pl.longitude });
+    }
+
+    if (queue.length === 0) {
+      console.log('[Scheduler] No failed or pending photo sync tasks found.');
+      return;
+    }
+
+    console.log(`[Scheduler] Found ${queue.length} photo sync tasks to retry. Processing sequentially...`);
+    const headers = { 'User-Agent': 'TravelBuffPersonalApp/1.2 (contact-abhishek@example.com; Developer Test Instance)' };
+
+    for (let i = 0; i < queue.length; i++) {
+      const item = queue[i];
+      // 5-second delay to strictly prevent rate limits
+      await new Promise(r => setTimeout(r, 5000));
+
+      try {
+        console.log(`[Scheduler] Retrying photo lookup for ${item.type} "${item.query}"...`);
+        let imageUrl = null;
+        let description = null;
+
+        // 1. Geosearch
+        if (item.lat && item.lon) {
+          try {
+            const geoUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=geosearch&gscoord=${item.lat}|${item.lon}&gsradius=10000&gslimit=15&format=json&origin=*`;
+            const geoRes = await fetch(geoUrl, { headers });
+            if (geoRes.ok) {
+              const geoData = await geoRes.json();
+              const geoItems = geoData?.query?.geosearch || [];
+              const validGeo = geoItems.find(item => {
+                const title = (item.title || '').toLowerCase();
+                return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
+              });
+              if (validGeo) {
+                const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(validGeo.title)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
+                const infoRes = await fetch(infoUrl, { headers });
+                if (infoRes.ok) {
+                  const infoData = await infoRes.json();
+                  const pages = infoData?.query?.pages || {};
+                  const pageId = Object.keys(pages)[0];
+                  imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
+                }
+              }
+            }
+          } catch (err) {
+            console.error('[Scheduler] Geosearch failed:', err);
+          }
+        }
+
+        // Clean query for Wikipedia Page Images & Extracts API
+        let wikiQuery = item.query;
+        if (item.query.includes(',')) {
+          wikiQuery = item.query.split(',')[0].trim();
+        }
+
+        // 2. Wikipedia Page Images & Extracts API
+        try {
+          const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiQuery)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exchars=300&format=json&origin=*&redirects=1`;
+          const wikiRes = await fetch(wikiUrl, { headers });
+          if (wikiRes.ok) {
+            const wikiData = await wikiRes.json();
+            const pages = wikiData?.query?.pages || {};
+            const pageId = Object.keys(pages)[0];
+            if (pages[pageId]) {
+              if (!imageUrl) {
+                imageUrl = pages[pageId]?.thumbnail?.source || null;
+              }
+              description = pages[pageId]?.extract || null;
+            }
+          }
+        } catch (err) {
+          console.error('[Scheduler] Wikipedia Page Image/Extract API failed:', err);
+        }
+
+        // 3. Fallback Commons Text Search
+        if (!imageUrl) {
+          const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(item.query)}&srnamespace=6&format=json&origin=*`;
+          const searchRes = await fetch(searchUrl, { headers });
+          if (searchRes.ok) {
+            const searchData = await searchRes.json();
+            const searchItems = searchData?.query?.search || [];
+            const validImage = searchItems.find(item => {
+              const title = (item.title || '').toLowerCase();
+              return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
+            });
+            if (validImage) {
+              const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(validImage.title)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
+              const infoRes = await fetch(infoUrl, { headers });
+              if (infoRes.ok) {
+                const infoData = await infoRes.json();
+                const pages = infoData?.query?.pages || {};
+                const pageId = Object.keys(pages)[0];
+                imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
+              }
+            }
+          }
+        }
+
+        if (!imageUrl) {
+          throw new Error('No image resolved');
+        }
+
+        // Download locally
+        const response = await fetch(imageUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to download Wikimedia image: ${response.statusText}`);
+        }
+        const contentType = response.headers.get('content-type') || '';
+        let ext = '.jpg';
+        if (contentType.includes('image/png')) ext = '.png';
+        else if (contentType.includes('image/webp')) ext = '.webp';
+        else if (contentType.includes('image/gif')) ext = '.gif';
+
+        const filename = `wiki-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`;
+        const filePath = join(UPLOADS_DIR, filename);
+        const arrayBuffer = await response.arrayBuffer();
+        fs.writeFileSync(filePath, Buffer.from(arrayBuffer));
+
+        const localFileUrl = `/uploads/${filename}`;
+
+        // Save to SQLite
+        if (item.type === 'location') {
+          const loc = await db.get('SELECT notes FROM locations WHERE id = ?', [item.id]);
+          const notesText = (loc && !loc.notes) ? description : loc?.notes;
+          await db.run(
+            `UPDATE locations SET local_file_data = ?, notes = ?, photo_sync_status = 'completed' WHERE id = ?`,
+            [localFileUrl, notesText, item.id]
+          );
+        } else {
+          const pl = await db.get('SELECT notes FROM places WHERE id = ?', [item.id]);
+          const notesText = (pl && !pl.notes) ? description : pl?.notes;
+          await db.run(
+            `UPDATE places SET local_file_data = ?, notes = ?, photo_sync_status = 'completed' WHERE id = ?`,
+            [localFileUrl, notesText, item.id]
+          );
+        }
+
+        // Insert into entity_photos
+        await db.run(
+          `INSERT INTO entity_photos (id, entity_id, file_path, is_featured, created_at) VALUES (?, ?, ?, ?, ?)`,
+          [crypto.randomUUID(), item.id, localFileUrl, 1, new Date().toISOString()]
+        );
+
+        console.log(`[Scheduler] Successfully resolved and synced photo for ${item.type} "${item.query}".`);
+
+        // Notify client session so UI refreshes live
+        notifyUserClients(item.userId);
+      } catch (err) {
+        console.error(`[Scheduler] Retry failed for ${item.type} "${item.query}":`, err.message);
+        // Mark as failed again so it is retried on the next run
+        if (item.type === 'location') {
+          await db.run(`UPDATE locations SET photo_sync_status = 'failed' WHERE id = ?`, [item.id]);
+        } else {
+          await db.run(`UPDATE places SET photo_sync_status = 'failed' WHERE id = ?`, [item.id]);
+        }
+      }
+    }
+  } catch (schedulerErr) {
+    console.error('[Scheduler] Error running background retry scheduler:', schedulerErr);
+  }
+}
+
+// ==========================================
 // Boot Server
 // ==========================================
 (async () => {
@@ -1434,6 +2193,12 @@ app.get('*', (req, res, next) => {
     await initDatabase();
     server.listen(PORT, () => {
       console.log(`TravelBuff server is listening on port ${PORT}`);
+      
+      // Delay initial scheduler run by 30 seconds to allow standard boot tasks to finish
+      setTimeout(runBackgroundPhotoSyncRetry, 30000);
+      
+      // Schedule background photo retry every 6 hours
+      setInterval(runBackgroundPhotoSyncRetry, 6 * 60 * 60 * 1000);
     });
   } catch (err) {
     console.error('Critical database initialization failure:', err);

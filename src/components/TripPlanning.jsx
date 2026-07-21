@@ -132,7 +132,32 @@ export default function TripPlanning({ token }) {
   const [tripName, setTripName] = useState('');
   const [tripNotes, setTripNotes] = useState('');
   const [tripStartDate, setTripStartDate] = useState('');
-  const [tripEndDate, setTripEndDate] = useState('');
+  const [tripLength, setTripLength] = useState(1);
+
+  // Editing trip metadata states
+  const [isEditingTripMeta, setIsEditingTripMeta] = useState(false);
+  const [editTripName, setEditTripName] = useState('');
+  const [editTripStartDate, setEditTripStartDate] = useState('');
+  const [editTripLength, setEditTripLength] = useState(1);
+
+  const startEditingTrip = () => {
+    if (!selectedTrip) return;
+    setEditTripName(selectedTrip.name);
+    setEditTripStartDate(selectedTrip.start_date || '');
+    setEditTripLength(selectedTrip.length || 1);
+    setIsEditingTripMeta(true);
+  };
+
+  // Close planner details on pressing Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && selectedTrip) {
+        setSelectedTrip(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedTrip]);
 
   // Selected Location / Collection for the trip
   const [selectedLocationId, setSelectedLocationId] = useState('');
@@ -364,12 +389,20 @@ export default function TripPlanning({ token }) {
     e.preventDefault();
     if (!tripName.trim()) return;
 
+    let calculatedEndDate = null;
+    if (tripStartDate) {
+      const start = new Date(tripStartDate);
+      start.setDate(start.getDate() + (parseInt(tripLength, 10) - 1));
+      calculatedEndDate = start.toISOString().split('T')[0];
+    }
+
     const newTripId = generateUUID();
     const newTrip = {
       id: newTripId,
       name: tripName,
       start_date: tripStartDate || null,
-      end_date: tripEndDate || null,
+      end_date: calculatedEndDate,
+      length: parseInt(tripLength, 10) || 1,
       visited: 0,
       notes: JSON.stringify({
         description: tripNotes,
@@ -384,7 +417,7 @@ export default function TripPlanning({ token }) {
     // Reset Form
     setTripName('');
     setTripStartDate('');
-    setTripEndDate('');
+    setTripLength(1);
     setTripNotes('');
     setIsInternational(false);
     setShowAddForm(false);
@@ -875,7 +908,34 @@ export default function TripPlanning({ token }) {
     return list;
   };
 
-  const tripDates = selectedTrip ? getDatesBetween(selectedTrip.start_date, selectedTrip.end_date) : [];
+  const getItineraryDays = (trip) => {
+    if (!trip) return [];
+    const len = trip.length || 1;
+    const days = [];
+    for (let i = 1; i <= len; i++) {
+      let dateStr = `Day ${i}`;
+      let actualDate = '';
+      if (trip.start_date && trip.start_date !== 'null' && !isNaN(Date.parse(trip.start_date))) {
+        const startDateObj = new Date(trip.start_date);
+        startDateObj.setDate(startDateObj.getDate() + (i - 1));
+        actualDate = startDateObj.toISOString().split('T')[0];
+        dateStr = `Day ${i} (${actualDate})`;
+      }
+      days.push({
+        dayNumber: i,
+        label: dateStr,
+        date: actualDate || `Day ${i}`
+      });
+    }
+    return days;
+  };
+
+  const formatStartDate = (date) => {
+    if (!date || date === 'null' || date === 'undefined') return 'No Date Set';
+    return date;
+  };
+
+  const itineraryDays = getItineraryDays(selectedTrip);
 
   // Budget calculations
   const getConvertedAmount = (amount, currency) => {
@@ -919,6 +979,7 @@ export default function TripPlanning({ token }) {
 
   return (
     <div className="container">
+      <div className={selectedTrip ? "no-print" : ""}>
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <h2 style={{ margin: 0 }}>Trip Planner</h2>
@@ -1032,7 +1093,7 @@ export default function TripPlanning({ token }) {
 
               <div style={{ display: 'flex', gap: '12px' }}>
                 <div className="form-group" style={{ flex: 1 }}>
-                  <label>Start Date</label>
+                  <label>Start Date (Optional)</label>
                   <input
                     type="date"
                     className="form-control"
@@ -1042,13 +1103,17 @@ export default function TripPlanning({ token }) {
                   />
                 </div>
                 <div className="form-group" style={{ flex: 1 }}>
-                  <label>End Date</label>
+                  <label>Trip Length (Days)</label>
                   <input
-                    type="date"
+                    type="number"
+                    min="1"
                     className="form-control"
-                    value={tripEndDate}
-                    onClick={(e) => e.target.showPicker()}
-                    onChange={(e) => setTripEndDate(e.target.value)}
+                    placeholder="e.g. 7"
+                    value={tripLength === 0 || tripLength === '' ? '' : tripLength}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setTripLength(val === '' ? '' : parseInt(val, 10));
+                    }}
                   />
                 </div>
               </div>
@@ -1107,7 +1172,7 @@ export default function TripPlanning({ token }) {
                 </span>
               </div>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
-                📅 {trip.start_date || 'No Dates Set'} {trip.end_date ? `to ${trip.end_date}` : ''}
+                📅 {formatStartDate(trip.start_date)} ({trip.length || 1} {trip.length === 1 ? 'day' : 'days'})
               </p>
               {getTripNotesDescription(trip) && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '12px' }}>{getTripNotesDescription(trip).substring(0, 80)}...</p>}
             </div>
@@ -1146,6 +1211,8 @@ export default function TripPlanning({ token }) {
       {selectedTrip && (
         <div className="modal-backdrop no-print" onClick={() => setSelectedTrip(null)} />
       )}
+      </div>
+
       {selectedTrip && (
         <div className="trip-details-overlay" style={{ overflowY: 'auto' }}>
           <div style={{
@@ -1155,10 +1222,87 @@ export default function TripPlanning({ token }) {
             {/* Header */}
             <div className="dialog-header no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h2>{selectedTrip.name}</h2>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  📅 {selectedTrip.start_date} to {selectedTrip.end_date}
-                </p>
+                {isEditingTripMeta ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      style={{ fontSize: '1.2rem', fontWeight: 'bold', padding: '4px 8px', height: '38px', background: '#14131a', border: '1px solid var(--border-glass)' }}
+                      value={editTripName}
+                      onChange={(e) => setEditTripName(e.target.value)}
+                    />
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input 
+                        type="date" 
+                        className="form-control" 
+                        style={{ width: '140px', fontSize: '0.8rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)' }}
+                        value={editTripStartDate}
+                        onClick={(e) => e.target.showPicker()}
+                        onChange={(e) => setEditTripStartDate(e.target.value)}
+                      />
+                      <input 
+                        type="number" 
+                        min="1"
+                        placeholder="Length"
+                        className="form-control" 
+                        style={{ width: '90px', fontSize: '0.8rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)' }}
+                        value={editTripLength === 0 || editTripLength === '' ? '' : editTripLength}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setEditTripLength(val === '' ? '' : parseInt(val, 10));
+                        }}
+                      />
+                      <button 
+                        className="btn btn-primary"
+                        style={{ width: 'auto', height: '30px', padding: '4px 12px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }}
+                        onClick={async () => {
+                          const len = Math.max(1, parseInt(editTripLength, 10) || 1);
+                          let calculatedEndDate = null;
+                          if (editTripStartDate && editTripStartDate !== 'null') {
+                            const start = new Date(editTripStartDate);
+                            start.setDate(start.getDate() + (len - 1));
+                            calculatedEndDate = start.toISOString().split('T')[0];
+                          }
+                          const updated = {
+                            ...selectedTrip,
+                            name: editTripName,
+                            start_date: editTripStartDate || null,
+                            end_date: calculatedEndDate,
+                            length: len
+                          };
+                          await queueSyncAction('trips', 'update', updated);
+                          setSelectedTrip(updated);
+                          setIsEditingTripMeta(false);
+                        }}
+                      >
+                        Save
+                      </button>
+                      <button 
+                        className="btn btn-secondary"
+                        style={{ width: 'auto', height: '30px', padding: '4px 12px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }}
+                        onClick={() => setIsEditingTripMeta(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <h2 style={{ margin: 0 }}>{selectedTrip.name}</h2>
+                      <button 
+                        className="btn btn-secondary"
+                        style={{ width: 'auto', padding: '2px 8px', fontSize: '0.7rem', height: '24px', display: 'inline-flex', alignItems: 'center', gap: '4px', textTransform: 'none' }}
+                        onClick={startEditingTrip}
+                      >
+                        Edit Details
+                      </button>
+                    </div>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      📅 {formatStartDate(selectedTrip.start_date)} ({selectedTrip.length || 1} {selectedTrip.length === 1 ? 'day' : 'days'})
+                    </p>
+                  </div>
+                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                 <div className="desktop-only-flex" style={{ alignItems: 'center', gap: '8px' }}>
@@ -1248,7 +1392,7 @@ export default function TripPlanning({ token }) {
             {/* Print Header (Visible only when printing) */}
             <div className="print-only" style={{ display: 'none', padding: '24px', borderBottom: '2px solid #000' }}>
               <h1 style={{ color: '#000' }}>{selectedTrip.name}</h1>
-              <p>Trip Dates: {selectedTrip.start_date} to {selectedTrip.end_date}</p>
+              <p>Trip Duration: {formatStartDate(selectedTrip.start_date)} ({selectedTrip.length || 1} {selectedTrip.length === 1 ? 'day' : 'days'})</p>
               <hr style={{ margin: '12px 0' }} />
             </div>
 
@@ -1395,23 +1539,23 @@ export default function TripPlanning({ token }) {
                         </div>
                         <div className="form-group" style={{ flex: 1 }}>
                           <label>Date</label>
-                          {(!expDate || tripDates.includes(expDate)) ? (
+                          {(!expDate || itineraryDays.some(d => d.date === expDate)) ? (
                             <select 
                               className="form-control" 
                               required
                               value={expDate} 
                               onChange={(e) => {
-                                if (e.target.value === 'custom') {
-                                  // set to a temporary value that triggers the date picker view
+                                const val = e.target.value;
+                                if (val === 'custom') {
                                   setExpDate('custom-temp');
                                 } else {
-                                  setExpDate(e.target.value);
+                                  setExpDate(val);
                                 }
                               }}
                             >
                               <option value="">Select Date</option>
-                              {tripDates.map(d => (
-                                <option key={d} value={d}>{d}</option>
+                              {itineraryDays.map(d => (
+                                <option key={d.date} value={d.date}>{d.label}</option>
                               ))}
                               <option value="custom">📅 Custom Date...</option>
                             </select>
@@ -1476,11 +1620,11 @@ export default function TripPlanning({ token }) {
               {/* Chronological Daily Itinerary */}
               <div className={!printOptItinerary ? 'no-print' : ''} style={{ background: '#1c1b22', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
                 <h3 style={{ marginBottom: '16px', marginTop: 0 }}>Chronological Daily Itinerary</h3>
-                {tripDates.map(date => {
-                  const dayItems = itineraries.filter(i => i.trip_id === selectedTrip.id && i.date === date)
+                {itineraryDays.map(day => {
+                  const dayItems = itineraries.filter(i => i.trip_id === selectedTrip.id && i.date === day.date)
                                               .sort((a,b) => a.sequence_order - b.sequence_order);
                   return (
-                    <ItineraryDay key={date} date={date} items={dayItems} />
+                    <ItineraryDay key={day.date} date={day.date} label={day.label} items={dayItems} />
                   );
                 })}
               </div>
@@ -1550,8 +1694,8 @@ export default function TripPlanning({ token }) {
                         <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Associated Date (Optional)</label>
                         <select id="main-res-date-select" className="form-control" style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }}>
                           <option value="">No specific date</option>
-                          {tripDates.map(date => (
-                            <option key={date} value={date}>{date}</option>
+                          {itineraryDays.map(day => (
+                            <option key={day.date} value={day.date}>{day.label}</option>
                           ))}
                         </select>
                       </div>
@@ -1871,7 +2015,7 @@ export default function TripPlanning({ token }) {
                         placeholder="Select Date" 
                         value={itinTargetDate} 
                         onChange={(val) => setItinTargetDate(val)} 
-                        options={tripDates.map(date => ({ value: date, label: date }))}
+                        options={itineraryDays.map(day => ({ value: day.date, label: day.label }))}
                       />
                     </div>
 

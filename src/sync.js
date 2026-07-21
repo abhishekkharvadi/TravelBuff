@@ -114,6 +114,17 @@ export function initSyncManager(getToken) {
     syncStatusCallback('offline');
   });
 
+  // Re-establish socket and trigger sync instantly on app resume / tab visibility focus
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[PWA Sync] App became visible. Ensuring WebSocket connection and syncing...');
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        connectWebSocket(getToken);
+      }
+      performSync(getToken());
+    }
+  });
+
   // Bind trigger hook from clientDb
   registerSyncTrigger(() => {
     performSync(getToken());

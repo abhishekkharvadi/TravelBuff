@@ -57,6 +57,7 @@ export async function initDatabase() {
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      profile_picture TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -65,6 +66,7 @@ export async function initDatabase() {
       immich_url TEXT,
       immich_key TEXT,
       immich_alt_url TEXT,
+      ai_settings TEXT,
       owntracks_key TEXT NOT NULL UNIQUE,
       base_currency TEXT DEFAULT 'USD',
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -81,6 +83,10 @@ export async function initDatabase() {
       visited INTEGER DEFAULT 0,
       notes TEXT,
       immich_album_id TEXT,
+      local_file_data TEXT,
+      parent_id TEXT DEFAULT NULL,
+      is_folder INTEGER DEFAULT 0,
+      photo_sync_status TEXT DEFAULT 'pending',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
@@ -91,11 +97,14 @@ export async function initDatabase() {
       location_id TEXT NOT NULL,
       name TEXT NOT NULL,
       category TEXT NOT NULL,
+      address TEXT,
       latitude REAL,
       longitude REAL,
       visited INTEGER DEFAULT 0,
       notes TEXT,
       immich_album_id TEXT,
+      local_file_data TEXT,
+      photo_sync_status TEXT DEFAULT 'pending',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
@@ -150,6 +159,7 @@ export async function initDatabase() {
       name TEXT NOT NULL,
       start_date TEXT,
       end_date TEXT,
+      length INTEGER DEFAULT 1,
       visited INTEGER DEFAULT 0,
       notes TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -208,13 +218,53 @@ export async function initDatabase() {
       timestamp INTEGER NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS ai_imports (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      url TEXT,
+      type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      source TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS saved_markdowns (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      url TEXT,
+      content TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      parsed_items_state TEXT,
+      import_context TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `;
 
   await db.exec(schema);
+
   // Safely add state & country columns if they don't exist in older databases
+  await db.run('ALTER TABLE saved_markdowns ADD COLUMN status TEXT DEFAULT "pending"').catch(() => {});
+  await db.run('ALTER TABLE saved_markdowns ADD COLUMN parsed_items_state TEXT').catch(() => {});
+  await db.run('ALTER TABLE saved_markdowns ADD COLUMN import_context TEXT').catch(() => {});
+  await db.run('ALTER TABLE places ADD COLUMN address TEXT').catch(() => {});
   await db.run('ALTER TABLE locations ADD COLUMN state TEXT').catch(() => {});
   await db.run('ALTER TABLE locations ADD COLUMN country TEXT').catch(() => {});
+  await db.run('ALTER TABLE locations ADD COLUMN source_urls TEXT').catch(() => {});
   await db.run('ALTER TABLE user_configs ADD COLUMN immich_alt_url TEXT').catch(() => {});
+  await db.run('ALTER TABLE user_configs ADD COLUMN ai_settings TEXT').catch(() => {});
+  await db.run('ALTER TABLE users ADD COLUMN profile_picture TEXT').catch(() => {});
+  await db.run('ALTER TABLE trips ADD COLUMN length INTEGER DEFAULT 1').catch(() => {});
+  await db.run('ALTER TABLE locations ADD COLUMN local_file_data TEXT').catch(() => {});
+  await db.run('ALTER TABLE places ADD COLUMN local_file_data TEXT').catch(() => {});
+  await db.run('ALTER TABLE locations ADD COLUMN photo_sync_status TEXT DEFAULT "pending"').catch(() => {});
+  await db.run('ALTER TABLE places ADD COLUMN photo_sync_status TEXT DEFAULT "pending"').catch(() => {});
+  await db.run('ALTER TABLE locations ADD COLUMN parent_id TEXT DEFAULT NULL').catch(() => {});
+  await db.run('ALTER TABLE locations ADD COLUMN is_folder INTEGER DEFAULT 0').catch(() => {});
 
   // Seed custom categories for all existing users
   try {

@@ -11,7 +11,7 @@ db.version(1).stores({
   tags: 'id, name, color',
   entity_tags: '[entity_id+tag_id], entity_id, tag_id',
   collections: 'id, name',
-  trips: 'id, name, start_date, visited',
+  trips: 'id, name, start_date, length, visited',
   trip_currency_rates: 'id, trip_id, currency',
   reservations: 'id, trip_id, type',
   itinerary_items: 'id, trip_id, date, place_id',
@@ -21,6 +21,31 @@ db.version(1).stores({
   // Local sync queue for offline mutations
   // schema: id (uuid/timestamp), table, action ('insert'|'update'|'delete'), data (JSON payload), timestamp
   sync_queue: 'id, table, action, timestamp'
+});
+
+db.version(2).stores({
+  ai_imports: 'id, type, status',
+  saved_markdowns: 'id, user_id, name, url, created_at'
+});
+
+db.version(3).stores({
+  locations: 'id, name, visited, immich_album_id, source_urls'
+});
+
+db.version(4).stores({
+  places: 'id, location_id, name, category, visited, address'
+});
+
+db.version(5).stores({
+  saved_markdowns: 'id, user_id, name, url, created_at, status'
+});
+
+db.version(6).stores({
+  saved_markdowns: 'id, user_id, name, url, created_at, status, parsed_items_state, import_context'
+});
+
+db.version(7).stores({
+  locations: 'id, name, visited, immich_album_id, source_urls, parent_id, is_folder'
 });
 
 // Safe UUID generator supporting non-secure contexts
@@ -43,6 +68,27 @@ export async function queueSyncAction(table, action, data) {
       await db[table].put(data);
     } else if (action === 'update') {
       await db[table].update(data.id, data);
+    } else if (action === 'delete_folder') {
+      if (table === 'locations') {
+        const deleteContents = data.deleteContents;
+        if (deleteContents) {
+          const deleteLocationRecursivelyLocal = async (locId) => {
+            const childLocs = await db.locations.where({ parent_id: locId }).toArray();
+            for (const child of childLocs) {
+              await deleteLocationRecursivelyLocal(child.id);
+            }
+            await db.places.where({ location_id: locId }).delete();
+            await db.entity_photos.where({ entity_id: locId }).delete();
+            await db.locations.delete(locId);
+          };
+          await deleteLocationRecursivelyLocal(data.id);
+        } else {
+          await db.locations.where({ parent_id: data.id }).modify({ parent_id: null });
+          await db.places.where({ location_id: data.id }).delete();
+          await db.entity_photos.where({ entity_id: data.id }).delete();
+          await db.locations.delete(data.id);
+        }
+      }
     } else if (action === 'delete') {
       if (table === 'entity_tags') {
         await db.entity_tags.delete([data.entity_id, data.tag_id]);
@@ -106,7 +152,9 @@ export async function populateLocalDb(token) {
     { url: '/api/entity-tags', table: 'entity_tags' },
     { url: '/api/collections', table: 'collections' },
     { url: '/api/categories', table: 'custom_categories' },
-    { url: '/api/trips', table: 'trips' }
+    { url: '/api/trips', table: 'trips' },
+    { url: '/api/ai_imports', table: 'ai_imports' },
+    { url: '/api/import/saved-markdowns', table: 'saved_markdowns' }
   ];
 
   for (const item of tables) {
