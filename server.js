@@ -1134,6 +1134,111 @@ Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`
   }
 });
 
+app.post('/api/ai/generate-trip', authenticateToken, async (req, res) => {
+  const { locations, collections, lengthDays, prompt, placesList } = req.body;
+  if (!lengthDays && !prompt) {
+    return res.status(400).json({ error: 'Trip length (days) is required' });
+  }
+
+  try {
+    const config = await db.get('SELECT ai_settings FROM user_configs WHERE user_id = ?', [req.user.id]);
+    if (!config || !config.ai_settings) {
+      return res.status(400).json({ error: 'AI settings not configured. Please go to Settings -> AI Settings to configure.' });
+    }
+
+    const aiSettings = JSON.parse(config.ai_settings);
+    const provider = aiSettings.provider || 'Gemini';
+    const apiKey = aiSettings.apiKey || '';
+    const model = aiSettings.model || 'gemini-1.5-pro';
+    const endpoint = aiSettings.endpointUrl || '';
+
+    if (!apiKey && ['Gemini', 'OpenAI', 'Claude'].includes(provider)) {
+      return res.status(400).json({ error: `API Key is missing for provider ${provider}.` });
+    }
+
+    const systemPrompt = `You are a travel planning assistant. Generate a day-wise itinerary for a trip.
+You are given a list of existing places of visit (with their names and geocoordinates/locations).
+Trip Length: ${lengthDays || 3} days.
+The activities returned MUST only be assignments of the existing place names provided in the list. Do not invent new places or write descriptions.
+
+Your response MUST be a JSON array of objects representing days. Each day object must contain:
+- day: number (e.g. 1, 2)
+- title: day title or highlight (e.g. "Exploring the Historic Center")
+- activities: an array of strings representing the names of the places of visit to cover on this day (exact matches from the provided list, ordered optimally by geocoordinates).
+
+Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`\`\`json).`;
+
+    const userMessage = `${prompt ? prompt : `Assign these places of visit to a ${lengthDays}-day itinerary based on their locations and coordinates:`}
+Places List: ${JSON.stringify(placesList || [])}
+Locations: ${JSON.stringify(locations || [])}
+Collections: ${JSON.stringify(collections || [])}`;
+
+    let responseText = '';
+
+    if (provider === 'Gemini') {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const response = await axios.post(url, {
+        contents: [{
+          parts: [{
+            text: `${systemPrompt}\n\n${userMessage}`
+          }]
+        }]
+      });
+      responseText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    } else if (provider === 'OpenAI') {
+      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ]
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}` }
+      });
+      responseText = response.data?.choices?.[0]?.message?.content || '';
+    } else if (provider === 'Claude') {
+      const response = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: model,
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }]
+      }, {
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        }
+      });
+      responseText = response.data?.content?.[0]?.text || '';
+    } else {
+      const targetUrl = endpoint || 'http://localhost:11434/api/generate';
+      const response = await axios.post(targetUrl, {
+        model: model,
+        prompt: `${systemPrompt}\n\n${userMessage}`,
+        stream: false
+      });
+      responseText = response.data?.response || response.data?.choices?.[0]?.message?.content || '';
+    }
+
+    let cleanedText = responseText.trim();
+    if (cleanedText.startsWith('```json')) {
+      cleanedText = cleanedText.substring(7);
+    }
+    if (cleanedText.startsWith('```')) {
+      cleanedText = cleanedText.substring(3);
+    }
+    if (cleanedText.endsWith('```')) {
+      cleanedText = cleanedText.substring(0, cleanedText.length - 3);
+    }
+
+    const parsedJson = JSON.parse(cleanedText.trim());
+    res.json(parsedJson);
+  } catch (err) {
+    console.error('AI itinerary generation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Saved Markdowns Endpoints
 app.get('/api/import/saved-markdowns', authenticateToken, async (req, res) => {
   try {

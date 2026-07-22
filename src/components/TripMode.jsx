@@ -239,7 +239,7 @@ export default function TripMode({ token }) {
 
       {activeTrip ? (
         <div>
-          <div style={{ background: '#1c1b22', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
+          <div style={{ background: 'var(--bg-surface-elevated)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
             <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{activeTrip.name}</h2>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
               {formatStartDate(activeTrip.start_date)} ({activeTrip.length || 1} {activeTrip.length === 1 ? 'day' : 'days'})
@@ -293,7 +293,7 @@ export default function TripMode({ token }) {
                   const place = places.find(p => p.id === item.place_id);
                   return (
                     <div key={item.id} className="timeline-item" style={{ paddingBottom: '16px' }}>
-                      <div className="timeline-card" style={{ padding: '12px', background: '#1c1b25' }}>
+                      <div className="timeline-card" style={{ padding: '12px', background: 'var(--bg-surface-elevated)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <b style={{ fontSize: '0.95rem' }}>{place ? place.name : 'Unknown Stop'}</b>
                         </div>

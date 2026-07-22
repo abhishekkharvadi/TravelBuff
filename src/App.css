@@ -476,20 +476,22 @@ button, input, select, textarea {
 }
 
 .photo-action-btn {
-  background: rgba(0, 0, 0, 0.7);
-  border: none;
-  width: 24px;
-  height: 24px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-glass);
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ffffff;
+  color: var(--text-primary);
   cursor: pointer;
+  transition: all 0.2s;
 }
 
 .photo-action-btn:hover {
   background: var(--accent-primary);
+  color: #000;
 }
 
 .photo-action-btn.featured-btn {
@@ -699,7 +701,7 @@ dialog::backdrop {
 }
 
 .timeline-card {
-  background: #191925;
+  background: var(--bg-surface-elevated);
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-sm);
   padding: 14px;
@@ -744,7 +746,7 @@ dialog::backdrop {
 
 /* Expense budget bar */
 .budget-progress-container {
-  background: rgba(255,255,255,0.05);
+  background: var(--bg-app);
   border-radius: 10px;
   height: 8px;
   width: 100%;

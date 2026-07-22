@@ -16,7 +16,12 @@ import { populateLocalDb, clearLocalDb } from './clientDb.js';
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [activeMode, setActiveMode] = useState('planning'); // 'planning' or 'trip'
+  const [activeMode, setActiveMode] = useState(localStorage.getItem('tb_activeMode') || 'planning'); // 'planning' or 'trip'
+  
+  useEffect(() => {
+    localStorage.setItem('tb_activeMode', activeMode);
+  }, [activeMode]);
+
   const [activeTab, setActiveTab] = useState('locations'); // 'locations', 'collections', 'trips', 'settings'
   const [syncStatus, setSyncStatus] = useState('synced'); // 'synced', 'syncing', 'offline', 'error'
   const [isInitializing, setIsInitializing] = useState(true);

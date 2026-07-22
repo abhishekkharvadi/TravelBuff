@@ -599,8 +599,9 @@ export default function Collections({ selectedCol, setSelectedCol }) {
     <div className="container">
       <div className="page-header">
         <h2>Collections</h2>
-        <button className="btn btn-primary" onClick={() => { setShowAddForm(true); setLocSearchQuery(''); setPlaceSearchQuery(''); }} style={{ width: 'auto' }}>
-          Create Collection
+        <button className="btn btn-primary" onClick={() => { setShowAddForm(true); setLocSearchQuery(''); setPlaceSearchQuery(''); }} style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Folder size={16} />
+          <span className="desktop-only-text">Create Collection</span>
         </button>
       </div>
 
@@ -645,8 +646,9 @@ export default function Collections({ selectedCol, setSelectedCol }) {
           <Folder size={48} className="empty-state-icon" />
           <h3>No Collections</h3>
           <p>Group cities or countries by custom tags (like "Europe Roadtrip") or compile lists manually.</p>
-          <button className="btn btn-primary" onClick={() => { setShowAddForm(true); setLocSearchQuery(''); }}>
-            Create Collection
+          <button className="btn btn-primary" onClick={() => { setShowAddForm(true); setLocSearchQuery(''); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 auto' }}>
+            <Folder size={16} />
+            <span>Create Collection</span>
           </button>
         </div>
       )}

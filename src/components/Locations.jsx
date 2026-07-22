@@ -57,6 +57,15 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   const entityTags = useLiveQuery(() => db.entity_tags.toArray()) || [];
   const photos = useLiveQuery(() => db.entity_photos.toArray()) || [];
   const customCategories = useLiveQuery(() => db.custom_categories.where('type').equals('place').toArray()) || [];
+  const defaultCategories = [
+    { id: 'default-hotel', name: 'hotel', icon: '🏨', type: 'place' },
+    { id: 'default-stay', name: 'stay', icon: '🏠', type: 'place' },
+    { id: 'default-resort', name: 'resort', icon: '🌴', type: 'place' }
+  ];
+  const allCategories = [
+    ...defaultCategories,
+    ...customCategories.filter(c => !defaultCategories.some(d => d.name.toLowerCase() === c.name.toLowerCase()))
+  ];
 
   // Local State
   const [folderToDelete, setFolderToDelete] = useState(null);
@@ -313,6 +322,41 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
       }
     }
     return path;
+  };
+
+  // Helper: Calculate dynamic visited status of a folder (recursively scanning contents)
+  const getFolderVisitedStatus = (folderId) => {
+    const getAllChildLocations = (fId) => {
+      let childs = [];
+      const directChildren = locations.filter(l => String(l.parent_id) === String(fId));
+      for (const child of directChildren) {
+        childs.push(child);
+        if (child.is_folder === 1) {
+          childs = childs.concat(getAllChildLocations(child.id));
+        }
+      }
+      return childs;
+    };
+
+    const allChildLocs = getAllChildLocations(folderId);
+    const folderAndChildLocIds = [folderId, ...allChildLocs.map(l => l.id)];
+    const childPlaces = places.filter(p => folderAndChildLocIds.includes(p.location_id));
+    const leafLocations = allChildLocs.filter(l => l.is_folder !== 1);
+
+    const totalItems = leafLocations.length + childPlaces.length;
+    if (totalItems === 0) return 'not_visited';
+
+    const visitedLocationsCount = leafLocations.filter(l => l.visited === 1).length;
+    const visitedPlacesCount = childPlaces.filter(p => p.visited === 1).length;
+    const totalVisited = visitedLocationsCount + visitedPlacesCount;
+
+    if (totalVisited === totalItems) {
+      return 'visited';
+    } else if (totalVisited > 0) {
+      return 'partial';
+    } else {
+      return 'not_visited';
+    }
   };
 
   // Helper: Get tags for an entity
@@ -1379,7 +1423,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                         value={placeCategory}
                         onChange={(e) => setPlaceCategory(e.target.value)}
                       >
-                        {customCategories.map(c => (
+                        {allCategories.map(c => (
                           <option key={c.id} value={c.name}>{c.icon || '📌'} {c.name}</option>
                         ))}
                       </select>
@@ -1553,7 +1597,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                             onChange={(e) => queueSyncAction('places', 'update', { ...place, category: e.target.value })}
                           >
                             <option value="">Select Category</option>
-                            {customCategories.map(c => (
+                            {allCategories.map(c => (
                               <option key={c.id} value={c.name}>{c.icon || '📌'} {c.name}</option>
                             ))}
                           </select>
@@ -1931,8 +1975,9 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
               <Trash2 size={16} />
             </button>
           )}
-          <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto' }}>
-            Add Location
+          <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <MapPin size={16} />
+            <span className="desktop-only-text">Add Location</span>
           </button>
         </div>
       </div>
@@ -2336,8 +2381,9 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
           <MapPin size={48} className="empty-state-icon" />
           <h3>No Locations Yet</h3>
           <p>Start tracking your travel map by adding your first location or country.</p>
-          <button className="btn btn-primary" onClick={() => setShowAddForm(true)}>
-            Add Location
+          <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 auto' }}>
+            <MapPin size={16} />
+            <span>Add Location</span>
           </button>
         </div>
       )}
@@ -2494,14 +2540,49 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                   />
                 )}
                 <div style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', gap: '6px', zIndex: 10 }}>
-                  {loc.is_folder === 1 && (
-                    <div className="card-badge folder" style={{ position: 'static', background: 'var(--accent-secondary)' }}>
-                      📂 Folder
+                  {loc.is_folder === 1 ? (
+                    (() => {
+                      const status = getFolderVisitedStatus(loc.id);
+                      if (status === 'visited') {
+                        return (
+                          <>
+                            <div className="card-badge folder" style={{ position: 'static', background: 'var(--accent-secondary)' }}>
+                              📂 Folder
+                            </div>
+                            <div className="card-badge visited" style={{ position: 'static', background: 'var(--success)' }}>
+                              Visited
+                            </div>
+                          </>
+                        );
+                      } else if (status === 'partial') {
+                        return (
+                          <>
+                            <div className="card-badge folder" style={{ position: 'static', background: 'var(--accent-secondary)' }}>
+                              📂 Folder
+                            </div>
+                            <div className="card-badge visited" style={{ position: 'static', background: '#f97316' }}>
+                              Visited
+                            </div>
+                          </>
+                        );
+                      } else {
+                        return (
+                          <>
+                            <div className="card-badge folder" style={{ position: 'static', background: 'var(--accent-secondary)' }}>
+                              📂 Folder
+                            </div>
+                            <div className="card-badge" style={{ position: 'static' }}>
+                              Not Visited
+                            </div>
+                          </>
+                        );
+                      }
+                    })()
+                  ) : (
+                    <div className={`card-badge ${loc.visited === 1 ? 'visited' : ''}`} style={{ position: 'static' }}>
+                      {loc.visited === 1 ? 'Visited' : 'Not Visited'}
                     </div>
                   )}
-                  <div className={`card-badge ${loc.visited === 1 ? 'visited' : ''}`} style={{ position: 'static' }}>
-                    {loc.visited === 1 ? 'Visited' : 'Not Visited'}
-                  </div>
                 </div>
               </div>
               <div className="card-content">

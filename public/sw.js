@@ -47,8 +47,7 @@ self.addEventListener('fetch', (event) => {
     event.request.url.includes('ws') ||
     event.request.method !== 'GET'
   ) {
-    event.respondWith(fetch(event.request));
-    return;
+    return; // Let the browser handle these requests natively
   }
 
   // Cache-First strategy for static assets
@@ -59,7 +58,7 @@ self.addEventListener('fetch', (event) => {
         if (requestUrl.origin === self.location.origin) {
           fetch(event.request).then((networkResponse) => {
             if (networkResponse && networkResponse.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse.clone()));
             }
           }).catch(() => {/* Ignore offline fetch errors */});
         }
@@ -82,6 +81,7 @@ self.addEventListener('fetch', (event) => {
         if (event.request.mode === 'navigate') {
           return caches.match('/index.html');
         }
+        return new Response('Network error', { status: 480, statusText: 'Offline' });
       });
     })
   );
