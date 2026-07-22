@@ -5,6 +5,7 @@ import {
   Search, X, Edit, Eye, Navigation, PlusCircle, Compass 
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
+import { trackApiCall } from '../utils/apiTracker.js';
 import MapView from './MapView.jsx';
 
 function FolderCover({ folderId, locations, getFeaturedPhoto }) {
@@ -403,6 +404,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     await queueSyncAction('locations', 'insert', newLoc);
 
     // Fire background photo fetching without holding up the UI
+    trackApiCall('Wikipedia');
     fetch('/api/import/search-photo', {
       method: 'POST',
       headers: {
@@ -580,6 +582,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     await queueSyncAction('places', 'insert', newPlace);
 
     // Fire background photo fetching without holding up the UI
+    trackApiCall('Wikipedia');
     fetch('/api/import/search-photo', {
       method: 'POST',
       headers: {
@@ -1106,6 +1109,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                 setSelectedLocation(updated);
 
                 if (newIsFolder === 1 && (!selectedLocation.notes || !selectedLocation.notes.trim() || !selectedLocation.local_file_data)) {
+                  trackApiCall('Wikipedia');
                   fetch('/api/import/search-photo', {
                     method: 'POST',
                     headers: {
@@ -2549,7 +2553,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                             <div className="card-badge folder" style={{ position: 'static', background: 'var(--accent-secondary)' }}>
                               📂 Folder
                             </div>
-                            <div className="card-badge visited" style={{ position: 'static', background: 'var(--success)' }}>
+                            <div className="card-badge visited" style={{ position: 'static' }}>
                               Visited
                             </div>
                           </>
@@ -2560,7 +2564,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                             <div className="card-badge folder" style={{ position: 'static', background: 'var(--accent-secondary)' }}>
                               📂 Folder
                             </div>
-                            <div className="card-badge visited" style={{ position: 'static', background: '#f97316' }}>
+                            <div className="card-badge" style={{ position: 'static', color: '#f97316', borderColor: 'rgba(249, 115, 22, 0.3)' }}>
                               Visited
                             </div>
                           </>

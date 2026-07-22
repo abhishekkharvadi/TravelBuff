@@ -1866,7 +1866,9 @@ app.get('/api/backup/export', async (req, res) => {
       'itinerary_items',
       'expenses',
       'gps_logs',
-      'entity_photos'
+      'entity_photos',
+      'ai_imports',
+      'saved_markdowns'
     ];
 
     for (const table of tables) {
@@ -1939,7 +1941,7 @@ app.post('/api/backup/restore', async (req, res) => {
     if (data.users && Array.isArray(data.users)) {
       data.users.forEach(u => { if (u.id) oldUserIds.add(u.id); });
     }
-    const userIdTables = ['user_configs', 'locations', 'places', 'custom_categories', 'tags', 'collections', 'trips', 'gps_logs'];
+    const userIdTables = ['user_configs', 'locations', 'places', 'custom_categories', 'tags', 'collections', 'trips', 'gps_logs', 'ai_imports', 'saved_markdowns'];
     userIdTables.forEach(table => {
       const rows = data[table];
       if (rows && Array.isArray(rows)) {
@@ -1972,7 +1974,9 @@ app.post('/api/backup/restore', async (req, res) => {
     'itinerary_items',
     'expenses',
     'gps_logs',
-    'entity_photos'
+    'entity_photos',
+    'ai_imports',
+    'saved_markdowns'
   ];
 
   try {
@@ -2044,6 +2048,38 @@ app.post('/api/backup/restore', async (req, res) => {
             return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
           });
           row.manual_location_ids = ids.join(',');
+        }
+
+        // Special handling for ai_imports selected_locations / selected_collections lists
+        if (table === 'ai_imports') {
+          if (typeof row.selected_locations === 'string' && row.selected_locations) {
+            try {
+              const locIds = JSON.parse(row.selected_locations);
+              if (Array.isArray(locIds)) {
+                row.selected_locations = JSON.stringify(locIds.map(id => idMap.has(id) ? idMap.get(id) : id));
+              }
+            } catch (e) {
+              const ids = row.selected_locations.split(',').map(id => {
+                const trimmed = id.trim();
+                return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
+              });
+              row.selected_locations = ids.join(',');
+            }
+          }
+          if (typeof row.selected_collections === 'string' && row.selected_collections) {
+            try {
+              const colIds = JSON.parse(row.selected_collections);
+              if (Array.isArray(colIds)) {
+                row.selected_collections = JSON.stringify(colIds.map(id => idMap.has(id) ? idMap.get(id) : id));
+              }
+            } catch (e) {
+              const ids = row.selected_collections.split(',').map(id => {
+                const trimmed = id.trim();
+                return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
+              });
+              row.selected_collections = ids.join(',');
+            }
+          }
         }
 
         // 4. Handle entity_tags composite primary key conflicts

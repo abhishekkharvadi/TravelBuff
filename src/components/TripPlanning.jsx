@@ -6,6 +6,7 @@ import {
   Map, Edit, CheckSquare, X, DollarSign, RefreshCw, Star, Compass 
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
+import { trackApiCall } from '../utils/apiTracker.js';
 import MapView from './MapView.jsx';
 
 const dayColors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#14b8a6', '#ef4444'];
@@ -621,12 +622,43 @@ Only return the places to visit for each day in the itinerary.`;
     return Math.round(R * c * 10) / 10;
   };
 
-  // Helper: Retrieve actual driving route from OSRM
+  // Helper: Retrieve actual driving route from OSRM or Google Maps Distance Matrix
   const fetchOSRMDistance = async (p1, p2) => {
     const key = `${p1.id}-${p2.id}`;
     if (distances[key]) return distances[key];
 
+    if (window.google && window.google.maps && localStorage.getItem('google_maps_api_key')) {
+      try {
+        trackApiCall('Google Maps Distance Matrix');
+        const service = new window.google.maps.DistanceMatrixService();
+        const response = await new Promise((resolve, reject) => {
+          service.getDistanceMatrix({
+            origins: [{ lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) }],
+            destinations: [{ lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }],
+            travelMode: window.google.maps.TravelMode.DRIVING
+          }, (res, status) => {
+            if (status === 'OK') resolve(res);
+            else reject(new Error('Distance Matrix failed with status: ' + status));
+          });
+        });
+
+        if (response.rows && response.rows[0] && response.rows[0].elements && response.rows[0].elements[0]) {
+          const element = response.rows[0].elements[0];
+          if (element.status === 'OK') {
+            const distKm = Math.round((element.distance.value / 1000) * 10) / 10;
+            const durationMins = Math.round(element.duration.value / 60);
+            const valObj = { distance: distKm, duration: durationMins };
+            setDistances(prev => ({ ...prev, [key]: valObj }));
+            return valObj;
+          }
+        }
+      } catch (err) {
+        console.warn('Google Distance Matrix failed, falling back to OSRM:', err);
+      }
+    }
+
     try {
+      trackApiCall('OSRM Routing');
       const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${p1.longitude},${p1.latitude};${p2.longitude},${p2.latitude}?overview=false`);
       if (res.ok) {
         const data = await res.json();
@@ -739,6 +771,7 @@ Only return the places to visit for each day in the itinerary.`;
         longitude: p.longitude || ''
       }));
 
+      trackApiCall('AI Assistant');
       const aiRes = await fetch('/api/ai/generate-trip', {
         method: 'POST',
         headers: {

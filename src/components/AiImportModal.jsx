@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Sparkles, X, Loader, Search, Check, Trash2, Plus, MapPin, RotateCcw, Clock, MoreVertical, Save } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
+import { trackApiCall } from '../utils/apiTracker.js';
 
 const toSentenceTitleCase = (str) => {
   if (!str) return '';
@@ -421,6 +422,7 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
   const fetchPhotoForPlace = async (rowId, placeName, lat = null, lon = null) => {
     try {
       const queryParts = [placeName, city, country].filter(Boolean).join(' ');
+      trackApiCall('Wikipedia');
       const res = await fetch('/api/import/search-photo', {
         method: 'POST',
         headers: {
