@@ -30,6 +30,9 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
   const [aiModel, setAiModel] = useState('gemini-1.5-pro');
   const [firecrawlKey, setFirecrawlKey] = useState('');
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState('');
+  const [immichEnabled, setImmichEnabled] = useState(true);
+  const [aiEnabled, setAiEnabled] = useState(true);
+  const [googleMapsEnabled, setGoogleMapsEnabled] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   
@@ -73,6 +76,8 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
               setAiEndpointUrl(aiOpts.endpointUrl || '');
               setAiModel(aiOpts.model || 'gemini-1.5-pro');
               setFirecrawlKey(aiOpts.firecrawlKey || '');
+              setAiEnabled(aiOpts.aiEnabled !== undefined ? aiOpts.aiEnabled : true);
+              setImmichEnabled(aiOpts.immichEnabled !== undefined ? aiOpts.immichEnabled : true);
             } catch (e) { console.error('Failed to parse ai_settings'); }
           }
         }
@@ -81,6 +86,8 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
 
     const key = localStorage.getItem('google_maps_api_key') || '';
     setGoogleMapsApiKey(key);
+    const mapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+    setGoogleMapsEnabled(mapsEnabled);
   }, [token]);
 
   useEffect(() => {
@@ -138,6 +145,8 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
       if (fieldsToUpdate.ai_endpointUrl !== undefined) aiOpts.endpointUrl = fieldsToUpdate.ai_endpointUrl;
       if (fieldsToUpdate.ai_model !== undefined) aiOpts.model = fieldsToUpdate.ai_model;
       if (fieldsToUpdate.ai_firecrawlKey !== undefined) aiOpts.firecrawlKey = fieldsToUpdate.ai_firecrawlKey;
+      if (fieldsToUpdate.ai_enabled !== undefined) aiOpts.aiEnabled = fieldsToUpdate.ai_enabled;
+      if (fieldsToUpdate.immich_enabled !== undefined) aiOpts.immichEnabled = fieldsToUpdate.immich_enabled;
 
       payload.ai_settings = JSON.stringify(aiOpts);
 
@@ -366,155 +375,172 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                 <Server size={22} style={{ color: 'var(--accent-primary-hover)' }} />
                 <h3 style={{ margin: 0 }}>Immich Server Settings</h3>
               </div>
-              {cardStatus.immich && (
-                <span style={{ fontSize: '0.8rem', color: cardStatus.immich === 'Saved' ? 'var(--success)' : 'var(--accent-secondary)', fontWeight: 'bold' }}>
-                  {cardStatus.immich}
-                </span>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', margin: 0 }}>
+                  <input 
+                    type="checkbox" 
+                    checked={immichEnabled} 
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setImmichEnabled(val);
+                      handleSaveField('immich', { immich_enabled: val });
+                    }} 
+                    style={{ accentColor: 'var(--accent-primary)' }}
+                  />
+                  {immichEnabled ? 'Enabled' : 'Disabled'}
+                </label>
+                {cardStatus.immich && (
+                  <span style={{ fontSize: '0.8rem', color: cardStatus.immich === 'Saved' ? 'var(--success)' : 'var(--accent-secondary)', fontWeight: 'bold' }}>
+                    {cardStatus.immich}
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative' }}>
-                Immich Server Endpoint URL
-                <span 
-                  onMouseEnter={() => setShowEndpointTooltip(true)}
-                  onMouseLeave={() => setShowEndpointTooltip(false)}
-                  onClick={(e) => { e.stopPropagation(); setShowEndpointTooltip(!showEndpointTooltip); }}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '15px',
-                    height: '15px',
-                    borderRadius: '50%',
-                    background: 'var(--accent-primary)',
-                    color: '#000',
-                    fontSize: '10px',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
+            <div style={{ opacity: immichEnabled ? 1 : 0.4, pointerEvents: immichEnabled ? 'auto' : 'none', transition: 'opacity 0.2s' }}>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative' }}>
+                  Immich Server Endpoint URL
+                  <span 
+                    onMouseEnter={() => setShowEndpointTooltip(true)}
+                    onMouseLeave={() => setShowEndpointTooltip(false)}
+                    onClick={(e) => { e.stopPropagation(); setShowEndpointTooltip(!showEndpointTooltip); }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '15px',
+                      height: '15px',
+                      borderRadius: '50%',
+                      background: 'var(--accent-primary)',
+                      color: '#000',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      userSelect: 'none'
+                    }}
+                  >
+                    i
+                  </span>
+                  {showEndpointTooltip && (
+                    <span style={{
+                      position: 'absolute',
+                      bottom: '22px',
+                      left: '0',
+                      background: '#1a1a24',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: '4px',
+                      padding: '8px 12px',
+                      color: '#fff',
+                      fontSize: '0.75rem',
+                      width: '260px',
+                      zIndex: 100,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                      pointerEvents: 'none',
+                      fontWeight: 'normal',
+                      lineHeight: '1.3'
+                    }}>
+                      This is the backend Immich URL. Add the URL without the trailing '/' at the end (e.g. http://localhost:port only).
+                    </span>
+                  )}
+                </label>
+                <input 
+                  type="url" 
+                  className="form-control" 
+                  placeholder="https://immich.yourdomain.com"
+                  value={immichUrl}
+                  onChange={(e) => setImmichUrl(e.target.value)}
+                  onBlur={(e) => handleSaveField('immich', { immich_url: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative' }}>
+                  Immich Alternative URL
+                  <span 
+                    onMouseEnter={() => setShowAltTooltip(true)}
+                    onMouseLeave={() => setShowAltTooltip(false)}
+                    onClick={(e) => { e.stopPropagation(); setShowAltTooltip(!showAltTooltip); }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '15px',
+                      height: '15px',
+                      borderRadius: '50%',
+                      background: 'var(--accent-primary)',
+                      color: '#000',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      userSelect: 'none'
+                    }}
+                  >
+                    i
+                  </span>
+                  {showAltTooltip && (
+                    <span style={{
+                      position: 'absolute',
+                      bottom: '22px',
+                      left: '0',
+                      background: '#1a1a24',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: '4px',
+                      padding: '8px 12px',
+                      color: '#fff',
+                      fontSize: '0.75rem',
+                      width: '260px',
+                      zIndex: 100,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                      pointerEvents: 'none',
+                      fontWeight: 'normal',
+                      lineHeight: '1.3'
+                    }}>
+                      Adding this field will use this URL to open Albums which are added to the Locations. When empty, it will use the Endpoint URL instead.
+                    </span>
+                  )}
+                </label>
+                <input 
+                  type="url" 
+                  className="form-control" 
+                  placeholder="https://immich-alt.yourdomain.com"
+                  value={immichAltUrl}
+                  onChange={(e) => setImmichAltUrl(e.target.value)}
+                  onBlur={(e) => handleSaveField('immich', { immich_alt_url: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Immich API Key</label>
+                <input 
+                  type="password" 
+                  className="form-control" 
+                  placeholder="Enter personal API Key"
+                  value={immichKey}
+                  onChange={(e) => setImmichKey(e.target.value)}
+                  onBlur={(e) => handleSaveField('immich', { immich_key: e.target.value })}
+                />
+              </div>
+              
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '10px' }}>
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={handleTestImmich}
+                  disabled={immichTestStatus === 'testing'}
+                  style={{ width: 'auto', padding: '6px 14px', fontSize: '0.8rem' }}
                 >
-                  i
-                </span>
-                {showEndpointTooltip && (
-                  <span style={{
-                    position: 'absolute',
-                    bottom: '22px',
-                    left: '0',
-                    background: '#1a1a24',
-                    border: '1px solid var(--border-glass)',
-                    borderRadius: '4px',
-                    padding: '8px 12px',
-                    color: '#fff',
-                    fontSize: '0.75rem',
-                    width: '260px',
-                    zIndex: 100,
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                    pointerEvents: 'none',
-                    fontWeight: 'normal',
-                    lineHeight: '1.3'
-                  }}>
-                    This is the backend Immich URL. Add the URL without the trailing '/' at the end (e.g. http://localhost:port only).
+                  {immichTestStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                </button>
+                {immichTestStatus === 'success' && (
+                  <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', fontWeight: '500' }}>
+                    ✔️ Connection Success {immichVersion && `(v${immichVersion})`}
                   </span>
                 )}
-              </label>
-              <input 
-                type="url" 
-                className="form-control" 
-                placeholder="https://immich.yourdomain.com"
-                value={immichUrl}
-                onChange={(e) => setImmichUrl(e.target.value)}
-                onBlur={(e) => handleSaveField('immich', { immich_url: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative' }}>
-                Immich Alternative URL
-                <span 
-                  onMouseEnter={() => setShowAltTooltip(true)}
-                  onMouseLeave={() => setShowAltTooltip(false)}
-                  onClick={(e) => { e.stopPropagation(); setShowAltTooltip(!showAltTooltip); }}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '15px',
-                    height: '15px',
-                    borderRadius: '50%',
-                    background: 'var(--accent-primary)',
-                    color: '#000',
-                    fontSize: '10px',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
-                >
-                  i
-                </span>
-                {showAltTooltip && (
-                  <span style={{
-                    position: 'absolute',
-                    bottom: '22px',
-                    left: '0',
-                    background: '#1a1a24',
-                    border: '1px solid var(--border-glass)',
-                    borderRadius: '4px',
-                    padding: '8px 12px',
-                    color: '#fff',
-                    fontSize: '0.75rem',
-                    width: '260px',
-                    zIndex: 100,
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                    pointerEvents: 'none',
-                    fontWeight: 'normal',
-                    lineHeight: '1.3'
-                  }}>
-                    Adding this field will use this URL to open Albums which are added to the Locations. When empty, it will use the Endpoint URL instead.
+                {immichTestStatus === 'error' && (
+                  <span style={{ color: 'var(--error)', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', fontWeight: '500' }}>
+                    ❌ Connection Failed
                   </span>
                 )}
-              </label>
-              <input 
-                type="url" 
-                className="form-control" 
-                placeholder="https://immich-alt.yourdomain.com"
-                value={immichAltUrl}
-                onChange={(e) => setImmichAltUrl(e.target.value)}
-                onBlur={(e) => handleSaveField('immich', { immich_alt_url: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label>Immich API Key</label>
-              <input 
-                type="password" 
-                className="form-control" 
-                placeholder="Enter personal API Key"
-                value={immichKey}
-                onChange={(e) => setImmichKey(e.target.value)}
-                onBlur={(e) => handleSaveField('immich', { immich_key: e.target.value })}
-              />
-            </div>
-            
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '10px' }}>
-              <button 
-                type="button" 
-                className="btn btn-secondary" 
-                onClick={handleTestImmich}
-                disabled={immichTestStatus === 'testing'}
-                style={{ width: 'auto', padding: '6px 14px', fontSize: '0.8rem' }}
-              >
-                {immichTestStatus === 'testing' ? 'Testing...' : 'Test Connection'}
-              </button>
-              {immichTestStatus === 'success' && (
-                <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', fontWeight: '500' }}>
-                  ✔️ Connection Success {immichVersion && `(v${immichVersion})`}
-                </span>
-              )}
-              {immichTestStatus === 'error' && (
-                <span style={{ color: 'var(--error)', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', fontWeight: '500' }}>
-                  ❌ Connection Failed
-                </span>
-              )}
+              </div>
             </div>
           </div>
 
@@ -525,124 +551,141 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                 <Sparkles size={22} style={{ color: 'var(--accent-primary-hover)' }} />
                 <h3 style={{ margin: 0 }}>AI Assistant Configuration</h3>
               </div>
-              {cardStatus.ai && (
-                <span style={{ fontSize: '0.8rem', color: cardStatus.ai === 'Saved' ? 'var(--success)' : 'var(--accent-secondary)', fontWeight: 'bold' }}>
-                  {cardStatus.ai}
-                </span>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', margin: 0 }}>
+                  <input 
+                    type="checkbox" 
+                    checked={aiEnabled} 
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setAiEnabled(val);
+                      handleSaveField('ai', { ai_enabled: val });
+                    }} 
+                    style={{ accentColor: 'var(--accent-primary)' }}
+                  />
+                  {aiEnabled ? 'Enabled' : 'Disabled'}
+                </label>
+                {cardStatus.ai && (
+                  <span style={{ fontSize: '0.8rem', color: cardStatus.ai === 'Saved' ? 'var(--success)' : 'var(--accent-secondary)', fontWeight: 'bold' }}>
+                    {cardStatus.ai}
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="form-group">
-              <label>AI Provider</label>
-              <select 
-                className="form-control" 
-                value={aiProvider} 
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setAiProvider(val);
-                  handleSaveField('ai', { ai_provider: val });
-                }}
-              >
-                <option value="OpenAI">OpenAI</option>
-                <option value="Claude">Claude</option>
-                <option value="Gemini">Gemini</option>
-                <option value="Ollama">Ollama</option>
-                <option value="Local AI">Local AI</option>
-              </select>
-            </div>
-
-            {['OpenAI', 'Claude', 'Gemini'].includes(aiProvider) && (
+            <div style={{ opacity: aiEnabled ? 1 : 0.4, pointerEvents: aiEnabled ? 'auto' : 'none', transition: 'opacity 0.2s' }}>
               <div className="form-group">
-                <label>API Key</label>
+                <label>AI Provider</label>
+                <select 
+                  className="form-control" 
+                  value={aiProvider} 
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setAiProvider(val);
+                    handleSaveField('ai', { ai_provider: val });
+                  }}
+                >
+                  <option value="OpenAI">OpenAI</option>
+                  <option value="Claude">Claude</option>
+                  <option value="Gemini">Gemini</option>
+                  <option value="Ollama">Ollama</option>
+                  <option value="Local AI">Local AI</option>
+                </select>
+              </div>
+
+              {['OpenAI', 'Claude', 'Gemini'].includes(aiProvider) && (
+                <div className="form-group">
+                  <label>API Key</label>
+                  <input
+                    type="password"
+                    className="form-control"
+                    placeholder={`Enter ${aiProvider} API Key`}
+                    value={aiApiKey}
+                    onChange={(e) => setAiApiKey(e.target.value)}
+                    onBlur={(e) => handleSaveField('ai', { ai_apiKey: e.target.value })}
+                  />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>Firecrawl API Key (Optional)</label>
                 <input
                   type="password"
                   className="form-control"
-                  placeholder={`Enter ${aiProvider} API Key`}
-                  value={aiApiKey}
-                  onChange={(e) => setAiApiKey(e.target.value)}
-                  onBlur={(e) => handleSaveField('ai', { ai_apiKey: e.target.value })}
+                  placeholder="Enter Firecrawl API Key"
+                  value={firecrawlKey}
+                  onChange={(e) => setFirecrawlKey(e.target.value)}
+                  onBlur={(e) => handleSaveField('ai', { ai_firecrawlKey: e.target.value })}
                 />
               </div>
-            )}
 
-            <div className="form-group">
-              <label>Firecrawl API Key (Optional)</label>
-              <input
-                type="password"
-                className="form-control"
-                placeholder="Enter Firecrawl API Key"
-                value={firecrawlKey}
-                onChange={(e) => setFirecrawlKey(e.target.value)}
-                onBlur={(e) => handleSaveField('ai', { ai_firecrawlKey: e.target.value })}
-              />
-            </div>
+              {['Ollama', 'Local AI', 'OpenAI', 'Claude'].includes(aiProvider) && (
+                <div className="form-group">
+                  <label>Endpoint URL (Optional for Cloud Providers)</label>
+                  <input
+                    type="url"
+                    className="form-control"
+                    placeholder="https://api... or http://localhost..."
+                    value={aiEndpointUrl}
+                    onChange={(e) => setAiEndpointUrl(e.target.value)}
+                    onBlur={(e) => handleSaveField('ai', { ai_endpointUrl: e.target.value })}
+                  />
+                </div>
+              )}
 
-            {['Ollama', 'Local AI', 'OpenAI', 'Claude'].includes(aiProvider) && (
-              <div className="form-group">
-                <label>Endpoint URL (Optional for Cloud Providers)</label>
-                <input
-                  type="url"
-                  className="form-control"
-                  placeholder="https://api... or http://localhost..."
-                  value={aiEndpointUrl}
-                  onChange={(e) => setAiEndpointUrl(e.target.value)}
-                  onBlur={(e) => handleSaveField('ai', { ai_endpointUrl: e.target.value })}
-                />
-              </div>
-            )}
+              {(() => {
+                const standardModels = {
+                  Gemini: ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-flash-latest', 'gemini-pro-latest'],
+                  OpenAI: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+                  Claude: ['claude-3-5-sonnet-20240620', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
+                  Ollama: ['llama3', 'mistral', 'phi3', 'gemma'],
+                  'Local AI': ['llama3', 'mistral']
+                }[aiProvider] || [];
 
-            {(() => {
-              const standardModels = {
-                Gemini: ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-flash-latest', 'gemini-pro-latest'],
-                OpenAI: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-                Claude: ['claude-3-5-sonnet-20240620', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
-                Ollama: ['llama3', 'mistral', 'phi3', 'gemma'],
-                'Local AI': ['llama3', 'mistral']
-              }[aiProvider] || [];
+                const isCustom = aiModel && !standardModels.includes(aiModel);
 
-              const isCustom = aiModel && !standardModels.includes(aiModel);
-
-              return (
-                <>
-                  <div className="form-group">
-                    <label>Model Selector</label>
-                    <select
-                      className="form-control"
-                      value={isCustom ? 'custom' : aiModel}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === 'custom') {
-                          setAiModel('');
-                        } else {
-                          setAiModel(val);
-                          handleSaveField('ai', { ai_model: val });
-                        }
-                      }}
-                    >
-                      {standardModels.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                      <option value="custom">Custom Model...</option>
-                    </select>
-                  </div>
-
-                  {(isCustom || aiModel === '') && (
+                return (
+                  <>
                     <div className="form-group">
-                      <label>Custom Model Name</label>
-                      <input
-                        type="text"
+                      <label>Model Selector</label>
+                      <select
                         className="form-control"
-                        placeholder="Enter model identifier"
-                        value={aiModel}
-                        onChange={(e) => setAiModel(e.target.value)}
-                        onBlur={(e) => handleSaveField('ai', { ai_model: e.target.value })}
-                        required
-                      />
+                        value={isCustom ? 'custom' : aiModel}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === 'custom') {
+                            setAiModel('');
+                          } else {
+                            setAiModel(val);
+                            handleSaveField('ai', { ai_model: val });
+                          }
+                        }}
+                      >
+                        {standardModels.map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                        <option value="custom">Custom Model...</option>
+                      </select>
                     </div>
-                  )}
-                </>
-              );
-            })()}
+
+                    {(isCustom || aiModel === '') && (
+                      <div className="form-group">
+                        <label>Custom Model Name</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="Enter model identifier"
+                          value={aiModel}
+                          onChange={(e) => setAiModel(e.target.value)}
+                          onBlur={(e) => handleSaveField('ai', { ai_model: e.target.value })}
+                          required
+                        />
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
           </div>
 
           {/* SECTION 3: GOOGLE MAPS API KEY (OPTIONAL) */}
@@ -652,85 +695,106 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                 <Key size={22} style={{ color: 'var(--accent-primary-hover)' }} />
                 <h3 style={{ margin: 0 }}>Google Maps Integration</h3>
               </div>
-              {cardStatus.maps && (
-                <span style={{ fontSize: '0.8rem', color: cardStatus.maps === 'Saved' ? 'var(--success)' : 'var(--accent-secondary)', fontWeight: 'bold' }}>
-                  {cardStatus.maps}
-                </span>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', margin: 0 }}>
+                  <input 
+                    type="checkbox" 
+                    checked={googleMapsEnabled} 
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setGoogleMapsEnabled(val);
+                      localStorage.setItem('google_maps_enabled', val ? 'true' : 'false');
+                      setCardStatus(prev => ({ ...prev, maps: 'Saved' }));
+                      setTimeout(() => setCardStatus(prev => ({ ...prev, maps: '' })), 2000);
+                    }} 
+                    style={{ accentColor: 'var(--accent-primary)' }}
+                  />
+                  {googleMapsEnabled ? 'Enabled' : 'Disabled'}
+                </label>
+                {cardStatus.maps && (
+                  <span style={{ fontSize: '0.8rem', color: cardStatus.maps === 'Saved' ? 'var(--success)' : 'var(--accent-secondary)', fontWeight: 'bold' }}>
+                    {cardStatus.maps}
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="form-group" style={{ position: 'relative' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                Google Maps API Key (Optional)
-                <span 
-                  onClick={(e) => { e.stopPropagation(); setShowGmapsTooltip(!showGmapsTooltip); }}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '16px',
-                    height: '16px',
-                    borderRadius: '50%',
-                    background: 'var(--accent-primary)',
-                    color: '#000',
-                    fontSize: '11px',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
-                  title="Key Setup Instructions & Cost Warning"
-                >
-                  i
+            <div style={{ opacity: googleMapsEnabled ? 1 : 0.4, pointerEvents: googleMapsEnabled ? 'auto' : 'none', transition: 'opacity 0.2s' }}>
+              <div className="form-group" style={{ position: 'relative' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  Google Maps API Key (Optional)
+                  <span 
+                    onClick={(e) => { e.stopPropagation(); setShowGmapsTooltip(!showGmapsTooltip); }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '50%',
+                      background: 'var(--accent-primary)',
+                      color: '#000',
+                      fontSize: '11px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      userSelect: 'none'
+                    }}
+                    title="Key Setup Instructions & Cost Warning"
+                  >
+                    i
+                  </span>
+                </label>
+
+                {showGmapsTooltip && (
+                  <div style={{
+                    background: 'var(--bg-surface-elevated)',
+                    border: '1px solid var(--border-glass)',
+                    borderRadius: '8px',
+                    padding: '16px',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-primary)',
+                    marginBottom: '16px',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                    lineHeight: '1.4'
+                  }}>
+                    <h5 style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--accent-primary-hover)' }}>🔑 Google Maps Key Requirements</h5>
+                    <p style={{ margin: '0 0 10px 0' }}>The following APIs must be enabled for this key in your Google Cloud Console:</p>
+                    <ul style={{ margin: '0 0 12px 18px', padding: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <li><b>Maps JavaScript API</b>: Renders the map canvas and plots markers.</li>
+                      <li><b>Directions API</b>: Computes actual street path geometries between stops.</li>
+                      <li><b>Distance Matrix API</b>: Calculates travel distances and driving durations.</li>
+                      <li><b>Geocoding API</b>: Resolves coordinates for locations and curation queue rows.</li>
+                      <li><b>Places API</b>: Provides autocomplete recommendations when searching areas.</li>
+                    </ul>
+
+                    <h5 style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--accent-primary-hover)' }}>🛠️ Setup Instructions</h5>
+                    <ol style={{ margin: '0 0 12px 18px', padding: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <li>Go to the <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>Google Cloud Console</a>.</li>
+                      <li>Create or select a project, then go to **APIs & Services &gt; Library**.</li>
+                      <li>Search for and enable the three APIs listed above.</li>
+                      <li>Go to **APIs & Services &gt; Credentials**, click **Create Credentials**, and select **API Key**.</li>
+                      <li>(Recommended) Set HTTP Referrer restrictions to limit usage to your domain.</li>
+                    </ol>
+
+                    <h5 style={{ margin: '0 0 6px 0', fontSize: '0.85rem', color: 'var(--danger)' }}>⚠️ Cost & Billing Warning</h5>
+                    <p style={{ margin: 0 }}>
+                      Google offers <b>$200 in free monthly credits</b> (approx. 28,000 map loads). However, usage exceeding this limit will be billed to your Google Cloud account. It is highly recommended to set budget notifications and billing alerts in your GCP console.
+                    </p>
+                  </div>
+                )}
+
+                <input 
+                  type="password"
+                  className="form-control"
+                  placeholder="Enter Google Maps API Key for alternative map view"
+                  value={googleMapsApiKey}
+                  onChange={(e) => setGoogleMapsApiKey(e.target.value)}
+                  onBlur={(e) => handleSaveMapsKey(e.target.value)}
+                />
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  When left blank, the app defaults to OpenStreetMap/Leaflet.
                 </span>
-              </label>
-
-              {showGmapsTooltip && (
-                <div style={{
-                  background: 'var(--bg-surface-elevated)',
-                  border: '1px solid var(--border-glass)',
-                  borderRadius: '8px',
-                  padding: '16px',
-                  fontSize: '0.8rem',
-                  color: 'var(--text-primary)',
-                  marginBottom: '16px',
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-                  lineHeight: '1.4'
-                }}>
-                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--accent-primary-hover)' }}>🔑 Google Maps Key Requirements</h5>
-                  <p style={{ margin: '0 0 10px 0' }}>The following APIs must be enabled for this key in your Google Cloud Console:</p>
-                  <ul style={{ margin: '0 0 12px 18px', padding: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <li><b>Maps JavaScript API</b>: Renders the map canvas and plots markers.</li>
-                    <li><b>Directions API</b>: Computes actual street path geometries between stops.</li>
-                    <li><b>Distance Matrix API</b>: Calculates travel distances and driving durations.</li>
-                  </ul>
-
-                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--accent-primary-hover)' }}>🛠️ Setup Instructions</h5>
-                  <ol style={{ margin: '0 0 12px 18px', padding: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <li>Go to the <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>Google Cloud Console</a>.</li>
-                    <li>Create or select a project, then go to **APIs & Services &gt; Library**.</li>
-                    <li>Search for and enable the three APIs listed above.</li>
-                    <li>Go to **APIs & Services &gt; Credentials**, click **Create Credentials**, and select **API Key**.</li>
-                    <li>(Recommended) Set HTTP Referrer restrictions to limit usage to your domain.</li>
-                  </ol>
-
-                  <h5 style={{ margin: '0 0 6px 0', fontSize: '0.85rem', color: 'var(--danger)' }}>⚠️ Cost & Billing Warning</h5>
-                  <p style={{ margin: 0 }}>
-                    Google offers <b>$200 in free monthly credits</b> (approx. 28,000 map loads). However, usage exceeding this limit will be billed to your Google Cloud account. It is highly recommended to set budget notifications and billing alerts in your GCP console.
-                  </p>
-                </div>
-              )}
-
-              <input 
-                type="password"
-                className="form-control"
-                placeholder="Enter Google Maps API Key for alternative map view"
-                value={googleMapsApiKey}
-                onChange={(e) => setGoogleMapsApiKey(e.target.value)}
-                onBlur={(e) => handleSaveMapsKey(e.target.value)}
-              />
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                When left blank, the app defaults to OpenStreetMap/Leaflet.
-              </span>
+              </div>
             </div>
           </div>
 
@@ -1057,7 +1121,7 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                 const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
                 months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
               }
-              const apis = ['Google Maps JavaScript', 'Google Maps Directions', 'Google Maps Distance Matrix', 'OSRM Routing', 'Wikipedia', 'AI Assistant'];
+              const apis = ['Google Maps JavaScript', 'Google Maps Directions', 'Google Maps Distance Matrix', 'Google Maps Geocoding', 'Google Maps Places', 'OSRM Routing', 'Wikipedia', 'AI Assistant'];
               const logs = JSON.parse(localStorage.getItem('api_call_logs') || '{}');
 
               let csvContent = "data:text/csv;charset=utf-8,";
@@ -1111,7 +1175,7 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                   const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
                   months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
                 }
-                const apis = ['Google Maps JavaScript', 'Google Maps Directions', 'Google Maps Distance Matrix', 'OSRM Routing', 'Wikipedia', 'AI Assistant'];
+                const apis = ['Google Maps JavaScript', 'Google Maps Directions', 'Google Maps Distance Matrix', 'Google Maps Geocoding', 'Google Maps Places', 'OSRM Routing', 'Wikipedia', 'AI Assistant'];
                 const logs = JSON.parse(localStorage.getItem('api_call_logs') || '{}');
 
                 return apis.map(api => (

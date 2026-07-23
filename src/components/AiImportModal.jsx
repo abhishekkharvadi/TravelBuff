@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Sparkles, X, Loader, Search, Check, Trash2, Plus, MapPin, RotateCcw, Clock, MoreVertical, Save } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
+import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
 
 const toSentenceTitleCase = (str) => {
   if (!str) return '';
@@ -198,6 +199,45 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
     setSearching(true);
     setActiveSearchId(id);
     setSearchResults([]);
+    const apiKey = localStorage.getItem('google_maps_api_key');
+    const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+    if (apiKey && googleMapsEnabled) {
+      try {
+        trackApiCall('Google Maps Geocoding');
+        const google = await loadGoogleMaps();
+        const { Geocoder } = await google.maps.importLibrary("geocoding");
+        const geocoder = new Geocoder();
+        geocoder.geocode({ address: query }, (results, status) => {
+          setSearching(false);
+          if (status === 'OK' && results) {
+            const formatted = results.map(r => {
+              let city = '';
+              let country = '';
+              r.address_components.forEach(c => {
+                if (c.types.includes('locality')) city = c.long_name;
+                if (c.types.includes('country')) country = c.long_name;
+              });
+              return {
+                lat: r.geometry.location.lat(),
+                lon: r.geometry.location.lng(),
+                displayName: r.formatted_address,
+                city,
+                country
+              };
+            });
+            setSearchResults(formatted);
+          } else {
+            setSearchResults([]);
+          }
+        });
+      } catch (err) {
+        console.error('Google Maps geocoding failed', err);
+        setSearching(false);
+      }
+      return;
+    }
+
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(query)}`, {
         headers: { 'User-Agent': 'TravelBuff-App/1.0' }
@@ -452,6 +492,54 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
 
     const queryParts = [p.name, city, stateName, country].filter(Boolean).join(', ');
     
+    const apiKey = localStorage.getItem('google_maps_api_key');
+    const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+    if (apiKey && googleMapsEnabled) {
+      try {
+        trackApiCall('Google Maps Geocoding');
+        const google = await loadGoogleMaps();
+        const { Geocoder } = await google.maps.importLibrary("geocoding");
+        const geocoder = new Geocoder();
+        geocoder.geocode({ address: queryParts }, (results, status) => {
+          if (status === 'OK' && results[0]) {
+            const r = results[0];
+            const lat = r.geometry.location.lat();
+            const lon = r.geometry.location.lng();
+            
+            let cityPart = '';
+            let countryPart = '';
+            r.address_components.forEach(c => {
+              if (c.types.includes('locality')) cityPart = c.long_name;
+              if (c.types.includes('country')) countryPart = c.long_name;
+            });
+            const locationString = (cityPart && countryPart) ? `${cityPart}, ${countryPart}` : (cityPart || countryPart || '');
+
+            setPlaces(prev => prev.map(item => item.id === rowId ? {
+              ...item,
+              latitude: lat || '',
+              longitude: lon || '',
+              address: r.formatted_address || '',
+              target_location: locationString,
+              status: 'completed',
+              geocodeSuccess: true,
+              geocodeLoading: false
+            } : item));
+
+            fetchPhotoForPlace(rowId, p.name, lat || null, lon || null);
+          } else {
+            setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, geocodeLoading: false } : item));
+            alert(`No coordinates found for "${p.name}". Try modifying the name or adding location context.`);
+          }
+        });
+      } catch (err) {
+        console.error('Single row Google Maps geocoding failed', err);
+        setOsmError(`Geocoding failed: ${err.message}`);
+        setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, geocodeLoading: false } : item));
+      }
+      return;
+    }
+
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(queryParts)}`, {
         headers: { 'User-Agent': 'TravelBuff-App/1.0' }
@@ -506,46 +594,93 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
     }
     
     setOsmError(null);
+    const apiKey = localStorage.getItem('google_maps_api_key');
+    const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
     for (const p of unresolved) {
       setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: true } : item));
       const queryParts = [p.name, city, stateName, country].filter(Boolean).join(', ');
       
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(queryParts)}`, {
-          headers: { 'User-Agent': 'TravelBuff-App/1.0' }
-        });
-        
-        if (res.status === 429) {
-          setOsmError("OpenStreetMap Bandwidth Limit Reached (Error 429). Batch geocoding paused.");
-          setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
-          break;
-        }
-        
-        const data = await res.json();
-        if (res.ok && Array.isArray(data) && data.length > 0) {
-          const result = data[0];
-          const addr = result.address || {};
-          const locationString = (addr.city && addr.country) ? `${addr.city}, ${addr.country}` : (addr.city || addr.country || '');
-          
-          setPlaces(prev => prev.map(item => item.id === p.id ? {
-            ...item,
-            latitude: parseFloat(result.lat) || '',
-            longitude: parseFloat(result.lon) || '',
-            address: result.display_name || '',
-            target_location: locationString,
-            status: 'completed',
-            geocodeSuccess: true,
-            geocodeLoading: false
-          } : item));
+      if (apiKey && googleMapsEnabled) {
+        try {
+          trackApiCall('Google Maps Geocoding');
+          const google = await loadGoogleMaps();
+          const { Geocoder } = await google.maps.importLibrary("geocoding");
+          const geocoder = new Geocoder();
+          await new Promise((resolve) => {
+            geocoder.geocode({ address: queryParts }, (results, status) => {
+              if (status === 'OK' && results[0]) {
+                const r = results[0];
+                const lat = r.geometry.location.lat();
+                const lon = r.geometry.location.lng();
+                
+                let cityPart = '';
+                let countryPart = '';
+                r.address_components.forEach(c => {
+                  if (c.types.includes('locality')) cityPart = c.long_name;
+                  if (c.types.includes('country')) countryPart = c.long_name;
+                });
+                const locationString = (cityPart && countryPart) ? `${cityPart}, ${countryPart}` : (cityPart || countryPart || '');
 
-          // Automatically fetch the photo
-          fetchPhotoForPlace(p.id, p.name, parseFloat(result.lat) || null, parseFloat(result.lon) || null);
-        } else {
+                setPlaces(prev => prev.map(item => item.id === p.id ? {
+                  ...item,
+                  latitude: lat || '',
+                  longitude: lon || '',
+                  address: r.formatted_address || '',
+                  target_location: locationString,
+                  status: 'completed',
+                  geocodeSuccess: true,
+                  geocodeLoading: false
+                } : item));
+
+                fetchPhotoForPlace(p.id, p.name, lat || null, lon || null);
+              } else {
+                setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+              }
+              resolve();
+            });
+          });
+        } catch (err) {
+          console.error('Batch Google Maps geocoding failed', err);
           setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
         }
-      } catch (err) {
-        console.error('Batch item geocode failed', err);
-        setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+      } else {
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(queryParts)}`, {
+            headers: { 'User-Agent': 'TravelBuff-App/1.0' }
+          });
+          
+          if (res.status === 429) {
+            setOsmError("OpenStreetMap Bandwidth Limit Reached (Error 429). Batch geocoding paused.");
+            setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+            break;
+          }
+          
+          const data = await res.json();
+          if (res.ok && Array.isArray(data) && data.length > 0) {
+            const result = data[0];
+            const addr = result.address || {};
+            const locationString = (addr.city && addr.country) ? `${addr.city}, ${addr.country}` : (addr.city || addr.country || '');
+            
+            setPlaces(prev => prev.map(item => item.id === p.id ? {
+              ...item,
+              latitude: parseFloat(result.lat) || '',
+              longitude: parseFloat(result.lon) || '',
+              address: result.display_name || '',
+              target_location: locationString,
+              status: 'completed',
+              geocodeSuccess: true,
+              geocodeLoading: false
+            } : item));
+
+            fetchPhotoForPlace(p.id, p.name, parseFloat(result.lat) || null, parseFloat(result.lon) || null);
+          } else {
+            setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+          }
+        } catch (err) {
+          console.error('Batch item geocode failed', err);
+          setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+        }
       }
       
       await new Promise(r => setTimeout(r, 1000));

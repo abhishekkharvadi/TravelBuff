@@ -80,3 +80,8 @@ Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
     at file:///app/server.js:657:13
     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
 
+[2026-07-23T06:47:45.640Z] Failed to search photo for query "Nallamudi View Point valparai": Failed to download Wikimedia image: Too many requests (f061ab2)
+Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
+    at file:///app/server.js:673:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+

@@ -3,6 +3,25 @@ import { trackApiCall } from '../utils/apiTracker.js';
 
 const loadGoogleMapsScript = (apiKey) => {
   return new Promise((resolve, reject) => {
+    // Set up global auth failure handler
+    window.gm_authFailure = () => {
+      const errorMsg = 'Google Maps API authentication failed (e.g. invalid key, blocked API targets, or missing billing). Reverting maps/search to OpenStreetMap.';
+      console.warn(errorMsg);
+
+      // Log to server
+      fetch('/api/log-error', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ errorMsg, context: 'MapView' })
+      }).catch(e => console.error('Failed to log error to backend:', e));
+
+      // Alert the user first
+      alert('⚠️ Google Maps API Error: Authentication failed (invalid key or blocked API targets). The application is reverting to OpenStreetMap.');
+
+      localStorage.setItem('google_maps_enabled', 'false');
+      window.location.reload();
+    };
+
     if (window.google && window.google.maps) {
       resolve();
       return;
@@ -13,12 +32,16 @@ const loadGoogleMapsScript = (apiKey) => {
       existingScript.addEventListener('error', reject);
       return;
     }
+
+    // Google Bootstrap dynamic async script loading pattern
+    window.gmpSelfLoop = () => { resolve(); };
+
     const script = document.createElement('script');
     script.id = 'google-maps-script';
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=geometry`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry&loading=async&callback=gmpSelfLoop&v=weekly`;
     script.async = true;
     script.defer = true;
-    script.onload = () => resolve();
+    script.setAttribute('loading', 'async');
     script.onerror = (err) => reject(err);
     document.head.appendChild(script);
   });
@@ -39,9 +62,10 @@ export default function MapView({ points = [], drawLine = false }) {
 
   const [isGoogleMapsReady, setIsGoogleMapsReady] = useState(false);
   const apiKey = localStorage.getItem('google_maps_api_key');
+  const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
 
   useEffect(() => {
-    if (apiKey) {
+    if (apiKey && googleMapsEnabled) {
       loadGoogleMapsScript(apiKey)
         .then(() => {
           trackApiCall('Google Maps JavaScript');
@@ -54,7 +78,7 @@ export default function MapView({ points = [], drawLine = false }) {
     } else {
       setIsGoogleMapsReady(false);
     }
-  }, [apiKey]);
+  }, [apiKey, googleMapsEnabled]);
 
   useEffect(() => {
     // 1. Filter valid geocoded points
@@ -85,151 +109,165 @@ export default function MapView({ points = [], drawLine = false }) {
     const dayColors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#14b8a6', '#ef4444'];
 
     if (isGoogleMapsReady && window.google && window.google.maps) {
-      // Clean up Leaflet if it was running
-      if (mapInstanceRef.current) {
-        if (typeof mapInstanceRef.current.remove === 'function') {
-          mapInstanceRef.current.remove();
-        }
-        mapInstanceRef.current = null;
-      }
+      // Initialize Google Map asynchronously to catch AdvancedMarkerElement initialization errors
+      const initMap = async () => {
+        try {
+          const { Map } = await window.google.maps.importLibrary("maps");
+          const { AdvancedMarkerElement } = await window.google.maps.importLibrary("marker");
 
-      // Clean up old Google markers & polylines
-      googleMarkersRef.current.forEach(m => m.setMap(null));
-      googleMarkersRef.current = [];
-      googlePolylinesRef.current.forEach(p => p.setMap(null));
-      googlePolylinesRef.current = [];
-
-      if (!mapContainerRef.current) return;
-
-      // Initialize Google Map if not created yet
-      if (!googleMapInstanceRef.current) {
-        googleMapInstanceRef.current = new window.google.maps.Map(mapContainerRef.current, {
-          center: { lat: 20, lng: 0 },
-          zoom: 2,
-          disableDefaultUI: false
-        });
-      }
-
-      const googleMap = googleMapInstanceRef.current;
-
-      const isLightTheme = document.body.classList.contains('light-theme') || document.documentElement.getAttribute('data-theme') === 'light';
-      const innerColor = isLightTheme ? '%23ffffff' : '%231e1e2c';
-      const labelTextColor = isLightTheme ? '#111111' : '#ffffff';
-
-      // Place Google markers
-      validPoints.forEach(p => {
-        const dayNum = p.dayLabel ? parseInt(p.dayLabel.replace(/\D/g, ''), 10) : 1;
-        const color = dayColors[(dayNum - 1) % dayColors.length] || '#8b5cf6';
-        
-        const svgPin = `data:image/svg+xml;utf-8,<svg xmlns="http://www.w3.org/2000/svg" width="36" height="42" viewBox="0 0 36 42">
-          <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${encodeURIComponent(color)}"/>
-          <circle cx="18" cy="18" r="14" fill="${innerColor}"/>
-        </svg>`;
-
-        const markerLabel = String(p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : getCategoryEmoji(p.category || p.type));
-
-        const marker = new window.google.maps.Marker({
-          position: { lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) },
-          map: googleMap,
-          icon: {
-            url: svgPin,
-            size: new window.google.maps.Size(36, 42),
-            anchor: new window.google.maps.Point(18, 42)
-          },
-          label: {
-            text: markerLabel,
-            color: labelTextColor,
-            fontSize: '11px',
-            fontWeight: 'bold'
+          // Clean up Leaflet if it was running
+          if (mapInstanceRef.current) {
+            if (typeof mapInstanceRef.current.remove === 'function') {
+              mapInstanceRef.current.remove();
+            }
+            mapInstanceRef.current = null;
           }
-        });
 
-        const infoWindow = new window.google.maps.InfoWindow({
-          content: `
-            <div style="padding: 10px; color: #111;">
-              <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold;">${p.name}</h4>
-              <span style="font-size: 0.75rem; color: #666;">
-                ${p.category || 'Location'} ${p.dayLabel ? `• ${p.dayLabel}` : ''}
-              </span>
-              ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: #444;">${p.notes.substring(0, 80)}...</p>` : ''}
-            </div>
-          `
-        });
+          // Clean up old Google markers & polylines
+          googleMarkersRef.current.forEach(m => m.setMap(null));
+          googleMarkersRef.current = [];
+          googlePolylinesRef.current.forEach(p => p.setMap(null));
+          googlePolylinesRef.current = [];
 
-        marker.addListener('click', () => {
-          infoWindow.open(googleMap, marker);
-        });
+          if (!mapContainerRef.current) return;
 
-        googleMarkersRef.current.push(marker);
-      });
+          // Initialize Google Map if not created yet
+          if (!googleMapInstanceRef.current) {
+            googleMapInstanceRef.current = new Map(mapContainerRef.current, {
+              center: { lat: 20, lng: 0 },
+              zoom: 2,
+              disableDefaultUI: false,
+              mapId: 'DEMO_MAP_ID' // Required map ID for AdvancedMarkerElement
+            });
+          }
 
-      // Draw Google driving paths
-      if (drawLine && validPoints.length > 0) {
-        const directionsService = new window.google.maps.DirectionsService();
+          const googleMap = googleMapInstanceRef.current;
 
-        const dayGroups = {};
-        validPoints.forEach(pt => {
-          const dayKey = pt.dayLabel || 'All';
-          if (!dayGroups[dayKey]) dayGroups[dayKey] = [];
-          dayGroups[dayKey].push(pt);
-        });
+          const isLightTheme = document.body.classList.contains('light-theme') || document.documentElement.getAttribute('data-theme') === 'light';
+          const innerColor = isLightTheme ? '#ffffff' : '#1e1e2c';
+          const labelTextColor = isLightTheme ? '#111111' : '#ffffff';
 
-        let colorIdx = 0;
-        Object.keys(dayGroups).forEach(dayKey => {
-          const sortedDayPoints = dayGroups[dayKey].sort((a, b) => (a.sequenceOrder || 0) - (b.sequenceOrder || 0));
-          const color = dayColors[colorIdx % dayColors.length];
-          colorIdx++;
+          // Place Google advanced markers
+          validPoints.forEach(p => {
+            const dayNum = p.dayLabel ? parseInt(p.dayLabel.replace(/\D/g, ''), 10) : 1;
+            const color = dayColors[(dayNum - 1) % dayColors.length] || '#8b5cf6';
+            const markerLabel = String(p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : getCategoryEmoji(p.category || p.type));
 
-          for (let i = 1; i < sortedDayPoints.length; i++) {
-            const p1 = sortedDayPoints[i - 1];
-            const p2 = sortedDayPoints[i];
-            if (p1.latitude === p2.latitude && p1.longitude === p2.longitude) continue;
+            // Custom HTML element content for deprecation-free pins
+            const pinContent = document.createElement('div');
+            pinContent.style.position = 'relative';
+            pinContent.style.width = '36px';
+            pinContent.style.height = '42px';
+            pinContent.innerHTML = `
+              <svg xmlns="http://www.w3.org/2000/svg" width="36" height="42" viewBox="0 0 36 42" style="display: block;">
+                <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${color}"/>
+                <circle cx="18" cy="18" r="14" fill="${innerColor}"/>
+              </svg>
+              <div style="position: absolute; top: 0; left: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: ${labelTextColor}; font-size: 11px; font-weight: bold; pointer-events: none; line-height: 1;">
+                ${markerLabel}
+              </div>
+            `;
 
-            const request = {
-              origin: { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
-              destination: { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) },
-              travelMode: window.google.maps.TravelMode.DRIVING
-            };
+            const marker = new AdvancedMarkerElement({
+              position: { lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) },
+              map: googleMap,
+              content: pinContent,
+              title: p.name
+            });
 
-            trackApiCall('Google Maps Directions');
-            directionsService.route(request, (result, status) => {
-              if (status === 'OK') {
-                const routePolyline = new window.google.maps.Polyline({
-                  path: result.routes[0].overview_path,
-                  geodesic: true,
-                  strokeColor: color,
-                  strokeOpacity: 0.85,
-                  strokeWeight: 4,
-                  map: googleMap
+            const infoWindow = new window.google.maps.InfoWindow({
+              content: `
+                <div style="padding: 10px; color: #111;">
+                  <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold;">${p.name}</h4>
+                  <span style="font-size: 0.75rem; color: #666;">
+                    ${p.category || 'Location'} ${p.dayLabel ? `• ${p.dayLabel}` : ''}
+                  </span>
+                  ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: #444;">${p.notes.substring(0, 80)}...</p>` : ''}
+                </div>
+              `
+            });
+
+            marker.addListener('click', () => {
+              infoWindow.open(googleMap, marker);
+            });
+
+            googleMarkersRef.current.push(marker);
+          });
+
+          // Draw Google driving paths
+          if (drawLine && validPoints.length > 0) {
+            const directionsService = new window.google.maps.DirectionsService();
+
+            const dayGroups = {};
+            validPoints.forEach(pt => {
+              const dayKey = pt.dayLabel || 'All';
+              if (!dayGroups[dayKey]) dayGroups[dayKey] = [];
+              dayGroups[dayKey].push(pt);
+            });
+
+            let colorIdx = 0;
+            Object.keys(dayGroups).forEach(dayKey => {
+              const sortedDayPoints = dayGroups[dayKey].sort((a, b) => (a.sequenceOrder || 0) - (b.sequenceOrder || 0));
+              const color = dayColors[colorIdx % dayColors.length];
+              colorIdx++;
+
+              for (let i = 1; i < sortedDayPoints.length; i++) {
+                const p1 = sortedDayPoints[i - 1];
+                const p2 = sortedDayPoints[i];
+                if (p1.latitude === p2.latitude && p1.longitude === p2.longitude) continue;
+
+                const request = {
+                  origin: { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
+                  destination: { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) },
+                  travelMode: window.google.maps.TravelMode.DRIVING
+                };
+
+                trackApiCall('Google Maps Directions');
+                directionsService.route(request, (result, status) => {
+                  if (status === 'OK') {
+                    const routePolyline = new window.google.maps.Polyline({
+                      path: result.routes[0].overview_path,
+                      geodesic: true,
+                      strokeColor: color,
+                      strokeOpacity: 0.85,
+                      strokeWeight: 4,
+                      map: googleMap
+                    });
+                    googlePolylinesRef.current.push(routePolyline);
+                  } else {
+                    const routePolyline = new window.google.maps.Polyline({
+                      path: [
+                        { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
+                        { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }
+                      ],
+                      geodesic: true,
+                      strokeColor: color,
+                      strokeOpacity: 0.8,
+                      strokeWeight: 4,
+                      map: googleMap
+                    });
+                    googlePolylinesRef.current.push(routePolyline);
+                  }
                 });
-                googlePolylinesRef.current.push(routePolyline);
-              } else {
-                const routePolyline = new window.google.maps.Polyline({
-                  path: [
-                    { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
-                    { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }
-                  ],
-                  geodesic: true,
-                  strokeColor: color,
-                  strokeOpacity: 0.8,
-                  strokeWeight: 4,
-                  map: googleMap
-                });
-                googlePolylinesRef.current.push(routePolyline);
               }
             });
           }
-        });
-      }
 
-      // Auto-fit Google bounds
-      if (validPoints.length > 0) {
-        const bounds = new window.google.maps.LatLngBounds();
-        validPoints.forEach(p => {
-          bounds.extend({ lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) });
-        });
-        googleMap.fitBounds(bounds);
-      }
+          // Auto-fit Google bounds
+          if (validPoints.length > 0) {
+            const bounds = new window.google.maps.LatLngBounds();
+            validPoints.forEach(p => {
+              bounds.extend({ lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) });
+            });
+            googleMap.fitBounds(bounds);
+          }
+        } catch (initErr) {
+          console.error('Google Maps initialization failed, falling back to OSM:', initErr);
+          setIsGoogleMapsReady(false);
+        }
+      };
+
+      initMap();
 
     } else {
       // Clean up Google Maps instance if it was running

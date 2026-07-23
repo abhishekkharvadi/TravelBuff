@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
+import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
 import MapView from './MapView.jsx';
 
 function FolderCover({ folderId, locations, getFeaturedPhoto }) {
@@ -143,7 +144,15 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   // Tag creation modal states inside locations
   const [selectedTagToAdd, setSelectedTagToAdd] = useState('');
 
-  // 1-second debounced Nominatim Search
+  const logErrorToBackend = (errorMsg, context) => {
+    fetch('/api/log-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ errorMsg, context })
+    }).catch(e => console.error('Failed to log error to backend:', e));
+  };
+
+  // 1-second debounced Google Places / Nominatim Search
   useEffect(() => {
     if (searchQuery.trim().length < 3) {
       setSearchResults([]);
@@ -152,22 +161,75 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
 
     setIsSearching(true);
     const delayDebounceFn = setTimeout(() => {
-      fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(searchQuery)}`)
-        .then(res => res.json())
-        .then(data => {
-          setSearchResults(data);
-          setIsSearching(false);
-        })
-        .catch(err => {
-          console.error('Nominatim API error:', err);
+      const apiKey = localStorage.getItem('google_maps_api_key');
+      const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+      if (apiKey && googleMapsEnabled) {
+        loadGoogleMaps().then(async (google) => {
+          trackApiCall('Google Maps Places');
+          try {
+            const { AutocompleteSuggestion } = await google.maps.importLibrary("places");
+            const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({ input: searchQuery });
+            setIsSearching(false);
+            if (suggestions && suggestions.length > 0) {
+              const mapped = suggestions.map(s => ({
+                display_name: s.placePrediction.text.toString(),
+                place_id: s.placePrediction.placeId,
+                is_gmaps: true
+              }));
+              setSearchResults(mapped);
+            } else {
+              setSearchResults([]);
+            }
+          } catch (e) {
+            console.warn('AutocompleteSuggestion failed (falling back to legacy AutocompleteService):', e);
+            try {
+              const service = new google.maps.places.AutocompleteService();
+              service.getPlacePredictions({ input: searchQuery }, (predictions, status) => {
+                setIsSearching(false);
+                if (status === 'OK' && predictions) {
+                  const mapped = predictions.map(p => ({
+                    display_name: p.description,
+                    place_id: p.place_id,
+                    is_gmaps: true
+                  }));
+                  setSearchResults(mapped);
+                } else {
+                  setSearchResults([]);
+                }
+              });
+            } catch (legacyErr) {
+              const msg = `Google Places autocomplete failed completely. Modern error: ${e.message || e}. Legacy error: ${legacyErr.message || legacyErr}`;
+              console.error(msg);
+              logErrorToBackend(msg, 'Locations-RegionSearch');
+              setIsSearching(false);
+              setSearchResults([]);
+            }
+          }
+        }).catch(err => {
+          const msg = `Google Maps Places load failed: ${err.message || err}`;
+          console.error(msg);
+          logErrorToBackend(msg, 'Locations-RegionLoad');
           setIsSearching(false);
         });
+      } else {
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(searchQuery)}`)
+          .then(res => res.json())
+          .then(data => {
+            setSearchResults(data);
+            setIsSearching(false);
+          })
+          .catch(err => {
+            console.error('Nominatim API error:', err);
+            setIsSearching(false);
+          });
+      }
     }, 1000); // 1s Debounce
 
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery]);
 
-  // 1-second debounced Nominatim Search for Places
+  // 1-second debounced Google Places / Nominatim Search for Places
   useEffect(() => {
     if (placeSearchQuery.trim().length < 3) {
       setPlaceSearchResults([]);
@@ -176,25 +238,119 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
 
     setIsSearchingPlace(true);
     const delayDebounceFn = setTimeout(() => {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(placeSearchQuery)}`;
+      const apiKey = localStorage.getItem('google_maps_api_key');
+      const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
 
-      fetch(url)
-        .then(res => res.json())
-        .then(data => {
-          setPlaceSearchResults(data);
-          setIsSearchingPlace(false);
-        })
-        .catch(err => {
-          console.error('Nominatim Place API error:', err);
+      if (apiKey && googleMapsEnabled) {
+        loadGoogleMaps().then(async (google) => {
+          trackApiCall('Google Maps Places');
+          try {
+            const { AutocompleteSuggestion } = await google.maps.importLibrary("places");
+            const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({ input: placeSearchQuery });
+            setIsSearchingPlace(false);
+            if (suggestions && suggestions.length > 0) {
+              const mapped = suggestions.map(s => ({
+                display_name: s.placePrediction.text.toString(),
+                place_id: s.placePrediction.placeId,
+                is_gmaps: true,
+                types: s.placePrediction.types || []
+              }));
+              setPlaceSearchResults(mapped);
+            } else {
+              setPlaceSearchResults([]);
+            }
+          } catch (e) {
+            console.warn('AutocompleteSuggestion for places failed (falling back to legacy AutocompleteService):', e);
+            try {
+              const service = new google.maps.places.AutocompleteService();
+              service.getPlacePredictions({ input: placeSearchQuery }, (predictions, status) => {
+                setIsSearchingPlace(false);
+                if (status === 'OK' && predictions) {
+                  const mapped = predictions.map(p => ({
+                    display_name: p.description,
+                    place_id: p.place_id,
+                    is_gmaps: true,
+                    types: p.types || []
+                  }));
+                  setPlaceSearchResults(mapped);
+                } else {
+                  setPlaceSearchResults([]);
+                }
+              });
+            } catch (legacyErr) {
+              const msg = `Google Places autocomplete for places failed completely. Modern error: ${e.message || e}. Legacy error: ${legacyErr.message || legacyErr}`;
+              console.error(msg);
+              logErrorToBackend(msg, 'Locations-PlaceSearch');
+              setIsSearchingPlace(false);
+              setPlaceSearchResults([]);
+            }
+          }
+        }).catch(err => {
+          const msg = `Google Maps Places load for places failed: ${err.message || err}`;
+          console.error(msg);
+          logErrorToBackend(msg, 'Locations-PlaceLoad');
           setIsSearchingPlace(false);
         });
+      } else {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(placeSearchQuery)}`;
+        fetch(url)
+          .then(res => res.json())
+          .then(data => {
+            setPlaceSearchResults(data);
+            setIsSearchingPlace(false);
+          })
+          .catch(err => {
+            console.error('Nominatim Place API error:', err);
+            setIsSearchingPlace(false);
+          });
+      }
     }, 1000); // 1s Debounce
 
     return () => clearTimeout(delayDebounceFn);
   }, [placeSearchQuery, selectedLocation]);
 
   // Select Place Search result
-  const handleSelectPlaceSearchResult = (result) => {
+  const handleSelectPlaceSearchResult = async (result) => {
+    if (result.is_gmaps) {
+      setIsSearchingPlace(true);
+      try {
+        trackApiCall('Google Maps Geocoding');
+        const google = await loadGoogleMaps();
+        const { Geocoder } = await google.maps.importLibrary("geocoding");
+        const geocoder = new Geocoder();
+        geocoder.geocode({ placeId: result.place_id }, (results, status) => {
+          setIsSearchingPlace(false);
+          if (status === 'OK' && results[0]) {
+            const r = results[0];
+            const lat = r.geometry.location.lat();
+            const lon = r.geometry.location.lng();
+            
+            const types = result.types || [];
+            if (types.includes('cafe')) setPlaceCategory('cafe');
+            else if (types.includes('restaurant') || types.includes('food') || types.includes('bar')) setPlaceCategory('restaurant');
+            else if (types.includes('hindu_temple') || types.includes('church') || types.includes('place_of_worship')) setPlaceCategory('temple');
+            else if (types.includes('museum') || types.includes('art_gallery')) setPlaceCategory('museum');
+            else if (types.includes('natural_feature') || types.includes('park')) setPlaceCategory('waterfall');
+            else if (types.includes('campground')) setPlaceCategory('mountain');
+            else if (types.includes('lodging') || types.includes('hotel')) setPlaceCategory('hotel');
+            else if (types.includes('airport')) setPlaceCategory('airport');
+            else if (types.includes('transit_station') || types.includes('subway_station') || types.includes('train_station')) setPlaceCategory('station');
+            else setPlaceCategory('cafe');
+
+            setPlaceName(r.formatted_address.split(',')[0]);
+            setPlaceLat(lat);
+            setPlaceLon(lon);
+            setPlaceSearchResults([]);
+            setPlaceSearchQuery('');
+          }
+        });
+      } catch (err) {
+        console.error('Gmaps geocode failed for place selection:', err);
+        setIsSearchingPlace(false);
+      }
+      return;
+    }
+
     const address = result.address || {};
     const state = address.state || address.region || '';
     const country = address.country || '';
@@ -471,7 +627,44 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   };
 
   // Select Search result
-  const handleSelectSearchResult = (result) => {
+  const handleSelectSearchResult = async (result) => {
+    if (result.is_gmaps) {
+      setIsSearching(true);
+      try {
+        trackApiCall('Google Maps Geocoding');
+        const google = await loadGoogleMaps();
+        const { Geocoder } = await google.maps.importLibrary("geocoding");
+        const geocoder = new Geocoder();
+        geocoder.geocode({ placeId: result.place_id }, (results, status) => {
+          setIsSearching(false);
+          if (status === 'OK' && results[0]) {
+            const r = results[0];
+            const lat = r.geometry.location.lat();
+            const lon = r.geometry.location.lng();
+            
+            let state = '';
+            let country = '';
+            r.address_components.forEach(c => {
+              if (c.types.includes('administrative_area_level_1')) state = c.long_name;
+              if (c.types.includes('country')) country = c.long_name;
+            });
+
+            setLocName(r.formatted_address.split(',')[0]);
+            setLocState(state || (r.formatted_address.split(',').length > 2 ? r.formatted_address.split(',')[r.formatted_address.split(',').length - 3].trim() : ''));
+            setLocCountry(country || r.formatted_address.split(',')[r.formatted_address.split(',').length - 1].trim());
+            setLocLat(lat);
+            setLocLon(lon);
+            setSearchResults([]);
+            setSearchQuery('');
+          }
+        });
+      } catch (err) {
+        console.error('Gmaps geocode failed:', err);
+        setIsSearching(false);
+      }
+      return;
+    }
+
     const address = result.address || {};
     const state = address.state || address.region || '';
     const country = address.country || '';
@@ -1375,7 +1568,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                   
                   {/* OSM Place Search */}
                   <div className="form-group">
-                    <label>Search OSM for Place / Landmark</label>
+                    <label>Search {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'} for Place / Landmark</label>
                     <div style={{ position: 'relative' }}>
                       <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                       <input
@@ -1387,7 +1580,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                         onChange={(e) => setPlaceSearchQuery(e.target.value)}
                       />
                     </div>
-                    {isSearchingPlace && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching Nominatim...</p>}
+                    {isSearchingPlace && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'}...</p>}
                     {placeSearchResults.length > 0 && (
                       <div style={{
                         background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)',
@@ -2058,7 +2251,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
 
             {/* Geocode Search */}
             <div className="form-group">
-              <label>Search OSM for Region</label>
+              <label>Search {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'} for Region</label>
               <div style={{ position: 'relative' }}>
                 <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 <input
@@ -2070,7 +2263,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-              {isSearching && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching Nominatim...</p>}
+              {isSearching && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'}...</p>}
               {searchResults.length > 0 && (
                 <div style={{
                   background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)',

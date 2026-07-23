@@ -202,6 +202,21 @@ app.post('/api/config', authenticateToken, async (req, res) => {
   }
 });
 
+app.post('/api/log-error', async (req, res) => {
+  const { errorMsg, context } = req.body;
+  const logFilePath = join(__dirname, 'server_error.log');
+  const timestamp = new Date().toISOString();
+  const logMessage = `[${timestamp}] [${context || 'CLIENT'}] ${errorMsg}\n`;
+  
+  fs.appendFile(logFilePath, logMessage, (err) => {
+    if (err) {
+      console.error('Failed to write to server_error.log:', err);
+      return res.status(500).json({ error: 'Failed to write log' });
+    }
+    res.json({ success: true });
+  });
+});
+
 // ==========================================
 // Account Management API
 // ==========================================
@@ -595,7 +610,7 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
 
     // 2. Wikipedia Page Images & Extracts API (Main Article Info Box Image + Summary)
     try {
-      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiQuery)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exchars=300&format=json&origin=*&redirects=1`;
+      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiQuery)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exlimit=1&format=json&origin=*&redirects=1`;
       const wikiRes = await fetch(wikiUrl, { headers });
       if (wikiRes.ok) {
         const wikiData = await wikiRes.json();
@@ -605,7 +620,8 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
           if (!imageUrl) {
             imageUrl = pages[pageId]?.thumbnail?.source || null;
           }
-          description = pages[pageId]?.extract || null;
+          const fullExtract = pages[pageId]?.extract || '';
+          description = fullExtract.split('\n')[0]?.trim() || null;
         }
       }
     } catch (err) {
@@ -2217,7 +2233,7 @@ async function runBackgroundPhotoSyncRetry() {
 
         // 2. Wikipedia Page Images & Extracts API
         try {
-          const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiQuery)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exchars=300&format=json&origin=*&redirects=1`;
+          const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiQuery)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exlimit=1&format=json&origin=*&redirects=1`;
           const wikiRes = await fetch(wikiUrl, { headers });
           if (wikiRes.ok) {
             const wikiData = await wikiRes.json();
@@ -2227,7 +2243,8 @@ async function runBackgroundPhotoSyncRetry() {
               if (!imageUrl) {
                 imageUrl = pages[pageId]?.thumbnail?.source || null;
               }
-              description = pages[pageId]?.extract || null;
+              const fullExtract = pages[pageId]?.extract || '';
+              description = fullExtract.split('\n')[0]?.trim() || null;
             }
           }
         } catch (err) {

@@ -185,8 +185,8 @@ button, input, select, textarea {
   color: #f59e0b;
 }
 .sync-badge.offline {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-secondary);
+  background: var(--error-glow);
+  color: var(--error);
 }
 .sync-badge.error {
   background: var(--error-glow);

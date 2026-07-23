@@ -13,6 +13,18 @@ function connectWebSocket(getToken) {
 
   ws = new WebSocket(wsUrl);
 
+  ws.onopen = async () => {
+    console.log('[WebSocket Sync] Connected. Performing initial pull...');
+    try {
+      syncStatusCallback('syncing');
+      await populateLocalDb(token);
+      syncStatusCallback('synced');
+    } catch (err) {
+      console.error('[WebSocket Sync] Initial pull failed:', err);
+      syncStatusCallback('error');
+    }
+  };
+
   ws.onmessage = async (event) => {
     try {
       const message = JSON.parse(event.data);
@@ -27,6 +39,7 @@ function connectWebSocket(getToken) {
 
   ws.onclose = () => {
     console.log('[WebSocket Sync] Closed. Reconnecting in 5 seconds...');
+    syncStatusCallback('error');
     setTimeout(() => connectWebSocket(getToken), 5000);
   };
 

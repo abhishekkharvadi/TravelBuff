@@ -331,8 +331,11 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
           const data = await res.json();
           if (data.config && data.config.ai_settings) {
             const parsed = JSON.parse(data.config.ai_settings);
-            if (parsed.apiKey || parsed.provider === 'Ollama') {
+            const isEnabled = parsed.aiEnabled !== false;
+            if (isEnabled && (parsed.apiKey || parsed.provider === 'Ollama')) {
               setAiConfigured(true);
+            } else {
+              setAiConfigured(false);
             }
           }
         }
@@ -627,7 +630,7 @@ Only return the places to visit for each day in the itinerary.`;
     const key = `${p1.id}-${p2.id}`;
     if (distances[key]) return distances[key];
 
-    if (window.google && window.google.maps && localStorage.getItem('google_maps_api_key')) {
+    if (window.google && window.google.maps && localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false') {
       try {
         trackApiCall('Google Maps Distance Matrix');
         const service = new window.google.maps.DistanceMatrixService();
