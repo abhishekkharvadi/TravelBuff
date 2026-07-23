@@ -107,6 +107,84 @@ export default function App() {
     setIsInitializing(false);
   }, []);
 
+  const fetchUserConfig = (token) => {
+    if (!token) return;
+    fetch('/api/auth/me', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data && data.config && data.config.ai_settings) {
+          try {
+            const aiOpts = JSON.parse(data.config.ai_settings);
+            if (aiOpts.activeMode && aiOpts.activeMode !== activeMode) {
+              setActiveMode(aiOpts.activeMode);
+            }
+          } catch (e) {
+            console.error('Failed to parse ai_settings in App.jsx:', e);
+          }
+        }
+      })
+      .catch(err => console.error('Failed to fetch user config:', err));
+  };
+
+  useEffect(() => {
+    if (user?.token) {
+      fetchUserConfig(user.token);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && user?.token) {
+        fetchUserConfig(user.token);
+      }
+    };
+    window.addEventListener('visibilitychange', handleVisibility);
+    return () => window.removeEventListener('visibilitychange', handleVisibility);
+  }, [user, activeMode]);
+
+  const handleToggleMode = async (mode) => {
+    setActiveMode(mode);
+    if (!user?.token) return;
+
+    try {
+      const configRes = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      if (configRes.ok) {
+        const configData = await configRes.json();
+        const current = configData.config || {};
+        
+        let aiOpts = {};
+        try {
+          aiOpts = JSON.parse(current.ai_settings || '{}');
+        } catch (e) {}
+        
+        aiOpts.activeMode = mode;
+        
+        const payload = {
+          immich_url: current.immich_url || '',
+          immich_key: current.immich_key || '',
+          immich_alt_url: current.immich_alt_url || '',
+          base_currency: current.base_currency || 'USD',
+          ai_settings: JSON.stringify(aiOpts)
+        };
+
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${user.token}`
+          },
+          body: JSON.stringify(payload)
+        });
+      }
+    } catch (err) {
+      console.error('Failed to sync activeMode to backend:', err);
+    }
+  };
+
   useEffect(() => {
     const handleOutsideClick = (e) => {
       if (userMenuOpen && !e.target.closest('.user-menu-container')) {
@@ -123,6 +201,9 @@ export default function App() {
   const initSync = (token) => {
     registerSyncStatusListener((status) => {
       setSyncStatus(status);
+      if (status === 'synced') {
+        fetchUserConfig(token);
+      }
     });
     // Start background sync hooks
     initSyncManager(() => token);
@@ -338,7 +419,7 @@ export default function App() {
           <div className="mode-switch-wrapper">
             <button
               className={`mode-btn ${activeMode === 'planning' ? 'active' : ''}`}
-              onClick={() => setActiveMode('planning')}
+              onClick={() => handleToggleMode('planning')}
               style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
               title="Planning"
             >
@@ -347,7 +428,7 @@ export default function App() {
             </button>
             <button
               className={`mode-btn ${activeMode === 'trip' ? 'active' : ''}`}
-              onClick={() => setActiveMode('trip')}
+              onClick={() => handleToggleMode('trip')}
               style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
               title="Trip Mode"
             >

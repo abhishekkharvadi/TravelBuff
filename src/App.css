@@ -970,6 +970,9 @@ dialog::backdrop {
     z-index: 99 !important; /* lower than universal header (100) and bottom navigation (1000) */
     padding-bottom: 72px !important; /* spaces out bottom mobile nav overlap */
   }
+  .modal-backdrop {
+    z-index: 98 !important;
+  }
 }
 
 .desktop-only-block {
