@@ -58,6 +58,7 @@ export async function initDatabase() {
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       profile_picture TEXT,
+      is_admin INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -174,6 +175,17 @@ export async function initDatabase() {
       FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS trip_notes (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL,
+      title TEXT,
+      content TEXT NOT NULL,
+      category TEXT DEFAULT 'General',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS reservations (
       id TEXT PRIMARY KEY,
       trip_id TEXT NOT NULL,
@@ -247,6 +259,30 @@ export async function initDatabase() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS people (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      relation TEXT,
+      immich_person_id TEXT,
+      immich_person_name TEXT,
+      notes TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS user_addresses (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      address TEXT,
+      latitude REAL,
+      longitude REAL,
+      is_default INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `;
 
   await db.exec(schema);
@@ -262,6 +298,7 @@ export async function initDatabase() {
   await db.run('ALTER TABLE user_configs ADD COLUMN immich_alt_url TEXT').catch(() => {});
   await db.run('ALTER TABLE user_configs ADD COLUMN ai_settings TEXT').catch(() => {});
   await db.run('ALTER TABLE users ADD COLUMN profile_picture TEXT').catch(() => {});
+  await db.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN length INTEGER DEFAULT 1').catch(() => {});
   await db.run('ALTER TABLE locations ADD COLUMN local_file_data TEXT').catch(() => {});
   await db.run('ALTER TABLE places ADD COLUMN local_file_data TEXT').catch(() => {});
@@ -275,15 +312,49 @@ export async function initDatabase() {
   await db.run('UPDATE itinerary_items SET distance_from_prev = -1 WHERE (distance_from_prev IS NULL OR distance_from_prev = 0) AND sequence_order > 1').catch(() => {});
   await db.run('UPDATE itinerary_items SET duration_from_prev = -1 WHERE (duration_from_prev IS NULL OR duration_from_prev = 0) AND sequence_order > 1').catch(() => {});
   await db.run('ALTER TABLE expenses ADD COLUMN reservation_id TEXT').catch(() => {});
+  await db.run('ALTER TABLE trips ADD COLUMN companions TEXT').catch(() => {});
+  await db.run('ALTER TABLE trips ADD COLUMN start_address_id TEXT').catch(() => {});
+  await db.run('ALTER TABLE trips ADD COLUMN stop_address_id TEXT').catch(() => {});
 
-  // Seed custom categories for all existing users
+  // Auto-promote earliest registered user to Admin if no admin exists yet
   try {
-    const users = await db.all('SELECT id FROM users');
-    for (const user of users) {
-      await seedDefaultCategories(user.id);
+    const adminCheck = await db.get('SELECT COUNT(*) as count FROM users WHERE is_admin = 1');
+    if (!adminCheck || adminCheck.count === 0) {
+      const firstUser = await db.get('SELECT id, username FROM users ORDER BY created_at ASC LIMIT 1');
+      if (firstUser) {
+        await db.run('UPDATE users SET is_admin = 1 WHERE id = ?', [firstUser.id]);
+        console.log(`[Migration] Auto-promoted earliest registered user "${firstUser.username}" (${firstUser.id}) to Admin.`);
+      }
     }
   } catch (err) {
-    console.error('Error migrating custom categories for existing users:', err);
+    console.error('Error auto-promoting earliest user to Admin:', err);
+  }
+
+  // One-Time Safe Migration: Backfill locations and places local_file_data from existing entity_photos
+  try {
+    const locRes = await db.run(`
+      UPDATE locations 
+      SET local_file_data = (
+        SELECT file_path FROM entity_photos 
+        WHERE entity_photos.entity_id = locations.id 
+        ORDER BY is_featured DESC, created_at DESC LIMIT 1
+      ) 
+      WHERE local_file_data IS NULL OR local_file_data = ''
+    `);
+    const placeRes = await db.run(`
+      UPDATE places 
+      SET local_file_data = (
+        SELECT file_path FROM entity_photos 
+        WHERE entity_photos.entity_id = places.id 
+        ORDER BY is_featured DESC, created_at DESC LIMIT 1
+      ) 
+      WHERE local_file_data IS NULL OR local_file_data = ''
+    `);
+    if (locRes.changes > 0 || placeRes.changes > 0) {
+      console.log(`[Migration] Auto-populated cover photo links: ${locRes.changes} locations, ${placeRes.changes} places.`);
+    }
+  } catch (err) {
+    console.error('Error running cover photo backfill migration:', err);
   }
 
   console.log('SQLite database tables initialized successfully.');

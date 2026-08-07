@@ -8,9 +8,57 @@ import {
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
 import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
+import { getDayColor } from '../utils/dayColors.js';
 import MapView from './MapView.jsx';
 
-const dayColors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#14b8a6', '#ef4444'];
+const safeParseArray = (val) => {
+  if (!val) return [];
+  try {
+    const parsed = typeof val === 'string' ? JSON.parse(val) : val;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+const safeIncludes = (arr, val) => Array.isArray(arr) && arr.includes(val);
+
+const formatDuration = (mins) => {
+  if (!mins || isNaN(mins) || mins <= 0) return '';
+  const numMins = Math.round(Number(mins));
+  if (numMins < 60) return `${numMins} mins`;
+  const hours = Math.floor(numMins / 60);
+  const remainingMins = numMins % 60;
+  if (remainingMins === 0) return `${hours} hr${hours > 1 ? 's' : ''}`;
+  return `${hours} hr${hours > 1 ? 's' : ''} ${remainingMins} min${remainingMins > 1 ? 's' : ''}`;
+};
+
+const isStayPlace = (place) => {
+  if (!place) return false;
+  if (place.is_home || (typeof place.id === 'string' && place.id.startsWith('home_'))) return true;
+  const cat = (place.category || '').toLowerCase();
+  const name = (place.name || '').toLowerCase();
+  return (
+    cat.includes('hotel') ||
+    cat.includes('stay') ||
+    cat.includes('resort') ||
+    cat.includes('lodging') ||
+    cat.includes('accommodation') ||
+    cat.includes('hostel') ||
+    cat.includes('motel') ||
+    cat.includes('airbnb') ||
+    cat.includes('villa') ||
+    cat.includes('apartment') ||
+    cat.includes('homestay') ||
+    name.includes('hotel') ||
+    name.includes('resort') ||
+    name.includes('stay') ||
+    name.includes('lodging') ||
+    name.includes('hostel') ||
+    name.includes('airbnb') ||
+    name.includes('villa')
+  );
+};
 
 const SearchableSelect = ({ options, value, onChange, placeholder, isMulti = false }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -186,7 +234,7 @@ const getItineraryDays = (trip) => {
   return days;
 };
 
-export default function TripPlanning({ token }) {
+export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   // Dexie query
   // Consolidate all Dexie queries to avoid back-to-back renders (WebSocket flickering)
   const syncData = useLiveQuery(async () => {
@@ -201,20 +249,93 @@ export default function TripPlanning({ token }) {
       itineraries: await db.itinerary_items.toArray(),
       expenses: await db.expenses.toArray(),
       rates: await db.trip_currency_rates.toArray(),
+      tripNotes: await db.trip_notes.toArray(),
+      people: await (db.people ? db.people.toArray() : Promise.resolve([])),
+      userAddresses: await (db.user_addresses ? db.user_addresses.toArray() : Promise.resolve([])),
       syncQueue: await db.sync_queue.toArray()
     };
   }) || {
     trips: [], locations: [], places: [], tags: [], entityTags: [],
-    collections: [], reservations: [], itineraries: [], expenses: [], rates: [], syncQueue: []
+    collections: [], reservations: [], itineraries: [], expenses: [], rates: [], tripNotes: [], people: [], userAddresses: [], syncQueue: []
   };
 
   const { 
     trips, locations, places, tags, entityTags, collections, 
-    reservations, itineraries, expenses, rates, syncQueue 
+    reservations, itineraries, expenses, rates, tripNotes: notesList, people = [], userAddresses = [], syncQueue 
   } = syncData;
+
+  const combinedPlaces = useMemo(() => {
+    const homePlaces = (userAddresses || []).map(addr => ({
+      id: `home_${addr.id}`,
+      address_id: addr.id,
+      is_home: true,
+      name: `🏠 ${addr.label}`,
+      category: 'Home Address',
+      latitude: parseFloat(addr.latitude),
+      longitude: parseFloat(addr.longitude),
+      address: addr.address
+    }));
+    return [...places, ...homePlaces];
+  }, [places, userAddresses]);
 
   // Local State
   const [selectedTrip, setSelectedTrip] = useState(null);
+
+  useEffect(() => {
+    if (selectedTripId && trips && trips.length > 0) {
+      const matched = trips.find(t => t.id === selectedTripId);
+      if (matched) {
+        setSelectedTrip(matched);
+      }
+    } else if (!selectedTripId) {
+      setSelectedTrip(null);
+    }
+  }, [selectedTripId, trips]);
+
+  const handleTripCardClick = (t) => {
+    setSelectedTrip(t);
+    if (onSelectTrip) {
+      onSelectTrip(t);
+    }
+  };
+
+  const handleBackToTripsList = () => {
+    setSelectedTrip(null);
+    if (onSelectTrip) {
+      onSelectTrip(null);
+    }
+  };
+  
+  // Trip Notes states
+  const [showTripNoteModal, setShowTripNoteModal] = useState(false);
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteContent, setNoteContent] = useState('');
+  const [noteCategory, setNoteCategory] = useState('General');
+
+  const handleAddTripNote = async (e) => {
+    e.preventDefault();
+    if (!noteContent.trim() || !selectedTrip) return;
+
+    const newNote = {
+      id: generateUUID(),
+      trip_id: selectedTrip.id,
+      title: noteTitle.trim() || 'Trip Note',
+      content: noteContent.trim(),
+      category: noteCategory,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    await queueSyncAction('trip_notes', 'insert', newNote);
+    setNoteTitle('');
+    setNoteContent('');
+    setNoteCategory('General');
+    setShowTripNoteModal(false);
+  };
+
+  const handleDeleteTripNote = async (id) => {
+    await queueSyncAction('trip_notes', 'delete', { id });
+  };
   
   useEffect(() => {
     const apiKey = localStorage.getItem('google_maps_api_key');
@@ -241,6 +362,9 @@ export default function TripPlanning({ token }) {
   const [tripNotes, setTripNotes] = useState('');
   const [tripStartDate, setTripStartDate] = useState('');
   const [tripLength, setTripLength] = useState(1);
+  const [selectedCompanions, setSelectedCompanions] = useState([]);
+  const [tripStartAddressId, setTripStartAddressId] = useState('');
+  const [tripStopAddressId, setTripStopAddressId] = useState('');
 
   const [aiConfigured, setAiConfigured] = useState(false);
   const [aiMode, setAiMode] = useState(null); // 'ai' or 'manual' or null
@@ -319,6 +443,31 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
   const [editTripName, setEditTripName] = useState('');
   const [editTripStartDate, setEditTripStartDate] = useState('');
   const [editTripLength, setEditTripLength] = useState(1);
+  const [showTravelersModal, setShowTravelersModal] = useState(false);
+  const [travelerSearch, setTravelerSearch] = useState('');
+  const [travelerTab, setTravelerTab] = useState('local'); // 'local' | 'immich'
+  const [immichPeople, setImmichPeople] = useState([]);
+  const [loadingImmichPeople, setLoadingImmichPeople] = useState(false);
+
+  const fetchImmichPeople = async () => {
+    if (immichPeople.length > 0) return;
+    setLoadingImmichPeople(true);
+    try {
+      const userToken = token || localStorage.getItem('token') || '';
+      const res = await fetch('/api/immich/people', {
+        headers: { Authorization: `Bearer ${userToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.people || []);
+        setImmichPeople(list);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch Immich people in TripPlanning:', e);
+    } finally {
+      setLoadingImmichPeople(false);
+    }
+  };
 
   const startEditingTrip = () => {
     if (!selectedTrip) return;
@@ -394,7 +543,7 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     if (!selectedTrip) return [];
     return places.filter(p => {
       const isAlreadyAdded = itineraries.some(item => item.place_id === p.id && item.trip_id === selectedTrip.id);
-      if (isAlreadyAdded) return false;
+      if (isAlreadyAdded && !isStayPlace(p)) return false;
       if (stopFilterLocationIds.length > 0 && !stopFilterLocationIds.includes(p.location_id)) return false;
       if (stopFilterTagIds.length > 0) {
         const placeHasTag = entityTags.some(et => et.entity_id === p.id && stopFilterTagIds.includes(et.tag_id));
@@ -406,80 +555,81 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     });
   }, [places, itineraries, selectedTrip, stopFilterLocationIds, stopFilterTagIds, stopPlaceSearch, entityTags]);
 
+  const allPlacesSorted = useMemo(() => {
+    const nonFolderPlaces = places.filter(p => p.is_folder !== 1);
+    return [...nonFolderPlaces].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [places]);
+
+  const getPlaceBadgeColor = (placeId) => {
+    const activeTripObj = selectedTrip || currentTrip;
+    if (!activeTripObj) return '#6b7280';
+    const item = itineraries.find(i => i.trip_id === activeTripObj.id && i.place_id === placeId);
+    if (!item) return '#6b7280';
+    const dIdx = itineraryDays.findIndex(d => d.date === item.date);
+    if (dIdx === -1) return '#6b7280';
+    return getDayColor(dIdx);
+  };
+
+  const sortedActivePlaces = useMemo(() => {
+    const activeTripObj = selectedTrip || currentTrip;
+    if (!activeTripObj) return [];
+
+    let activeLocIds = [];
+    if (stopFilterLocationIds && stopFilterLocationIds.length > 0) {
+      activeLocIds = stopFilterLocationIds;
+    } else if (activeTripObj && activeTripObj.notes) {
+      try {
+        const parsedNotes = typeof activeTripObj.notes === 'string' ? JSON.parse(activeTripObj.notes) : activeTripObj.notes;
+        if (parsedNotes && Array.isArray(parsedNotes.locationIds)) {
+          activeLocIds = parsedNotes.locationIds;
+        }
+      } catch (e) {
+        activeLocIds = [];
+      }
+    }
+    if (!Array.isArray(activeLocIds)) activeLocIds = [];
+    
+    const activePlaces = places.filter(p => p && p.is_folder !== 1 && (activeLocIds.length === 0 || activeLocIds.includes(p.location_id)));
+    return [...activePlaces].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [places, stopFilterLocationIds, selectedTrip, currentTrip]);
+
   const mapPoints = useMemo(() => {
     if (!selectedTrip) return [];
 
-    let hotelsObj = {};
-    try {
-      const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
-      hotelsObj = notesObj.hotels || {};
-    } catch (e) {}
-
-    // 1. Get all unscheduled and scheduled places belonging to selected trip locations
-    const activePlaces = places.filter(p => p.is_folder !== 1 && stopFilterLocationIds.includes(p.location_id));
-    const sortedActivePlaces = [...activePlaces].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-    const pointsList = sortedActivePlaces.map((place, idx) => {
-      const scheduledItem = itineraries.find(i => i.trip_id === selectedTrip.id && i.place_id === place.id);
-      
-      let dayLabelText = null;
-      let sequenceOrder = 1000 + idx;
-      if (scheduledItem) {
-        const dayIndex = itineraryDays.findIndex(d => d.date === scheduledItem.date);
-        if (dayIndex !== -1) {
-          dayLabelText = `D${dayIndex + 1}`;
-          sequenceOrder = (dayIndex + 1) * 1000 + scheduledItem.sequence_order;
+    let filterLocIds = [];
+    if (stopFilterLocationIds && stopFilterLocationIds.length > 0) {
+      filterLocIds = stopFilterLocationIds;
+    } else if (selectedTrip && selectedTrip.notes) {
+      try {
+        const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes;
+        if (notesObj && Array.isArray(notesObj.locationIds)) {
+          filterLocIds = notesObj.locationIds;
         }
-      }
+      } catch(e) {}
+    }
+    if (!Array.isArray(filterLocIds)) filterLocIds = [];
 
-      return {
-        ...place,
-        dayLabel: dayLabelText,
-        sequenceOrder: sequenceOrder,
-        sequenceLabel: idx + 1
-      };
-    });
+    const tripItineraries = itineraries.filter(i => i.trip_id === selectedTrip.id);
+    const pointsList = [];
 
-    // 2. Append daily stays (hotels) if assigned
-    itineraryDays.forEach((day, dIdx) => {
-      const dayDate = day.date;
-      const dayNum = dIdx + 1;
-      const dayLabelText = `D${dayNum}`;
-
-      const hotelPlaceId = hotelsObj[dayDate];
-      if (hotelPlaceId) {
-        const hotelPlace = places.find(p => p.id === hotelPlaceId);
-        if (hotelPlace) {
-          pointsList.push({
-            ...hotelPlace,
-            dayLabel: dayLabelText,
-            sequenceOrder: dIdx * 1000 + 0,
-            sequenceLabel: 'H',
-            isHotel: true
-          });
-        }
-      }
-
-      const nextDay = itineraryDays[dIdx + 1];
-      if (nextDay) {
-        const nextHotelPlaceId = hotelsObj[nextDay.date];
-        if (nextHotelPlaceId) {
-          const nextHotelPlace = places.find(p => p.id === nextHotelPlaceId);
-          if (nextHotelPlace) {
-            pointsList.push({
-              ...nextHotelPlace,
-              dayLabel: dayLabelText,
-              sequenceOrder: dIdx * 1000 + 999,
-              sequenceLabel: 'H',
-              isHotel: true
-            });
-          }
-        }
+    // 1. Append itinerary stops
+    tripItineraries.forEach(item => {
+      const place = combinedPlaces.find(p => p.id === item.place_id);
+      if (place && (filterLocIds.length === 0 || !place.location_id || filterLocIds.includes(place.location_id))) {
+        const dayIdx = itineraryDays.findIndex(d => d.date === item.date);
+        const dayLabelText = dayIdx !== -1 ? `D${dayIdx + 1}` : item.date;
+        pointsList.push({
+          ...place,
+          dayLabel: dayLabelText,
+          sequenceOrder: item.sequence_order,
+          sequenceLabel: item.sequence_order,
+          date: item.date
+        });
       }
     });
 
     return pointsList;
-  }, [itineraries, places, selectedTrip, itineraryDays, stopFilterLocationIds]);
+  }, [itineraries, combinedPlaces, selectedTrip, itineraryDays, stopFilterLocationIds]);
 
   // Base configurations and Trip configuration states
   const [baseCurrency, setBaseCurrency] = useState('USD');
@@ -596,16 +746,16 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
       setItinTargetDate(selectedTrip.start_date || '');
       
       try {
-        const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
-        const savedLocIds = notesObj.locationIds || [];
-        const savedColIds = notesObj.collectionIds || [];
+        const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes || '{}') : selectedTrip.notes || {};
+        const savedLocIds = safeParseArray(notesObj.locationIds);
+        const savedColIds = safeParseArray(notesObj.collectionIds);
         
         let locIdsToSet = [...savedLocIds];
         if (savedColIds.length > 0) {
           const colPlaces = places.filter(p => 
             collections.some(col => 
-              savedColIds.includes(col.id) && 
-              (typeof col.place_ids === 'string' ? JSON.parse(col.place_ids) : col.place_ids || []).includes(p.id)
+              safeIncludes(savedColIds, col.id) && 
+              safeIncludes(safeParseArray(col.place_ids), p.id)
             )
           );
           const colLocIds = colPlaces.map(p => p.location_id);
@@ -770,68 +920,74 @@ Only return the places to visit for each day in the itinerary.`;
     return Math.round(R * c * 10) / 10;
   };
 
-  // Helper: Retrieve actual driving route from OSRM or Google Maps Distance Matrix
+  // Helper: Retrieve actual driving route from Google RouteMatrix computeRouteMatrix or OSRM
   const fetchOSRMDistance = async (p1, p2) => {
+    if (!p1 || !p2 || !p1.latitude || !p1.longitude || !p2.latitude || !p2.longitude) return;
     const key = `${p1.id}-${p2.id}`;
     if (distances[key]) return distances[key];
     if (pendingOSRMFetches.current.has(key)) return;
     pendingOSRMFetches.current.add(key);
 
     try {
-      if (window.google && window.google.maps && localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false') {
+      const apiKey = localStorage.getItem('google_maps_api_key');
+      const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+      // 1. Try Google Maps RouteMatrix computeRouteMatrix (v2 REST API)
+      if (apiKey && googleMapsEnabled) {
         try {
-          trackApiCall('Google Maps Distance Matrix');
-          const service = new window.google.maps.DistanceMatrixService();
-          const response = await new Promise((resolve, reject) => {
-            service.getDistanceMatrix({
-              origins: [{ lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) }],
-              destinations: [{ lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }],
-              travelMode: window.google.maps.TravelMode.DRIVING
-            }, (res, status) => {
-              if (status === 'OK') resolve(res);
-              else reject(new Error('Distance Matrix failed with status: ' + status));
-            });
+          const routeRes = await fetch('https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': apiKey,
+              'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,distanceMeters,status'
+            },
+            body: JSON.stringify({
+              origins: [{ waypoint: { location: { latLng: { latitude: parseFloat(p1.latitude), longitude: parseFloat(p1.longitude) } } } }],
+              destinations: [{ waypoint: { location: { latLng: { latitude: parseFloat(p2.latitude), longitude: parseFloat(p2.longitude) } } } }],
+              travelMode: 'DRIVE'
+            })
           });
 
-          if (response.rows && response.rows[0] && response.rows[0].elements && response.rows[0].elements[0]) {
-            const element = response.rows[0].elements[0];
-            if (element.status === 'OK') {
-              const distKm = Math.round((element.distance.value / 1000) * 10) / 10;
-              const durationMins = Math.round(element.duration.value / 60);
+          if (routeRes.ok) {
+            const matrixData = await routeRes.json();
+            const elem = Array.isArray(matrixData) ? matrixData[0] : matrixData;
+            if (elem && elem.distanceMeters) {
+              const distKm = Math.round((elem.distanceMeters / 1000) * 10) / 10;
+              const durSecs = parseInt((elem.duration || '0').replace('s', ''), 10) || 0;
+              const durationMins = Math.round(durSecs / 60);
               const valObj = { distance: distKm, duration: durationMins };
               setDistances(prev => ({ ...prev, [key]: valObj }));
               return valObj;
             }
           }
-        } catch (err) {
-          console.warn('Google Distance Matrix failed, falling back to OSRM:', err);
+        } catch (e) {
+          console.warn('Google RouteMatrix computeRouteMatrix failed, falling back to OSRM:', e);
         }
       }
 
-      try {
-        trackApiCall('OSRM Routing');
-        const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${p1.longitude},${p1.latitude};${p2.longitude},${p2.latitude}?overview=false`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.routes && data.routes[0]) {
-            const distKm = Math.round((data.routes[0].distance / 1000) * 10) / 10;
-            const durationMins = Math.round(data.routes[0].duration / 60);
-            const valObj = { distance: distKm, duration: durationMins };
-            setDistances(prev => ({ ...prev, [key]: valObj }));
-            return valObj;
-          }
+      // 2. Try OSRM Routing API for driving distance & travel duration
+      const url = `https://router.project-osrm.org/route/v1/driving/${p2.longitude},${p2.latitude};${p1.longitude},${p1.latitude}?overview=false`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.routes && data.routes[0]) {
+          const distKm = Math.round((data.routes[0].distance / 1000) * 10) / 10;
+          const durationMins = Math.round(data.routes[0].duration / 60);
+          const valObj = { distance: distKm, duration: durationMins };
+          setDistances(prev => ({ ...prev, [key]: valObj }));
+          return valObj;
         }
-      } catch (err) {
-        console.warn('OSRM router error, falling back to Haversine:', err);
       }
-      const havDist = getHaversine(p1, p2);
-      const durMins = Math.round((havDist / 40) * 60);
-      const valObj = { distance: havDist, duration: durMins };
-      setDistances(prev => ({ ...prev, [key]: valObj }));
-      return valObj;
-    } finally {
-      pendingOSRMFetches.current.delete(key);
+    } catch (e) {
+      console.warn('OSRM routing fetch failed, using haversine fallback:', e);
     }
+
+    // 3. Fallback to Haversine straight-line distance calculation
+    const distKm = getHaversine(p1, p2);
+    const valObj = { distance: distKm, duration: Math.round(distKm * 2) };
+    setDistances(prev => ({ ...prev, [key]: valObj }));
+    return valObj;
   };
 
   const handleWizardNext = async (e) => {
@@ -854,6 +1010,9 @@ Only return the places to visit for each day in the itinerary.`;
       end_date: calculatedEndDate,
       length: len,
       visited: 0,
+      companions: JSON.stringify(selectedCompanions),
+      start_address_id: tripStartAddressId || null,
+      stop_address_id: tripStopAddressId || null,
       notes: JSON.stringify({
         description: tripNotes || '',
         isInternational: isInternational,
@@ -998,14 +1157,9 @@ Only return the places to visit for each day in the itinerary.`;
           const activityText = day.activities[idx];
           
           let matchedPlace = places.find(p => {
-            const nameMatch = p.name.toLowerCase() === activityText.toLowerCase() ||
+            return p.name.toLowerCase() === activityText.toLowerCase() ||
               activityText.toLowerCase().includes(p.name.toLowerCase()) ||
               p.name.toLowerCase().includes(activityText.toLowerCase());
-            if (!nameMatch) return false;
-            
-            const cat = p.category?.toLowerCase() || '';
-            const isExcluded = cat.includes('hotel') || cat.includes('resort') || cat.includes('cafe') || cat.includes('stay');
-            return !isExcluded;
           });
           let placeId = matchedPlace ? matchedPlace.id : null;
 
@@ -1865,6 +2019,46 @@ Only return the places to visit for each day in the itinerary.`;
                   </div>
                 </div>
 
+
+
+                <div className="form-group">
+                  <label>Travelers / Companions</label>
+                  {people.length === 0 ? (
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0, fontStyle: 'italic' }}>
+                      No people configured. Add family or friends in Settings to tag them on trips.
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', border: '1px solid var(--border-glass)', padding: '8px', borderRadius: '6px', background: 'var(--bg-app)' }}>
+                      {people.map(p => {
+                        const isSelected = selectedCompanions.includes(p.id);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setSelectedCompanions(prev => prev.filter(id => id !== p.id));
+                              } else {
+                                setSelectedCompanions(prev => [...prev, p.id]);
+                              }
+                            }}
+                            style={{
+                              padding: '4px 10px', fontSize: '0.78rem', borderRadius: '16px',
+                              border: '1px solid var(--border-glass)', cursor: 'pointer',
+                              background: isSelected ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                              color: isSelected ? '#000' : 'var(--text-primary)',
+                              fontWeight: isSelected ? 'bold' : 'normal',
+                              display: 'inline-flex', alignItems: 'center', gap: '6px'
+                            }}
+                          >
+                            👤 {p.name} <span style={{ opacity: 0.75, fontSize: '0.7rem' }}>({p.relation})</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 <div className="form-group">
                   <label>Description / Notes</label>
                   <textarea
@@ -2019,10 +2213,225 @@ Only return the places to visit for each day in the itinerary.`;
         </div>
       )}
 
+      {/* MANAGE TRAVELERS MODAL */}
+      {showTravelersModal && selectedTrip && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
+          padding: '20px'
+        }}>
+          <div className="login-card" style={{ maxWidth: '480px', width: '100%', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                👥 Manage Travelers
+              </h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }} />
+            </div>
+
+            {/* Tab Navigation: Saved vs Direct Immich API */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '10px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setTravelerTab('local')}
+                style={{
+                  flex: 1, padding: '6px 10px', fontSize: '0.8rem', fontWeight: 600,
+                  background: travelerTab === 'local' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                  color: travelerTab === 'local' ? '#000' : 'var(--text-primary)',
+                  borderColor: travelerTab === 'local' ? 'var(--accent-primary)' : 'var(--border-glass)'
+                }}
+              >
+                Saved Members ({people.length})
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setTravelerTab('immich');
+                  fetchImmichPeople();
+                }}
+                style={{
+                  flex: 1, padding: '6px 10px', fontSize: '0.8rem', fontWeight: 600,
+                  background: travelerTab === 'immich' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                  color: travelerTab === 'immich' ? '#000' : 'var(--text-primary)',
+                  borderColor: travelerTab === 'immich' ? 'var(--accent-primary)' : 'var(--border-glass)'
+                }}
+              >
+                📸 Immich API ({immichPeople.length})
+              </button>
+            </div>
+
+            {/* Search Bar */}
+            <div style={{ marginBottom: '14px', position: 'relative' }}>
+              <input
+                type="text"
+                className="form-control"
+                placeholder={travelerTab === 'immich' ? "Search members directly from Immich API..." : "Search saved people by name or relation..."}
+                value={travelerSearch}
+                onChange={(e) => setTravelerSearch(e.target.value)}
+                style={{ paddingLeft: '12px' }}
+              />
+            </div>
+
+            {/* Content Tab 1: Local Members */}
+            {travelerTab === 'local' && (
+              people.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  <p style={{ margin: '0 0 10px 0' }}>No saved companions added yet.</p>
+                  <button 
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => { setTravelerTab('immich'); fetchImmichPeople(); }}
+                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                  >
+                    📸 Import Members directly from Immich API
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
+                  {people
+                    .filter(p => {
+                      if (!travelerSearch) return true;
+                      const q = travelerSearch.toLowerCase();
+                      return (p.name || '').toLowerCase().includes(q) || (p.relation || '').toLowerCase().includes(q);
+                    })
+                    .map(p => {
+                      const compIds = safeParseArray(selectedTrip?.companions);
+                      const isChecked = safeIncludes(compIds, p.id);
+                      const userToken = token || localStorage.getItem('token') || '';
+                      return (
+                        <label key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '8px', cursor: 'pointer' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {p.immich_person_id ? (
+                              <img
+                                src={`/api/immich/person/thumbnail/${p.immich_person_id}?token=${encodeURIComponent(userToken)}`}
+                                alt={p.name}
+                                style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                              />
+                            ) : (
+                              <span style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--accent-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.9rem', flexShrink: 0 }}>
+                                {p.name ? p.name.charAt(0).toUpperCase() : '?'}
+                              </span>
+                            )}
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>{p.name}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--accent-primary)' }}>{p.relation}</div>
+                            </div>
+                          </div>
+                          <input 
+                            type="checkbox"
+                            checked={isChecked}
+                            style={{ accentColor: 'var(--accent-primary)', width: '18px', height: '18px', cursor: 'pointer' }}
+                            onChange={async () => {
+                              const updatedComp = isChecked ? compIds.filter(id => id !== p.id) : [...compIds, p.id];
+                              const updatedTrip = { ...selectedTrip, companions: JSON.stringify(updatedComp) };
+                              await queueSyncAction('trips', 'update', updatedTrip);
+                              setSelectedTrip(updatedTrip);
+                            }}
+                          />
+                        </label>
+                      );
+                    })}
+                </div>
+              )
+            )}
+
+            {/* Content Tab 2: Immich API Members */}
+            {travelerTab === 'immich' && (
+              loadingImmichPeople ? (
+                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  ⏳ Fetching members from Immich server API...
+                </div>
+              ) : immichPeople.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  No members found on Immich server. Please verify your Immich Server URL and API Key in Settings.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
+                  {immichPeople
+                    .filter(ip => {
+                      if (!travelerSearch) return true;
+                      const q = travelerSearch.toLowerCase();
+                      return (ip.name || '').toLowerCase().includes(q);
+                    })
+                    .map(ip => {
+                      const userToken = token || localStorage.getItem('token') || '';
+                      const compIds = safeParseArray(selectedTrip?.companions);
+                      const existingLocal = people.find(p => p.immich_person_id === ip.id);
+                      const isChecked = existingLocal ? safeIncludes(compIds, existingLocal.id) : false;
+
+                      return (
+                        <label key={ip.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '8px', cursor: 'pointer' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <img
+                              src={`/api/immich/person/thumbnail/${ip.id}?token=${encodeURIComponent(userToken)}`}
+                              alt={ip.name || 'Immich Member'}
+                              style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                              }}
+                            />
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                                {ip.name || 'Unnamed Immich Member'}
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                                {existingLocal ? (
+                                  <span style={{ color: '#4ade80', fontWeight: 600 }}>✓ Saved ({existingLocal.relation})</span>
+                                ) : (
+                                  <span style={{ color: 'var(--accent-primary)' }}>Immich Member</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <input 
+                            type="checkbox"
+                            checked={isChecked}
+                            style={{ accentColor: 'var(--accent-primary)', width: '18px', height: '18px', cursor: 'pointer' }}
+                            onChange={async () => {
+                              let targetPersonId = existingLocal ? existingLocal.id : null;
+                              if (!targetPersonId) {
+                                // Automatically save Immich person to local database
+                                const newP = {
+                                  id: generateUUID(),
+                                  name: ip.name || 'Immich Member',
+                                  relation: 'Companion',
+                                  immich_person_id: ip.id,
+                                  immich_person_name: ip.name || ''
+                                };
+                                await queueSyncAction('people', 'insert', newP);
+                                targetPersonId = newP.id;
+                              }
+
+                              const updatedComp = isChecked 
+                                ? compIds.filter(id => id !== targetPersonId) 
+                                : [...compIds, targetPersonId];
+
+                              const updatedTrip = { ...selectedTrip, companions: JSON.stringify(updatedComp) };
+                              await queueSyncAction('trips', 'update', updatedTrip);
+                              setSelectedTrip(updatedTrip);
+                            }}
+                          />
+                        </label>
+                      );
+                    })}
+                </div>
+              )
+            )}
+
+            <button className="btn btn-primary" onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }} style={{ marginTop: '16px', width: '100%' }}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Grid of Trips */}
       <div className="grid">
         {filteredTrips.map(trip => (
-          <div key={trip.id} className="card" onClick={() => setSelectedTrip(trip)} style={{ minHeight: '180px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div key={trip.id} className="card" onClick={() => handleTripCardClick(trip)} style={{ minHeight: '180px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
             <div className="card-content" style={{ flexGrow: 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <h3 style={{ margin: 0 }}>{trip.name}</h3>
@@ -2151,9 +2560,51 @@ Only return the places to visit for each day in the itinerary.`;
                         Edit Details
                       </button>
                     </div>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                      📅 {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})
-                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                      <span>📅 {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})</span>
+                      
+                      {/* Companion / Traveler Thumbnails */}
+                      {(() => {
+                        const compIds = safeParseArray(currentTrip?.companions);
+                        const matched = people.filter(p => safeIncludes(compIds, p.id));
+                        const userToken = token || localStorage.getItem('token') || '';
+                        return (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span>👥 Travelers:</span>
+                            {matched.map(p => (
+                              <div 
+                                key={p.id} 
+                                title={`${p.name} (${p.relation})`}
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                              >
+                                {p.immich_person_id ? (
+                                  <img
+                                    src={`/api/immich/person/thumbnail/${p.immich_person_id}?token=${encodeURIComponent(userToken)}`}
+                                    alt={p.name}
+                                    style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}
+                                    onError={(e) => { e.target.style.display = 'none'; }}
+                                  />
+                                ) : (
+                                  <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(139, 92, 246, 0.25)', border: '1px solid var(--accent-primary)', color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.78rem', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>
+                                    {p.name ? p.name.charAt(0).toUpperCase() : '?'}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => setShowTravelersModal(true)}
+                              style={{ background: 'rgba(139, 92, 246, 0.15)', border: '1px solid var(--accent-primary)', borderRadius: '50%', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', color: 'var(--accent-primary)', cursor: 'pointer', fontWeight: 600 }}
+                              title="Manage Travelers"
+                            >
+                              +
+                            </button>
+                          </div>
+                        );
+                      })()}
+
+
+                    </div>
                   </div>
                 )}
               </div>
@@ -2185,7 +2636,7 @@ Only return the places to visit for each day in the itinerary.`;
                   <button className="photo-action-btn" onClick={() => handleDeleteTrip(currentTrip.id)}>
                     <Trash2 size={16} />
                   </button>
-                  <button className="photo-action-btn" onClick={() => setSelectedTrip(null)}>
+                  <button className="photo-action-btn" onClick={() => handleBackToTripsList()}>
                     <X size={18} />
                   </button>
                 </div>
@@ -2451,7 +2902,7 @@ Only return the places to visit for each day in the itinerary.`;
               {/* Chronological Daily Itinerary */}
               <div className={!printOptItinerary ? 'no-print' : ''} style={{ background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
                 <h3 style={{ marginBottom: '16px', marginTop: 0 }}>Chronological Daily Itinerary</h3>
-                {itineraryDays.map(day => {
+                {itineraryDays.map((day, dIdx) => {
                   const dayItems = itineraries.filter(i => currentTrip && i.trip_id === currentTrip.id && i.date === day.date)
                                               .sort((a,b) => a.sequence_order - b.sequence_order);
                   return (
@@ -2460,7 +2911,7 @@ Only return the places to visit for each day in the itinerary.`;
                       date={day.date} 
                       label={day.label} 
                       items={dayItems} 
-                      places={places}
+                      places={combinedPlaces}
                       distances={distances}
                       reservations={reservations}
                       selectedTrip={currentTrip}
@@ -2470,6 +2921,9 @@ Only return the places to visit for each day in the itinerary.`;
                       handleDeleteItineraryItem={handleDeleteItineraryItem}
                       fetchOSRMDistance={fetchOSRMDistance}
                       getHaversine={getHaversine}
+                      sortedActivePlaces={sortedActivePlaces}
+                      dayColor={getDayColor(dIdx)}
+                      userAddresses={userAddresses}
                     />
                   );
                 })}
@@ -2856,7 +3310,123 @@ Only return the places to visit for each day in the itinerary.`;
                 </div>
               )}
 
+              {/* Trip Notes & Travel Journal Section */}
+              <div style={{ background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <FileText size={20} style={{ color: 'var(--accent-primary)' }} /> Trip Notes & Travel Journal
+                  </h3>
+                  <button 
+                    className="btn btn-primary"
+                    style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    onClick={() => setShowTripNoteModal(true)}
+                  >
+                    <Plus size={14} /> Add Note
+                  </button>
+                </div>
+
+                {(() => {
+                  const currentNotes = notesList.filter(n => selectedTrip && n.trip_id === selectedTrip.id);
+                  if (currentNotes.length === 0) {
+                    return (
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontStyle: 'italic', margin: 0 }}>
+                        No notes added yet. Click "+ Add Note" to jot down flight details, hotel instructions, packing reminders, or daily reflections!
+                      </p>
+                    );
+                  }
+
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+                      {currentNotes.map(note => (
+                        <div key={note.id} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '14px', position: 'relative' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+                            <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--text-primary)' }}>{note.title || 'Trip Note'}</span>
+                            <button className="photo-action-btn" onClick={() => handleDeleteTripNote(note.id)} title="Delete Note">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                          <span style={{ fontSize: '0.68rem', backgroundColor: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent-primary-hover)', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 600, display: 'inline-block', marginBottom: '8px' }}>
+                            {note.category || 'General'}
+                          </span>
+                          <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', margin: 0 }}>
+                            {note.content}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Trip Note Modal Dialog */}
+      {showTripNoteModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
+          padding: '20px'
+        }}>
+          <div className="login-card" style={{ maxWidth: '440px', width: '100%', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <FileText size={18} style={{ color: 'var(--accent-primary)' }} /> Add Trip Note
+              </h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowTripNoteModal(false)} />
+            </div>
+
+            <form onSubmit={handleAddTripNote} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div className="form-group">
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Title</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Flight Info, Packing List..."
+                  value={noteTitle}
+                  onChange={(e) => setNoteTitle(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Category</label>
+                <select
+                  className="form-control"
+                  value={noteCategory}
+                  onChange={(e) => setNoteCategory(e.target.value)}
+                >
+                  <option value="General">📝 General Note</option>
+                  <option value="Flight">✈️ Flight / Transit</option>
+                  <option value="Hotel">🏨 Hotel / Lodging</option>
+                  <option value="Packing">🎒 Packing List</option>
+                  <option value="Journal">📖 Travel Journal</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Note Details *</label>
+                <textarea
+                  className="form-control"
+                  rows="4"
+                  required
+                  placeholder="Write your travel notes, flight booking numbers, or reflections here..."
+                  value={noteContent}
+                  onChange={(e) => setNoteContent(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowTripNoteModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={!noteContent.trim()}>
+                  Save Note
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -2969,7 +3539,7 @@ Only return the places to visit for each day in the itinerary.`;
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {dayItems.map((item, idx) => {
-                          const place = places.find(p => p.id === item.place_id);
+                          const place = combinedPlaces.find(p => p.id === item.place_id);
                           return (
                             <div 
                               key={item.id} 
@@ -3179,7 +3749,7 @@ Only return the places to visit for each day in the itinerary.`;
                   const dayItems = itineraries
                     .filter(i => i.trip_id === selectedTrip.id && i.date === day.date)
                     .sort((a,b) => a.sequence_order - b.sequence_order);
-                  const color = dayColors[dIdx % dayColors.length];
+                  const color = getDayColor(dIdx);
                   
                   // Calculate active day itinerary stops & hotels in sequence
                   const dayElements = [];
@@ -3190,31 +3760,12 @@ Only return the places to visit for each day in the itinerary.`;
                     hotelsObj = notesObj.hotels || {};
                   } catch(e) {}
 
-                  const dayHotelId = hotelsObj[day.date];
-                  if (dayHotelId) {
-                    const hotelPlace = places.find(p => p.id === dayHotelId);
-                    if (hotelPlace) {
-                      dayElements.push({ place: hotelPlace, isHotel: true, label: '🏠 Start Stay' });
-                    }
-                  }
-
                   dayItems.forEach(item => {
-                    const stopPlace = places.find(p => p.id === item.place_id);
+                    const stopPlace = combinedPlaces.find(p => p.id === item.place_id);
                     if (stopPlace) {
                       dayElements.push({ place: stopPlace, itemObj: item, isHotel: false });
                     }
                   });
-
-                  const nextDay = itineraryDays[dIdx + 1];
-                  if (nextDay) {
-                    const nextHotelId = hotelsObj[nextDay.date];
-                    if (nextHotelId) {
-                      const nextHotelPlace = places.find(p => p.id === nextHotelId);
-                      if (nextHotelPlace) {
-                        dayElements.push({ place: nextHotelPlace, isHotel: true, label: '🏠 End Stay' });
-                      }
-                    }
-                  }
 
                   // Calculate distances list for this day
                   const dayDistancesList = [];
@@ -3254,10 +3805,7 @@ Only return the places to visit for each day in the itinerary.`;
                           const data = JSON.parse(rawData);
                           const scheduledPlaceIds = itineraries.filter(i => i.trip_id === selectedTrip.id).map(i => i.place_id);
                           if (data.type === 'place') {
-                            const p = places.find(x => x.id === data.id);
-                            const cat = p?.category?.toLowerCase() || '';
-                            const isExcluded = cat.includes('hotel') || cat.includes('resort') || cat.includes('cafe') || cat.includes('stay');
-                            if (isExcluded) return;
+                            const isHomePlace = typeof data.id === 'string' && data.id.startsWith('home_');
 
                             if (data.sourceDay) {
                               if (data.sourceDay === day.date) return;
@@ -3273,7 +3821,9 @@ Only return the places to visit for each day in the itinerary.`;
                                 await queueSyncAction('itinerary_items', 'update', updated);
                               }
                             } else {
-                              if (dayItems.some(i => i.place_id === data.id)) return;
+                              const targetPlace = combinedPlaces.find(p => p.id === data.id);
+                              const canAddMultiple = isHomePlace || isStayPlace(targetPlace);
+                              if (!canAddMultiple && dayItems.some(i => i.place_id === data.id)) return;
                               const newItem = {
                                 id: generateUUID(),
                                 trip_id: selectedTrip.id,
@@ -3288,14 +3838,12 @@ Only return the places to visit for each day in the itinerary.`;
                           } else if (data.type === 'folder') {
                             const folderPlaces = places.filter(p => {
                               if (p.location_id !== data.id) return false;
-                              if (scheduledPlaceIds.includes(p.id)) return false;
-                              const cat = p.category?.toLowerCase() || '';
-                              const isExcluded = cat.includes('hotel') || cat.includes('resort') || cat.includes('cafe') || cat.includes('stay');
-                              return !isExcluded;
+                              if (scheduledPlaceIds.includes(p.id) && !isStayPlace(p)) return false;
+                              return true;
                             });
                             let addedCount = 0;
                             for (const fp of folderPlaces) {
-                              if (dayItems.some(i => i.place_id === fp.id)) continue;
+                              if (dayItems.some(i => i.place_id === fp.id) && !isStayPlace(fp)) continue;
                               const newItem = {
                                 id: generateUUID(),
                                 trip_id: selectedTrip.id,
@@ -3345,7 +3893,7 @@ Only return the places to visit for each day in the itinerary.`;
                         >
                           <option value="" style={{ background: 'var(--bg-surface)' }}>-- Unassigned --</option>
                           {(() => {
-                            const dayPlaces = dayItems.map(item => places.find(p => p.id === item.place_id)).filter(Boolean);
+                            const dayPlaces = dayItems.map(item => combinedPlaces.find(p => p.id === item.place_id)).filter(Boolean);
                             let dayLocIds = [...new Set(dayPlaces.map(p => p.location_id))];
                             
                             if (dayLocIds.length === 0 && selectedTrip) {
@@ -3355,7 +3903,7 @@ Only return the places to visit for each day in the itinerary.`;
                                 for (let i = currentDayIdx - 1; i >= 0; i--) {
                                   const prevDayDate = sortedDays[i].date;
                                   const prevDayItems = itineraries.filter(item => item.trip_id === selectedTrip.id && item.date === prevDayDate);
-                                  const prevPlaces = prevDayItems.map(item => places.find(p => p.id === item.place_id)).filter(Boolean);
+                                  const prevPlaces = prevDayItems.map(item => combinedPlaces.find(p => p.id === item.place_id)).filter(Boolean);
                                   if (prevPlaces.length > 0) {
                                     dayLocIds = [prevPlaces[prevPlaces.length - 1].location_id];
                                     break;
@@ -3416,9 +3964,32 @@ Only return the places to visit for each day in the itinerary.`;
                                     cursor: 'grab'
                                   }}
                                 >
-                                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    Stop: {place.name}
-                                  </span>
+                                  {(() => {
+                                    const placeIdx = allPlacesSorted.findIndex(x => x.id === place.id);
+                                    const placeNum = placeIdx !== -1 ? placeIdx + 1 : (dayItems.indexOf(el.itemObj) + 1);
+                                    return (
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{
+                                          width: '20px',
+                                          height: '20px',
+                                          borderRadius: '50%',
+                                          background: color,
+                                          color: '#fff',
+                                          fontSize: '0.7rem',
+                                          fontWeight: 'bold',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          flexShrink: 0
+                                        }}>
+                                          {placeNum}
+                                        </span>
+                                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                          {place.name}
+                                        </span>
+                                      </div>
+                                    );
+                                  })()}
                                   <div style={{ display: 'flex', gap: '4px' }}>
                                     <button
                                       disabled={dayItems.indexOf(el.itemObj) === 0}
@@ -3489,7 +4060,7 @@ Only return the places to visit for each day in the itinerary.`;
                                           title={isUsingGmaps ? "Route calculated via Google Maps" : "Route calculated via OpenStreetMap (OSRM)"}
                                         />
                                         <span>
-                                          {dayDistancesList[idx] && typeof dayDistancesList[idx] === 'object' ? `${dayDistancesList[idx].distance} km (${dayDistancesList[idx].duration} mins)` : `${dayDistancesList[idx] || 0} km`} to next stop
+                                          {dayDistancesList[idx] && typeof dayDistancesList[idx] === 'object' ? `${dayDistancesList[idx].distance} km (${formatDuration(dayDistancesList[idx].duration)})` : `${dayDistancesList[idx] || 0} km`} to next stop
                                         </span>
                                       </>
                                     );
@@ -3589,13 +4160,91 @@ Only return the places to visit for each day in the itinerary.`;
               </div>
 
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {/* Saved Home Addresses Folder in Places Bank */}
+                {userAddresses.length > 0 && (
+                  <div style={{ border: '1px solid rgba(74, 222, 128, 0.3)', borderRadius: '6px', padding: '10px', background: 'rgba(74, 222, 128, 0.05)', marginBottom: '4px' }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', color: '#4ade80', marginBottom: '8px' }}>
+                      🏠 <span>Saved Home Addresses</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '14px' }}>
+                      {userAddresses
+                        .filter(addr => !stopPlaceSearch || addr.label.toLowerCase().includes(stopPlaceSearch.toLowerCase()) || (addr.address && addr.address.toLowerCase().includes(stopPlaceSearch.toLowerCase())))
+                        .map(addr => {
+                          const homeId = `home_${addr.id}`;
+                          const homePlace = { id: homeId, is_home: true, name: `🏠 ${addr.label}`, category: 'Home Address', latitude: parseFloat(addr.latitude), longitude: parseFloat(addr.longitude), address: addr.address };
+                          return (
+                            <div 
+                              key={homeId}
+                              draggable={true}
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'place', id: homeId }));
+                              }}
+                              style={{
+                                background: 'var(--bg-app)',
+                                border: '1px solid rgba(74, 222, 128, 0.3)',
+                                padding: '6px 10px',
+                                borderRadius: '4px',
+                                cursor: 'grab',
+                                fontSize: '0.75rem',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                color: 'var(--text-primary)'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                                <span style={{
+                                  width: '20px',
+                                  height: '20px',
+                                  borderRadius: '50%',
+                                  background: '#4ade80',
+                                  color: '#000',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 'bold',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0
+                                }}>
+                                  🏠
+                                </span>
+                                <span style={{ fontWeight: 500 }}>{addr.label}</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '0.65rem', color: '#4ade80' }}>(Home)</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleMobileAddStop(homePlace)}
+                                  className="btn btn-primary"
+                                  title="Add to Itinerary"
+                                  style={{
+                                    width: '22px',
+                                    height: '22px',
+                                    padding: 0,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '0.85rem',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
                 {locations
                   .filter(l => l.is_folder !== 1 && stopFilterLocationIds.includes(l.id))
                   .map(loc => {
                     const scheduledPlaceIds = itineraries
                       .filter(i => i.trip_id === selectedTrip.id)
                       .map(i => i.place_id);
-                    const folderPlaces = places.filter(p => p.location_id === loc.id && !scheduledPlaceIds.includes(p.id) && (!stopPlaceSearch || p.name.toLowerCase().includes(stopPlaceSearch.toLowerCase())));
+                    const folderPlaces = places.filter(p => p.location_id === loc.id && (!scheduledPlaceIds.includes(p.id) || isStayPlace(p)) && (!stopPlaceSearch || p.name.toLowerCase().includes(stopPlaceSearch.toLowerCase())));
 
                     const activePlacesInLoc = places.filter(pl => pl.is_folder !== 1 && stopFilterLocationIds.includes(pl.location_id));
                     const sortedActivePlacesInLoc = [...activePlacesInLoc].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -3615,8 +4264,9 @@ Only return the places to visit for each day in the itinerary.`;
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '14px' }}>
                           {folderPlaces.map(p => {
-                            const placeIdx = sortedActivePlacesInLoc.findIndex(x => x.id === p.id);
+                            const placeIdx = allPlacesSorted.findIndex(x => x.id === p.id);
                             const placeNum = placeIdx !== -1 ? placeIdx + 1 : '';
+                            const badgeColor = getPlaceBadgeColor(p.id);
                             return (
                               <div 
                                 key={p.id}
@@ -3630,7 +4280,26 @@ Only return the places to visit for each day in the itinerary.`;
                                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-primary)'
                                 }}
                               >
-                                <span>📍 {placeNum ? `#${placeNum} ` : ''}{p.name}</span>
+                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                   {placeNum ? (
+                                     <span style={{
+                                       width: '20px',
+                                       height: '20px',
+                                       borderRadius: '50%',
+                                       background: badgeColor,
+                                       color: '#fff',
+                                       fontSize: '0.7rem',
+                                       fontWeight: 'bold',
+                                       display: 'inline-flex',
+                                       alignItems: 'center',
+                                       justifyContent: 'center',
+                                       flexShrink: 0
+                                     }}>
+                                       {placeNum}
+                                     </span>
+                                   ) : <span>📍</span>}
+                                   <span>{p.name}</span>
+                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>({p.category})</span>
                                   {isMobile && (
@@ -3724,14 +4393,30 @@ const ItineraryDay = ({
   handleDeleteReservation, 
   handleDeleteItineraryItem, 
   fetchOSRMDistance, 
-  getHaversine 
+  getHaversine,
+  sortedActivePlaces = [],
+  dayColor,
+  userAddresses = []
 }) => {
+  const combinedPlaces = useMemo(() => {
+    const homePlaces = (userAddresses || []).map(addr => ({
+      id: `home_${addr.id}`,
+      is_home: true,
+      name: `🏠 ${addr.label}`,
+      category: 'Home Address',
+      latitude: parseFloat(addr.latitude),
+      longitude: parseFloat(addr.longitude),
+      address: addr.address
+    }));
+    return [...places, ...homePlaces];
+  }, [places, userAddresses]);
+
   const distancesList = useMemo(() => {
     if (items.length < 2) return [];
     const computed = [];
     for (let i = 1; i < items.length; i++) {
-      const p1 = places.find(p => p.id === items[i - 1].place_id);
-      const p2 = places.find(p => p.id === items[i].place_id);
+      const p1 = combinedPlaces.find(p => p.id === items[i - 1].place_id);
+      const p2 = combinedPlaces.find(p => p.id === items[i].place_id);
       if (p1 && p2) {
         const key = `${p1.id}-${p2.id}`;
         if (distances[key] !== undefined) {
@@ -3775,34 +4460,50 @@ const ItineraryDay = ({
 
       {/* Display reservations directly below the date */}
       {dayReservations.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '10px 0' }}>
-          {dayReservations.map(res => (
-            <div key={res.id} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--accent-secondary)', fontWeight: 'bold', marginRight: '6px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '2px' }}>
-                  {res.type}
-                </span>
-                <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{res.title}</span>
-                {res.details && (typeof res.details === 'string' ? JSON.parse(res.details).notes : res.details.notes) && (
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
-                    {typeof res.details === 'string' ? JSON.parse(res.details).notes : res.details.notes}
-                  </p>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {res.file_path && (
-                  <button className="photo-action-btn" onClick={() => handleViewAttachment(res)}>
-                    <FileText size={12} />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+          {dayReservations.map(r => {
+            let fileExt = '';
+            if (r.file_path) {
+              fileExt = r.file_path.split('.').pop().toLowerCase();
+            }
+            const details = typeof r.details === 'string' ? JSON.parse(r.details) : r.details || {};
+            return (
+              <div 
+                key={r.id} 
+                style={{ 
+                  background: 'var(--bg-surface-elevated)', 
+                  border: '1px solid var(--border-glass)', 
+                  borderRadius: '4px', 
+                  padding: '4px 8px', 
+                  fontSize: '0.75rem', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '6px',
+                  color: 'var(--text-primary)'
+                }}
+              >
+                <span>🏢 {r.name || r.type}</span>
+                {details.confirmation && <span style={{ color: 'var(--text-muted)' }}>({details.confirmation})</span>}
+                {r.file_path && (
+                  <button 
+                    onClick={() => handleViewAttachment(r)}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent-primary)' }}
+                    title="View attachment"
+                  >
+                    📎
                   </button>
                 )}
                 {!tripModeActive && (
-                  <button className="photo-action-btn" onClick={() => handleDeleteReservation(res)}>
-                    <Trash2 size={12} />
+                  <button 
+                    onClick={() => handleDeleteReservation(r.id)}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--danger)', fontSize: '0.7rem' }}
+                  >
+                    ✕
                   </button>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       
@@ -3811,10 +4512,15 @@ const ItineraryDay = ({
       ) : (
         <div className="timeline">
           {items.map((item, idx) => {
-            const place = places.find(p => p.id === item.place_id);
+            const place = combinedPlaces.find(p => p.id === item.place_id);
             const dist = distancesList[idx - 1];
             const dbDist = item.distance_from_prev || 0;
             const dbDur = item.duration_from_prev || 0;
+
+            const allPlacesSorted = [...places.filter(p => p.is_folder !== 1 && !p.is_home)].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            const placeIdx = allPlacesSorted.findIndex(x => x.id === place?.id);
+            const placeNum = placeIdx !== -1 ? placeIdx + 1 : (idx + 1);
+            const isHomePlace = place?.is_home === true;
 
             return (
               <div key={item.id} className="timeline-item">
@@ -3832,22 +4538,41 @@ const ItineraryDay = ({
                       />
                       <span>
                         {dbDist > 0 
-                          ? `${dbDist} km${dbDur > 0 ? ` (${dbDur} mins)` : ''}` 
-                          : (dist && typeof dist === 'object' ? `${dist.distance} km (${dist.duration} mins)` : `${dist} km`)} to next stop
+                          ? `${dbDist} km${dbDur > 0 ? ` (${formatDuration(dbDur)})` : ''}` 
+                          : (dist && typeof dist === 'object' ? `${dist.distance} km (${formatDuration(dist.duration)})` : `${dist} km`)} to next stop
                       </span>
                     </div>
                   );
                 })()}
-                <div className="timeline-card">
+                <div className="timeline-card" style={isHomePlace ? { borderLeft: '3px solid #4ade80' } : {}}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <b style={{ color: 'var(--text-primary)' }}>{place ? place.name : 'Unknown Stop'}</b>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{
+                        width: '22px',
+                        height: '22px',
+                        borderRadius: '50%',
+                        background: isHomePlace ? '#4ade80' : (dayColor || 'var(--accent-primary)'),
+                        color: isHomePlace ? '#000' : '#fff',
+                        fontSize: '0.75rem',
+                        fontWeight: 'bold',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0
+                      }}>
+                        {isHomePlace ? '🏠' : placeNum}
+                      </span>
+                      <b style={{ color: 'var(--text-primary)' }}>
+                        {place ? (isHomePlace ? place.name : place.name) : 'Unknown Stop'}
+                      </b>
+                    </div>
                     {!tripModeActive && (
                       <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(item.id)}>
                         <X size={12} />
                       </button>
                     )}
                   </div>
-                  {place && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{place.category}</span>}
+                  {place && <span style={{ fontSize: '0.75rem', color: isHomePlace ? '#4ade80' : 'var(--text-secondary)' }}>{place.category}</span>}
                   {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{place.notes}</p>}
                 </div>
               </div>

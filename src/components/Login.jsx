@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { KeyRound, User, Lock, Eye, EyeOff } from 'lucide-react';
+import { APP_VERSION } from '../version.js';
 
 export default function Login({ onLoginSuccess }) {
   const [isRegister, setIsRegister] = useState(false);
@@ -168,6 +169,10 @@ export default function Login({ onLoginSuccess }) {
         >
           {isRegister ? 'Already have an account? Sign In' : "Don't have an account? Register"}
         </button>
+
+        <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
+          TravelBuff {APP_VERSION}
+        </div>
       </div>
     </div>
   );

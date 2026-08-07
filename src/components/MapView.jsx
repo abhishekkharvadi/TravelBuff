@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { trackApiCall } from '../utils/apiTracker.js';
+import { getDayColor } from '../utils/dayColors.js';
 
 const loadGoogleMapsScript = (apiKey) => {
   return new Promise((resolve, reject) => {
@@ -59,6 +60,7 @@ export default function MapView({ points = [], drawLine = false }) {
   const googleMapInstanceRef = useRef(null);
   const googleMarkersRef = useRef({});
   const googlePolylinesRef = useRef([]);
+  const tileLayerRef = useRef(null);
   const prevPointsSigRef = useRef('');
 
   const [isGoogleMapsReady, setIsGoogleMapsReady] = useState(false);
@@ -165,9 +167,10 @@ export default function MapView({ points = [], drawLine = false }) {
           // Place or update Google advanced markers
           validPoints.forEach(p => {
              const color = p.dayLabel 
-               ? (dayColors[(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1) % dayColors.length] || '#8b5cf6')
+               ? getDayColor(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1)
                : '#6b7280';
-             const markerLabel = String(p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : getCategoryEmoji(p.category || p.type));
+             const seqVal = p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : (p.sequenceOrder !== undefined && p.sequenceOrder !== null ? p.sequenceOrder : null);
+             const markerLabel = String(seqVal !== null ? seqVal : getCategoryEmoji(p.category || p.type));
              const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${color}; color: #fff; font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border-glass, rgba(255,255,255,0.15)); font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${p.dayLabel}</span>` : '';
 
              const pinContent = document.createElement('div');
@@ -294,11 +297,16 @@ export default function MapView({ points = [], drawLine = false }) {
 
           // Auto-fit Google bounds
           if (validPoints.length > 0 && (hasPointsChanged || isJustInitialized)) {
-            const bounds = new window.google.maps.LatLngBounds();
-            validPoints.forEach(p => {
-              bounds.extend({ lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) });
-            });
-            googleMap.fitBounds(bounds);
+            if (validPoints.length === 1) {
+              googleMap.setCenter({ lat: parseFloat(validPoints[0].latitude), lng: parseFloat(validPoints[0].longitude) });
+              googleMap.setZoom(13);
+            } else {
+              const bounds = new window.google.maps.LatLngBounds();
+              validPoints.forEach(p => {
+                bounds.extend({ lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) });
+              });
+              googleMap.fitBounds(bounds);
+            }
           }
         } catch (initErr) {
           console.error('Google Maps initialization failed, falling back to OSM:', initErr);
@@ -322,12 +330,23 @@ export default function MapView({ points = [], drawLine = false }) {
         const L = window.L;
         if (!L) return;
 
+        const isLightTheme = document.body.classList.contains('light-theme');
+        const tileUrl = isLightTheme 
+          ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
+          : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+
         const map = L.map(mapContainerRef.current).setView([20, 0], 2);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        tileLayerRef.current = L.tileLayer(tileUrl, {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
         }).addTo(map);
 
         mapInstanceRef.current = map;
+      } else if (mapInstanceRef.current && tileLayerRef.current) {
+        const isLightTheme = document.body.classList.contains('light-theme');
+        const tileUrl = isLightTheme 
+          ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
+          : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+        tileLayerRef.current.setUrl(tileUrl);
       }
 
       const map = mapInstanceRef.current;
@@ -358,9 +377,10 @@ export default function MapView({ points = [], drawLine = false }) {
       // Place or update Leaflet markers
       validPoints.forEach(p => {
         const color = p.dayLabel 
-          ? (dayColors[(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1) % dayColors.length] || 'var(--accent-primary, #8b5cf6)')
+          ? getDayColor(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1)
           : '#6b7280';
         const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${color}; color: #fff; font-size: 0.6rem; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border-glass); font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${p.dayLabel}</span>` : '';
+        const leafletSeqVal = p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : (p.sequenceOrder !== undefined && p.sequenceOrder !== null ? p.sequenceOrder : null);
         const markerHtml = `
           <div style="
             background: var(--bg-surface-elevated, #1e1e2c);
@@ -376,7 +396,7 @@ export default function MapView({ points = [], drawLine = false }) {
             box-shadow: 0 4px 10px rgba(0,0,0,0.3);
             position: relative;
           ">
-            ${p.sequenceLabel !== undefined && p.sequenceLabel !== null ? `<span style="font-weight: 800; font-size: 0.9rem; color: var(--text-primary);">${p.sequenceLabel}</span>` : getCategoryEmoji(p.category || p.type)}
+            ${leafletSeqVal !== null ? `<span style="font-weight: 800; font-size: 0.9rem; color: var(--text-primary);">${leafletSeqVal}</span>` : getCategoryEmoji(p.category || p.type)}
             ${dayBadge}
           </div>
         `;
@@ -429,7 +449,7 @@ export default function MapView({ points = [], drawLine = false }) {
           for (const dayKey of Object.keys(dayGroups)) {
             if (dayKey === 'All') continue;
             const sortedDayPoints = dayGroups[dayKey].sort((a, b) => (a.sequenceOrder || 0) - (b.sequenceOrder || 0));
-            const color = dayColors[colorIdx % dayColors.length];
+            const color = getDayColor(colorIdx);
             colorIdx++;
 
             for (let i = 1; i < sortedDayPoints.length; i++) {

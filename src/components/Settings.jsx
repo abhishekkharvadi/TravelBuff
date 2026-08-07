@@ -1,12 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, queueSyncAction, generateUUID, clearLocalDb, populateLocalDb } from '../clientDb.js';
-import { Plus, Trash2, Tag, Compass, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock } from 'lucide-react';
+import { Plus, Trash2, Tag, Compass, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock, Users, Home, MapPin, Search, User, Edit2 } from 'lucide-react';
+import { APP_VERSION } from '../version.js';
 
 export default function SettingsComponent({ token, userId, onLogout, onResumeMarkdown }) {
   // Dexie live queries
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const customCategories = useLiveQuery(() => db.custom_categories.toArray()) || [];
+  const peopleList = useLiveQuery(() => db.people ? db.people.toArray() : Promise.resolve([])) || [];
+  const userAddresses = useLiveQuery(() => db.user_addresses ? db.user_addresses.toArray() : Promise.resolve([])) || [];
 
   // Local State
   const [tagName, setTagName] = useState('');
@@ -55,6 +58,305 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreSummary, setRestoreSummary] = useState(null);
+  const [restoreProgressText, setRestoreProgressText] = useState('');
+  const [resyncingMedia, setResyncingMedia] = useState(false);
+
+  // Admin User Management State
+  const isAdmin = localStorage.getItem('tb_isAdmin') === '1';
+  const [adminUsersList, setAdminUsersList] = useState([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [selectedResetUser, setSelectedResetUser] = useState(null);
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [selectedDeleteUser, setSelectedDeleteUser] = useState(null);
+  const [adminActionLoading, setAdminActionLoading] = useState(false);
+
+  const fetchAdminUsers = async () => {
+    if (!isAdmin) return;
+    setAdminLoading(true);
+    try {
+      const res = await fetch('/api/admin/users', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const usersData = await res.json();
+        setAdminUsersList(usersData);
+      }
+    } catch (e) {
+      console.error('Failed to fetch admin users:', e);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin) {
+      fetchAdminUsers();
+    }
+  }, [isAdmin, token]);
+
+  const handleAdminResetPassword = async (e) => {
+    e.preventDefault();
+    if (!selectedResetUser || !resetNewPassword) return;
+    setAdminActionLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${selectedResetUser.id}/reset-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ newPassword: resetNewPassword })
+      });
+      if (res.ok) {
+        const result = await res.json();
+        alert(result.message || 'Password updated successfully!');
+        setSelectedResetUser(null);
+        setResetNewPassword('');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Reset failed: ${err.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to reset password');
+    } finally {
+      setAdminActionLoading(false);
+    }
+  };
+
+  const handleAdminDeleteUser = async () => {
+    if (!selectedDeleteUser) return;
+    setAdminActionLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${selectedDeleteUser.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const result = await res.json();
+        alert(result.message || 'User and all data deleted successfully!');
+        setSelectedDeleteUser(null);
+        fetchAdminUsers();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Delete failed: ${err.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to delete user');
+    } finally {
+      setAdminActionLoading(false);
+    }
+  };
+
+  // People state & Immich modal state
+  const [personName, setPersonName] = useState('');
+  const [personRelation, setPersonRelation] = useState('Friend');
+  const [customRelation, setCustomRelation] = useState('');
+  const [showImmichPeopleModal, setShowImmichPeopleModal] = useState(false);
+  const [immichPeopleList, setImmichPeopleList] = useState([]);
+  const [immichPeopleLoading, setImmichPeopleLoading] = useState(false);
+  const [selectedImmichPerson, setSelectedImmichPerson] = useState(null);
+  const [immichSearchQuery, setImmichSearchQuery] = useState('');
+
+  // Address state & Geocoding state
+  const [addressLabel, setAddressLabel] = useState('Home');
+  const [addressText, setAddressText] = useState('');
+  const [addressLat, setAddressLat] = useState('');
+  const [addressLon, setAddressLon] = useState('');
+  const [isDefaultHome, setIsDefaultHome] = useState(false);
+  const [addressSearchResults, setAddressSearchResults] = useState([]);
+  const [addressSearching, setAddressSearching] = useState(false);
+  const [editingAddressId, setEditingAddressId] = useState(null);
+
+  const addressDropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (addressDropdownRef.current && !addressDropdownRef.current.contains(e.target)) {
+        setAddressSearchResults([]);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, []);
+
+  const parseCoordinateString = (str) => {
+    if (!str || typeof str !== 'string') return null;
+    const regex = /^\s*(-?\d+(?:\.\d+)?)\s*°?\s*[NS]?\s*,\s*(-?\d+(?:\.\d+)?)\s*°?\s*[EW]?\s*$/i;
+    const match = str.trim().match(regex);
+    if (match) {
+      return { lat: match[1], lon: match[2] };
+    }
+    return null;
+  };
+
+  // Handler: Add or update Person
+  const handleAddPerson = async (e) => {
+    e.preventDefault();
+    if (!personName.trim()) return;
+    const finalRelation = personRelation === 'Custom' ? (customRelation.trim() || 'Companion') : personRelation;
+    const newPerson = {
+      id: generateUUID(),
+      name: personName.trim(),
+      relation: finalRelation,
+      immich_person_id: selectedImmichPerson ? selectedImmichPerson.id : null,
+      immich_person_name: selectedImmichPerson ? selectedImmichPerson.name : null,
+      notes: ''
+    };
+    await queueSyncAction('people', 'insert', newPerson);
+    setPersonName('');
+    setPersonRelation('Friend');
+    setCustomRelation('');
+    setSelectedImmichPerson(null);
+  };
+
+  const handleDeletePerson = async (id) => {
+    await queueSyncAction('people', 'delete', { id });
+  };
+
+  // Handler: Fetch Immich People
+  const handleOpenImmichPeopleModal = async () => {
+    setShowImmichPeopleModal(true);
+    setImmichPeopleLoading(true);
+    try {
+      const res = await fetch('/api/immich/people', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setImmichPeopleList(Array.isArray(data) ? data : (data.people || []));
+      }
+    } catch (e) {
+      console.warn('Failed to fetch Immich people:', e);
+    } finally {
+      setImmichPeopleLoading(false);
+    }
+  };
+
+  // Handler: Edit Saved Address
+  const handleEditAddress = (addr) => {
+    setEditingAddressId(addr.id);
+    setAddressLabel(addr.label || 'Home');
+    setAddressText(addr.address || '');
+    setAddressLat(addr.latitude !== null && addr.latitude !== undefined ? addr.latitude.toString() : '');
+    setAddressLon(addr.longitude !== null && addr.longitude !== undefined ? addr.longitude.toString() : '');
+    setIsDefaultHome(addr.is_default === 1);
+  };
+
+  const handleCancelEditAddress = () => {
+    setEditingAddressId(null);
+    setAddressLabel('Home');
+    setAddressText('');
+    setAddressLat('');
+    setAddressLon('');
+    setIsDefaultHome(false);
+    setAddressSearchResults([]);
+  };
+
+  // Handler: Add or update Saved Address
+  const handleAddAddress = async (e) => {
+    e.preventDefault();
+    if (!addressLabel.trim()) return;
+
+    if (editingAddressId) {
+      const updated = {
+        id: editingAddressId,
+        label: addressLabel.trim(),
+        address: addressText.trim(),
+        latitude: addressLat ? parseFloat(addressLat) : null,
+        longitude: addressLon ? parseFloat(addressLon) : null,
+        is_default: isDefaultHome ? 1 : 0
+      };
+      await queueSyncAction('user_addresses', 'update', updated);
+      handleCancelEditAddress();
+    } else {
+      const newAddr = {
+        id: generateUUID(),
+        label: addressLabel.trim(),
+        address: addressText.trim(),
+        latitude: addressLat ? parseFloat(addressLat) : null,
+        longitude: addressLon ? parseFloat(addressLon) : null,
+        is_default: isDefaultHome ? 1 : (userAddresses.length === 0 ? 1 : 0)
+      };
+      await queueSyncAction('user_addresses', 'insert', newAddr);
+      setAddressLabel('Home');
+      setAddressText('');
+      setAddressLat('');
+      setAddressLon('');
+      setIsDefaultHome(false);
+      setAddressSearchResults([]);
+    }
+  };
+
+  const handleDeleteAddress = async (id) => {
+    if (editingAddressId === id) handleCancelEditAddress();
+    await queueSyncAction('user_addresses', 'delete', { id });
+  };
+
+  // Address Geocoding Search
+  const fetchNominatim = async (query) => {
+    try {
+      const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(query)}&limit=5`;
+      const res = await fetch(nomUrl);
+      if (res.ok) {
+        const data = await res.json();
+        setAddressSearchResults(Array.isArray(data) ? data : []);
+      }
+    } catch (e) {
+      console.warn('Address search failed:', e);
+    } finally {
+      setAddressSearching(false);
+    }
+  };
+
+  const handleSearchAddressQuery = async (query) => {
+    setAddressText(query);
+    const parsedCoords = parseCoordinateString(query);
+    if (parsedCoords) {
+      setAddressLat(parsedCoords.lat);
+      setAddressLon(parsedCoords.lon);
+      setAddressSearchResults([]);
+      return;
+    }
+
+    if (!query || query.length < 3) {
+      setAddressSearchResults([]);
+      return;
+    }
+
+    setAddressSearching(true);
+    const gmapsKey = localStorage.getItem('google_maps_api_key');
+    const gmapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+    if (gmapsKey && gmapsEnabled && typeof window !== 'undefined' && window.google && window.google.maps && window.google.maps.Geocoder) {
+      try {
+        const geocoder = new window.google.maps.Geocoder();
+        geocoder.geocode({ address: query }, (results, status) => {
+          if (status === 'OK' && results && results.length > 0) {
+            const mapped = results.slice(0, 5).map(r => ({
+              display_name: r.formatted_address,
+              lat: r.geometry.location.lat().toString(),
+              lon: r.geometry.location.lng().toString()
+            }));
+            setAddressSearchResults(mapped);
+          } else {
+            fetchNominatim(query);
+          }
+          setAddressSearching(false);
+        });
+        return;
+      } catch (err) {
+        console.warn('Google Maps Geocoder error:', err);
+      }
+    }
+
+    await fetchNominatim(query);
+  };
 
   // Load backend configurations
   useEffect(() => {
@@ -247,12 +549,14 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
   const handleDownloadBackup = async () => {
     setBackupLoading(true);
     try {
-      const res = await fetch('/api/backup/export');
+      const res = await fetch('/api/backup/export', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (res.ok) {
         const backupData = await res.json();
-        // Inject client-side localStorage settings
+        // Inject non-sensitive client-side localStorage settings (API keys excluded for security)
         backupData.settings_localstorage = {
-          google_maps_api_key: localStorage.getItem('google_maps_api_key') || '',
+          theme: localStorage.getItem('theme') || 'system',
           api_call_logs: localStorage.getItem('api_call_logs') || '{}'
         };
         const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -274,18 +578,19 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
     }
   };
 
-  // Backup Restore
+  // Two-Phase Chunked Backup Restore
   const handleRestoreBackup = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (!window.confirm('Are you sure you want to restore this backup? Conflicting records will be duplicated rather than replaced.')) {
+    if (!window.confirm('Are you sure you want to restore this backup? Database records will be merged cleanly.')) {
       e.target.value = '';
       return;
     }
 
     setRestoreLoading(true);
     setRestoreSummary(null);
+    setRestoreProgressText('Phase 1/2: Reading backup JSON file...');
 
     try {
       const reader = new FileReader();
@@ -297,50 +602,107 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
       const text = await payloadPromise;
       const backupData = JSON.parse(text);
 
-      // Restore client-side localStorage settings
+      // Restore non-sensitive client-side localStorage settings
       if (backupData.settings_localstorage) {
-        if (backupData.settings_localstorage.google_maps_api_key !== undefined) {
-          localStorage.setItem('google_maps_api_key', backupData.settings_localstorage.google_maps_api_key);
+        if (backupData.settings_localstorage.theme !== undefined) {
+          localStorage.setItem('theme', backupData.settings_localstorage.theme);
         }
         if (backupData.settings_localstorage.api_call_logs !== undefined) {
           localStorage.setItem('api_call_logs', backupData.settings_localstorage.api_call_logs);
         }
       }
 
-      const res = await fetch('/api/backup/restore', {
+      setRestoreProgressText('Phase 1/2: Restoring database records (trips, locations, notes, expenses)...');
+
+      // Phase 1: Post metadata (database records)
+      const metaRes = await fetch('/api/backup/restore/metadata', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           data: backupData.data,
-          files: backupData.files,
           currentUserId: userId
         })
       });
 
-      if (res.ok) {
-        const result = await res.json();
-        setRestoreSummary(result);
-        
-        // Sync the client immediately to populate the new database tables
-        alert('Restore finished on server! Re-synchronizing local database...');
-        
-        await clearLocalDb();
-        await populateLocalDb(token);
-        
-        alert('Local database sync complete!');
-        window.location.reload(); // Reload page to pick up restored settings
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        alert(`Restore failed: ${errData.error || 'Unknown server error'}`);
+      if (!metaRes.ok) {
+        const errData = await metaRes.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to restore database metadata');
       }
+
+      const metaResult = await metaRes.json();
+      let totalFilesProcessed = 0;
+      let totalFilesSkipped = 0;
+      const mediaErrors = [];
+
+      // Phase 2: Chunked media batch upload
+      const filesList = backupData.files || [];
+      if (filesList.length > 0) {
+        const CHUNK_SIZE = 10;
+        const totalChunks = Math.ceil(filesList.length / CHUNK_SIZE);
+
+        for (let i = 0; i < filesList.length; i += CHUNK_SIZE) {
+          const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
+          const chunkFiles = filesList.slice(i, i + CHUNK_SIZE);
+          setRestoreProgressText(`Phase 2/2: Restoring uploaded media files (${Math.min(i + CHUNK_SIZE, filesList.length)} / ${filesList.length} files - Batch ${chunkNum}/${totalChunks})...`);
+
+          try {
+            const chunkRes = await fetch('/api/backup/restore/media-chunk', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ files: chunkFiles })
+            });
+
+            if (chunkRes.ok) {
+              const chunkData = await chunkRes.json();
+              totalFilesProcessed += (chunkData.files_processed || 0);
+              totalFilesSkipped += (chunkData.files_skipped || 0);
+              if (chunkData.errors && chunkData.errors.length > 0) {
+                mediaErrors.push(...chunkData.errors);
+              }
+            }
+          } catch (chunkErr) {
+            console.warn(`[Client Restore Chunk Error] Batch ${chunkNum} failed:`, chunkErr);
+          }
+        }
+      }
+
+      // Sync IndexedDB client DB
+      setRestoreProgressText('Finalizing local client database synchronization...');
+      await clearLocalDb();
+      await populateLocalDb(token);
+
+      setRestoreSummary({
+        restored_count: metaResult.restored_count || 0,
+        duplicated_count: metaResult.duplicated_count || 0,
+        warnings: metaResult.warnings || [],
+        files_processed: totalFilesProcessed,
+        files_skipped: totalFilesSkipped,
+        media_errors: mediaErrors
+      });
+
     } catch (err) {
       console.error(err);
-      alert('Error parsing or restoring backup file.');
+      alert(`Error restoring backup: ${err.message}`);
     } finally {
       setRestoreLoading(false);
+      setRestoreProgressText('');
       e.target.value = '';
+    }
+  };
+
+  // Re-Sync Pending Media & Avatars
+  const handleResyncMedia = async () => {
+    setResyncingMedia(true);
+    try {
+      await clearLocalDb();
+      await populateLocalDb(token);
+      alert('Media & companion avatars re-synchronized successfully!');
+      window.location.reload();
+    } catch (e) {
+      console.error(e);
+      alert('Failed to re-sync media.');
+    } finally {
+      setResyncingMedia(false);
     }
   };
 
@@ -880,6 +1242,13 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
               <h3 style={{ margin: 0 }}>Backup & Restore Data</h3>
             </div>
 
+            <div style={{ padding: '10px 14px', background: 'rgba(234, 179, 8, 0.12)', border: '1px solid rgba(234, 179, 8, 0.3)', borderRadius: '6px', fontSize: '0.8rem', color: 'var(--text-primary)', marginBottom: '16px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+              <span style={{ fontSize: '1rem' }}>🔒</span>
+              <div>
+                <strong>Security Notice:</strong> Private API keys (such as your <strong>Immich API Key</strong> and <strong>Google Maps API Key</strong>) are strictly <em>excluded</em> from backup files for privacy and security. Please re-enter your API keys manually in Settings after restoring a backup.
+              </div>
+            </div>
+
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
               Export all database tables and uploaded media files into a single portable backup file, or merge/restore database values from a previous JSON export.
             </p>
@@ -912,20 +1281,431 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                 {restoreLoading && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', color: 'var(--accent-secondary)', fontSize: '0.85rem' }}>
                     <RefreshCw size={14} className="sync-spinner" />
-                    <span>Restoring data & writing uploads... Please do not navigate away.</span>
+                    <span>{restoreProgressText || 'Restoring data & writing uploads... Please do not navigate away.'}</span>
                   </div>
                 )}
                 {restoreSummary && (
-                  <div style={{ background: 'var(--success-glow)', color: 'var(--success)', border: '1px solid rgba(16,185,129,0.3)', padding: '12px', borderRadius: 'var(--radius-sm)', marginTop: '16px', fontSize: '0.85rem' }}>
-                    <strong>Restore completed successfully!</strong>
-                    <ul style={{ margin: '8px 0 0 16px', padding: 0 }}>
-                      <li>Restored rows: {restoreSummary.restored_count}</li>
-                      <li>Duplicated/renamed items: {restoreSummary.duplicated_count}</li>
-                    </ul>
+                  <div style={{ background: 'var(--bg-app)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', padding: '16px', borderRadius: 'var(--radius-md)', marginTop: '16px', fontSize: '0.85rem' }}>
+                    <div style={{ fontWeight: 'bold', fontSize: '0.95rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                      <Check size={18} /> Restore Completed Successfully!
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', margin: '10px 0' }}>
+                      <div style={{ background: 'var(--bg-surface)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Restored Records</div>
+                        <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{restoreSummary.restored_count}</div>
+                      </div>
+                      <div style={{ background: 'var(--bg-surface)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Media Files Processed</div>
+                        <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{restoreSummary.files_processed || 0}</div>
+                      </div>
+                      {restoreSummary.files_skipped > 0 && (
+                        <div style={{ background: 'var(--bg-surface)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Files Skipped (Existing)</div>
+                          <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#38bdf8' }}>{restoreSummary.files_skipped}</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Configuration Warnings / Pending Items */}
+                    {restoreSummary.warnings && restoreSummary.warnings.length > 0 && (
+                      <div style={{ marginTop: '12px', padding: '10px 12px', background: 'rgba(234, 179, 8, 0.12)', border: '1px solid rgba(234, 179, 8, 0.3)', borderRadius: '6px', fontSize: '0.8rem' }}>
+                        <strong style={{ color: '#eab308' }}>⚠️ Configuration Warnings:</strong>
+                        <ul style={{ margin: '6px 0 0 16px', padding: 0 }}>
+                          {restoreSummary.warnings.map((warn, idx) => (
+                            <li key={idx} style={{ marginTop: '2px' }}>{warn}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Re-Sync Media Button */}
+                    <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+                      <button 
+                        type="button" 
+                        className="btn btn-secondary" 
+                        onClick={handleResyncMedia}
+                        disabled={resyncingMedia}
+                        style={{ height: '32px', padding: '0 10px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      >
+                        <RefreshCw size={13} className={resyncingMedia ? "sync-spinner" : ""} />
+                        <span>{resyncingMedia ? 'Re-synchronizing...' : '🔄 Re-Sync Pending Media & Avatars'}</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
             </div>
+          </div>
+
+          {/* SECTION 4: ADMIN USER MANAGEMENT (Only for Admin users) */}
+          {isAdmin && (
+            <div style={{ background: 'var(--bg-surface)', border: '1px solid rgba(139, 92, 246, 0.3)', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Users size={22} style={{ color: '#a855f7' }} />
+                  <h3 style={{ margin: 0 }}>User Management & Administration</h3>
+                </div>
+                <span style={{ background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.4)', padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                  ★ Admin Only
+                </span>
+              </div>
+
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                Manage registered user accounts, reset passwords, or permanently remove users and all their associated travel data from this server.
+              </p>
+
+              {adminLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem', padding: '12px 0' }}>
+                  <RefreshCw size={14} className="sync-spinner" />
+                  <span>Loading user registry...</span>
+                </div>
+              ) : (
+                <div style={{ border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-app)', borderBottom: '1px solid var(--border-glass)', textAlign: 'left', color: 'var(--text-secondary)' }}>
+                        <th style={{ padding: '10px 14px' }}>User</th>
+                        <th style={{ padding: '10px 14px' }}>Role</th>
+                        <th style={{ padding: '10px 14px' }}>Joined Date</th>
+                        <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminUsersList.map(u => {
+                        const isCurrentAccount = (u.id === userId);
+                        return (
+                          <tr key={u.id} style={{ borderBottom: '1px solid var(--border-glass)', background: isCurrentAccount ? 'rgba(168, 85, 247, 0.05)' : 'transparent' }}>
+                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <User size={16} style={{ color: u.is_admin ? '#c084fc' : 'var(--text-secondary)' }} />
+                                <span>{u.username}</span>
+                                {isCurrentAccount && (
+                                  <span style={{ fontSize: '0.7rem', color: '#4ade80', background: 'rgba(74,222,128,0.15)', padding: '1px 6px', borderRadius: '4px' }}>
+                                    (You)
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td style={{ padding: '12px 14px' }}>
+                              {u.is_admin ? (
+                                <span style={{ color: '#c084fc', fontWeight: 'bold', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  ★ Admin
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>Standard User</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                              {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
+                            </td>
+                            <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                                <button
+                                  type="button"
+                                  className="btn-icon"
+                                  title="Reset Password"
+                                  onClick={() => { setSelectedResetUser(u); setResetNewPassword(''); }}
+                                  style={{ padding: '6px', color: '#c084fc', border: '1px solid rgba(192, 132, 252, 0.3)', background: 'rgba(192, 132, 252, 0.1)', borderRadius: '6px', cursor: 'pointer' }}
+                                >
+                                  <Key size={14} />
+                                </button>
+                                {!isCurrentAccount && (
+                                  <button
+                                    type="button"
+                                    className="btn-icon"
+                                    title="Delete User"
+                                    onClick={() => setSelectedDeleteUser(u)}
+                                    style={{ padding: '6px', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '6px', cursor: 'pointer' }}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ADMIN RESET PASSWORD MODAL */}
+          {selectedResetUser && (
+            <div className="modal-overlay" style={{ zIndex: 1000 }}>
+              <div className="modal-container" style={{ maxWidth: '420px', padding: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem' }}>
+                    <Key size={18} style={{ color: '#c084fc' }} /> Reset Password for "{selectedResetUser.username}"
+                  </h3>
+                  <button type="button" className="btn-icon" onClick={() => setSelectedResetUser(null)}>
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleAdminResetPassword}>
+                  <div className="form-group" style={{ marginBottom: '20px' }}>
+                    <label style={{ fontSize: '0.85rem', marginBottom: '6px', display: 'block' }}>New Password</label>
+                    <input
+                      type="password"
+                      className="form-control"
+                      placeholder="Enter new password (min 4 chars)"
+                      value={resetNewPassword}
+                      onChange={(e) => setResetNewPassword(e.target.value)}
+                      required
+                      minLength={4}
+                      autoFocus
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                    <button type="button" className="btn btn-secondary" onClick={() => setSelectedResetUser(null)}>
+                      Cancel
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={adminActionLoading}>
+                      {adminActionLoading ? 'Updating...' : 'Save New Password'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* PERMANENT DATA DELETION WARNING MODAL */}
+          {selectedDeleteUser && (
+            <div className="modal-overlay" style={{ zIndex: 1000 }}>
+              <div className="modal-container" style={{ maxWidth: '480px', padding: '24px', border: '1px solid rgba(239, 68, 68, 0.5)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h3 style={{ margin: 0, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem' }}>
+                    <Trash2 size={20} /> Permanent Data Deletion Warning
+                  </h3>
+                  <button type="button" className="btn-icon" onClick={() => setSelectedDeleteUser(null)}>
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '14px', borderRadius: '6px', color: '#f87171', fontSize: '0.85rem', marginBottom: '20px' }}>
+                  <strong>⚠️ CAUTION: Irreversible Action</strong>
+                  <p style={{ margin: '8px 0 0 0', lineHeight: '1.4' }}>
+                    Are you sure you want to permanently delete user account <strong>"{selectedDeleteUser.username}"</strong>?
+                  </p>
+                  <ul style={{ margin: '8px 0 0 16px', padding: 0 }}>
+                    <li>All saved locations, places & custom folders</li>
+                    <li>All trips, daily itineraries, reservations & expenses</li>
+                    <li>All travel guides, saved markdowns & AI imports</li>
+                    <li>All companion profiles, home addresses & settings</li>
+                    <li>All uploaded photos, receipts & document attachments</li>
+                  </ul>
+                  <p style={{ margin: '8px 0 0 0', fontWeight: 'bold' }}>
+                    This operation will delete all database records and disk files. It CANNOT be undone!
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setSelectedDeleteUser(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={handleAdminDeleteUser}
+                    disabled={adminActionLoading}
+                    style={{ background: '#ef4444', color: '#fff' }}
+                  >
+                    {adminActionLoading ? 'Deleting Data...' : '🔴 Delete User & Wipe All Data'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SAVED ADDRESSES & HOMES CARD */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Home size={22} style={{ color: 'var(--accent-primary-hover)' }} />
+                <h3 style={{ margin: 0 }}>Saved Home Addresses</h3>
+              </div>
+            </div>
+
+            {/* Address List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px', maxHeight: '240px', overflowY: 'auto' }}>
+              {userAddresses.length === 0 ? (
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0, fontStyle: 'italic' }}>
+                  No home addresses added. Add your home, office, or secondary address below to calculate travel start & return times for trips.
+                </p>
+              ) : (
+                userAddresses.map(addr => (
+                  <div key={addr.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', padding: '10px 12px', borderRadius: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flexGrow: 1 }}>
+                      <MapPin size={18} style={{ color: addr.is_default ? '#4ade80' : 'var(--text-secondary)', flexShrink: 0 }} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {addr.label}
+                          {addr.is_default === 1 && (
+                            <span style={{ backgroundColor: 'rgba(74, 222, 128, 0.2)', color: '#4ade80', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                              ★ Default Home
+                            </span>
+                          )}
+                        </div>
+                        {addr.address && <p style={{ margin: '2px 0 0 0', fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{addr.address}</p>}
+                        {(addr.latitude && addr.longitude) && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            📍 Coords: {addr.latitude.toFixed(4)}, {addr.longitude.toFixed(4)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, marginLeft: '8px' }}>
+                      <button className="photo-action-btn" onClick={() => handleEditAddress(addr)} title="Edit address">
+                        <Edit2 size={14} />
+                      </button>
+                      <button className="photo-action-btn" onClick={() => handleDeleteAddress(addr.id)} title="Delete address">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Form to add or edit address */}
+            <form onSubmit={handleAddAddress} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem' }}>Address Label Name</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Primary Home, Office, Vacation House" 
+                    value={addressLabel} 
+                    onChange={(e) => setAddressLabel(e.target.value)} 
+                    required 
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer', marginBottom: '10px' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={isDefaultHome} 
+                      onChange={(e) => setIsDefaultHome(e.target.checked)} 
+                      style={{ accentColor: 'var(--accent-primary)' }}
+                    />
+                    Set Default Home
+                  </label>
+                </div>
+              </div>
+
+              {/* Searchable Address Input with Geocoding Dropdown */}
+              <div style={{ position: 'relative' }} ref={addressDropdownRef}>
+                <label style={{ fontSize: '0.75rem' }}>Search Address or Paste Coords (Auto-fill)</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  placeholder="Type address, city, or paste 'lat, lon'..." 
+                  value={addressText} 
+                  onChange={(e) => handleSearchAddressQuery(e.target.value)} 
+                />
+                {addressSearching && (
+                  <span style={{ position: 'absolute', right: '10px', top: '32px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Searching...
+                  </span>
+                )}
+                {addressSearchResults.length > 0 && (
+                  <div style={{ 
+                    position: 'absolute', 
+                    top: '100%', 
+                    left: 0, 
+                    right: 0, 
+                    background: 'var(--bg-surface-elevated)', 
+                    border: '1px solid var(--border-glass)', 
+                    borderRadius: '6px', 
+                    zIndex: 1000, 
+                    maxHeight: '200px', 
+                    overflowY: 'auto',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+                    color: 'var(--text-primary)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 12px', borderBottom: '1px solid var(--border-glass)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      <span>Search Suggestions ({addressSearchResults.length})</span>
+                      <X size={14} style={{ cursor: 'pointer' }} onClick={() => setAddressSearchResults([])} title="Close" />
+                    </div>
+                    {addressSearchResults.map((res, idx) => (
+                      <div 
+                        key={idx} 
+                        onClick={() => {
+                          setAddressText(res.display_name);
+                          setAddressLat(res.lat);
+                          setAddressLon(res.lon);
+                          setAddressSearchResults([]);
+                        }}
+                        style={{ padding: '8px 12px', fontSize: '0.78rem', borderBottom: '1px solid var(--border-glass)', cursor: 'pointer', color: 'var(--text-primary)' }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-app)'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
+                        📍 {res.display_name}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Manual Coordinate Inputs */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem' }}>Latitude (Decimal or paste 'lat, lon')</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. 40.7128" 
+                    value={addressLat} 
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const parsed = parseCoordinateString(val);
+                      if (parsed) {
+                        setAddressLat(parsed.lat);
+                        setAddressLon(parsed.lon);
+                      } else {
+                        setAddressLat(val);
+                      }
+                    }} 
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem' }}>Longitude (Decimal or paste 'lat, lon')</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. -74.0060" 
+                    value={addressLon} 
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const parsed = parseCoordinateString(val);
+                      if (parsed) {
+                        setAddressLat(parsed.lat);
+                        setAddressLon(parsed.lon);
+                      } else {
+                        setAddressLon(val);
+                      }
+                    }} 
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
+                  {editingAddressId ? '✓ Update Address' : '+ Save Address'}
+                </button>
+                {editingAddressId && (
+                  <button type="button" className="btn btn-secondary" onClick={handleCancelEditAddress} style={{ width: 'auto' }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
           </div>
 
         </div>
@@ -1004,8 +1784,192 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
             </form>
           </div>
 
+          {/* PEOPLE & COMPANIONS CARD */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Users size={22} style={{ color: 'var(--accent-primary-hover)' }} />
+                <h3 style={{ margin: 0 }}>People & Companions</h3>
+              </div>
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                onClick={handleOpenImmichPeopleModal}
+                style={{ padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '6px', width: 'auto' }}
+              >
+                <RefreshCw size={14} /> Import from Immich
+              </button>
+            </div>
+
+            {/* People List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px', maxHeight: '240px', overflowY: 'auto' }}>
+              {peopleList.length === 0 ? (
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0, fontStyle: 'italic' }}>
+                  No people added yet. Add family or travel companions below or import directly from Immich.
+                </p>
+              ) : (
+                peopleList.map(p => (
+                  <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', padding: '8px 12px', borderRadius: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {p.immich_person_id ? (
+                        <img
+                          src={`/api/immich/person/thumbnail/${p.immich_person_id}?token=${encodeURIComponent(token || localStorage.getItem('token') || '')}`}
+                          alt={p.name}
+                          style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)' }}
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                      ) : (
+                        <span style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(139, 92, 246, 0.2)', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                          {p.name.charAt(0).toUpperCase()}
+                        </span>
+                      )}
+                      <div>
+                        <div style={{ fontWeight: 'bold', fontSize: '0.88rem' }}>{p.name}</div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                          Relation: <span style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>{p.relation}</span>
+                          {p.immich_person_name && <span style={{ marginLeft: '6px', opacity: 0.8 }}>• Immich: {p.immich_person_name}</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <button className="photo-action-btn" onClick={() => handleDeletePerson(p.id)} title="Delete person">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Form to add person */}
+            <form onSubmit={handleAddPerson} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 2 }}>
+                  <label style={{ fontSize: '0.75rem' }}>Name</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Jane Doe" 
+                    value={personName} 
+                    onChange={(e) => setPersonName(e.target.value)} 
+                    required 
+                  />
+                </div>
+                <div style={{ flex: 1.5 }}>
+                  <label style={{ fontSize: '0.75rem' }}>Relation</label>
+                  <select 
+                    className="form-control" 
+                    value={personRelation} 
+                    onChange={(e) => setPersonRelation(e.target.value)}
+                  >
+                    <option value="Spouse">Spouse</option>
+                    <option value="Partner">Partner</option>
+                    <option value="Child">Child</option>
+                    <option value="Parent">Parent</option>
+                    <option value="Sibling">Sibling</option>
+                    <option value="Friend">Friend</option>
+                    <option value="Colleague">Colleague</option>
+                    <option value="Self">Self</option>
+                    <option value="Custom">Custom...</option>
+                  </select>
+                </div>
+              </div>
+
+              {personRelation === 'Custom' && (
+                <div>
+                  <label style={{ fontSize: '0.75rem' }}>Custom Relation</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Cousin, Guide" 
+                    value={customRelation} 
+                    onChange={(e) => setCustomRelation(e.target.value)} 
+                    required 
+                  />
+                </div>
+              )}
+
+              {selectedImmichPerson && (
+                <div style={{ fontSize: '0.75rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Check size={14} /> Linked to Immich Person: <strong>{selectedImmichPerson.name}</strong>
+                </div>
+              )}
+
+              <button type="submit" className="btn btn-primary" style={{ marginTop: '4px' }}>
+                + Add Person
+              </button>
+            </form>
+          </div>
+
         </div>
       </div>
+
+      {/* IMMICH PEOPLE SEARCH & IMPORT MODAL */}
+      {showImmichPeopleModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
+          padding: '20px'
+        }}>
+          <div className="login-card" style={{ maxWidth: '540px', width: '100%', padding: '24px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Users size={20} style={{ color: 'var(--accent-primary)' }} /> Import People from Immich
+              </h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowImmichPeopleModal(false)} />
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '12px' }}>
+              <input 
+                type="text" 
+                className="form-control" 
+                placeholder="Filter Immich people by name..." 
+                value={immichSearchQuery} 
+                onChange={(e) => setImmichSearchQuery(e.target.value)} 
+              />
+            </div>
+
+            <div style={{ flexGrow: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', padding: '4px' }}>
+              {immichPeopleLoading ? (
+                <div style={{ gridColumn: '1 / -1', padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                  <RefreshCw size={24} className="sync-spinner" style={{ marginBottom: '8px' }} />
+                  <p style={{ margin: 0 }}>Connecting to Immich server & fetching recognized people...</p>
+                </div>
+              ) : immichPeopleList.length === 0 ? (
+                <div style={{ gridColumn: '1 / -1', padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <User size={32} style={{ marginBottom: '8px' }} />
+                  <p style={{ margin: 0 }}>No named people found in your Immich library. Make sure face recognition is enabled in Immich.</p>
+                </div>
+              ) : (
+                immichPeopleList
+                  .filter(p => (p.name || '').toLowerCase().includes(immichSearchQuery.toLowerCase()))
+                  .map(p => (
+                    <div 
+                      key={p.id} 
+                      onClick={() => {
+                        setPersonName(p.name || 'Unnamed Person');
+                        setSelectedImmichPerson(p);
+                        setShowImmichPeopleModal(false);
+                      }}
+                      style={{
+                        background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', textAlign: 'center'
+                      }}
+                    >
+                      <img 
+                        src={`/api/immich/person/thumbnail/${p.id}?token=${encodeURIComponent(token || localStorage.getItem('token') || '')}`} 
+                        alt={p.name} 
+                        style={{ width: '54px', height: '54px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--accent-primary)' }} 
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                      />
+                      <span style={{ fontSize: '0.82rem', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>
+                        {p.name || 'Unnamed'}
+                      </span>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SAVED GUIDES SECTION */}
       <div style={{ marginTop: '40px', background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
@@ -1040,7 +2004,7 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                     <input 
                       type="text" 
                       className="form-control"
-                      style={{ fontWeight: '600', fontSize: '1rem', background: '#0f0f16', border: '1px solid var(--border)', padding: '4px', flexGrow: 1 }}
+                      style={{ fontWeight: '600', fontSize: '1rem', background: 'var(--bg-app)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', padding: '4px', flexGrow: 1 }}
                       value={guide.name}
                       autoFocus
                       onChange={async (e) => {
@@ -1054,7 +2018,7 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                       onClick={(e) => e.stopPropagation()}
                     />
                   ) : (
-                    <h4 style={{ margin: 0, fontWeight: '600', fontSize: '1rem', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '180px' }}>
+                    <h4 style={{ margin: 0, fontWeight: '600', fontSize: '1rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '180px' }}>
                       {guide.name}
                     </h4>
                   )}
@@ -1082,7 +2046,7 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                           position: 'absolute',
                           right: 0,
                           top: '24px',
-                          backgroundColor: '#191924',
+                          backgroundColor: 'var(--bg-surface-elevated)',
                           border: '1px solid var(--border-glass)',
                           borderRadius: '4px',
                           boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
@@ -1090,7 +2054,7 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                           minWidth: '100px'
                         }}>
                           <button 
-                            style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '0.8rem' }}
+                            style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '0.8rem' }}
                             onClick={() => {
                               setRenamingId(guide.id);
                               setActiveMenuId(null);
@@ -1221,6 +2185,10 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div style={{ textAlign: 'center', margin: '36px 0 16px 0', fontSize: '0.75rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
+        TravelBuff {APP_VERSION} • Offline-First Self-Hosted Travel Companion
       </div>
     </div>
   );

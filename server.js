@@ -21,7 +21,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'travelbuff-super-secret-key-12345'
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '500mb' }));
 
 // Wrap express with HTTP server
 const server = http.createServer(app);
@@ -121,6 +121,15 @@ function authenticateToken(req, res, next) {
   });
 }
 
+function authenticateAdminToken(req, res, next) {
+  authenticateToken(req, res, () => {
+    if (!req.user || !req.user.is_admin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+  });
+}
+
 // ==========================================
 // Auth API
 // ==========================================
@@ -136,13 +145,17 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Username already taken' });
     }
 
+    // Auto-assign admin role (is_admin = 1) if this is the very first user in database
+    const userCount = await db.get('SELECT COUNT(*) as count FROM users');
+    const isAdmin = userCount.count === 0 ? 1 : 0;
+
     const userId = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 10);
     const owntracksKey = crypto.randomBytes(16).toString('hex');
 
     await db.run(
-      'INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)',
-      [userId, username, hash]
+      'INSERT INTO users (id, username, password_hash, is_admin) VALUES (?, ?, ?, ?)',
+      [userId, username, hash, isAdmin]
     );
 
     await db.run(
@@ -153,8 +166,8 @@ app.post('/api/auth/register', async (req, res) => {
     await seedDefaultTags(userId);
     await seedDefaultCategories(userId);
 
-    const token = jwt.sign({ id: userId, username }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ token, username, userId, owntracksKey });
+    const token = jwt.sign({ id: userId, username, is_admin: isAdmin }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, username, userId, isAdmin, owntracksKey });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -181,12 +194,14 @@ app.post('/api/auth/login', async (req, res) => {
     
     // Set longer expiration for trusted devices, e.g. 10 years, else 1 day
     const expiresIn = trustDevice ? '3650d' : '1d';
-    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn });
+    const isAdmin = user.is_admin || 0;
+    const token = jwt.sign({ id: user.id, username: user.username, is_admin: isAdmin }, JWT_SECRET, { expiresIn });
     
     res.json({ 
       token, 
       username: user.username, 
       userId: user.id,
+      isAdmin,
       profilePicture: user.profile_picture,
       owntracksKey: config ? config.owntracks_key : null
     });
@@ -198,8 +213,130 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const config = await db.get('SELECT * FROM user_configs WHERE user_id = ?', [req.user.id]);
-    const user = await db.get('SELECT profile_picture FROM users WHERE id = ?', [req.user.id]);
-    res.json({ id: req.user.id, username: req.user.username, config, profilePicture: user ? user.profile_picture : null });
+    const user = await db.get('SELECT profile_picture, is_admin FROM users WHERE id = ?', [req.user.id]);
+    res.json({ 
+      id: req.user.id, 
+      username: req.user.username, 
+      isAdmin: user ? (user.is_admin || 0) : 0, 
+      config, 
+      profilePicture: user ? user.profile_picture : null 
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// Admin User Management API
+// ==========================================
+app.get('/api/admin/users', authenticateAdminToken, async (req, res) => {
+  try {
+    const users = await db.all('SELECT id, username, is_admin, profile_picture, created_at FROM users ORDER BY created_at ASC');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users/:userId/reset-password', authenticateAdminToken, async (req, res) => {
+  const { userId } = req.params;
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.length < 4) {
+    return res.status(400).json({ error: 'Password must be at least 4 characters long' });
+  }
+  try {
+    const targetUser = await db.get('SELECT id, username FROM users WHERE id = ?', [userId]);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, userId]);
+    res.json({ success: true, message: `Password for "${targetUser.username}" updated successfully.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/users/:userId', authenticateAdminToken, async (req, res) => {
+  const { userId } = req.params;
+  if (userId === req.user.id) {
+    return res.status(400).json({ error: 'You cannot delete your own active admin account' });
+  }
+
+  try {
+    const targetUser = await db.get('SELECT id, username FROM users WHERE id = ?', [userId]);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // 1. Collect user's location & place IDs
+    const locations = await db.all('SELECT id FROM locations WHERE user_id = ?', [userId]);
+    const locationIds = locations.map(l => l.id);
+    const places = await db.all('SELECT id FROM places WHERE user_id = ?', [userId]);
+    const placeIds = places.map(p => p.id);
+    const entityIds = [...locationIds, ...placeIds];
+
+    // 2. Collect user's trip IDs
+    const trips = await db.all('SELECT id FROM trips WHERE user_id = ?', [userId]);
+    const tripIds = trips.map(t => t.id);
+
+    // 3. Collect uploaded media files to delete from disk
+    const filesToDelete = new Set();
+    if (entityIds.length > 0) {
+      const placeholders = entityIds.map(() => '?').join(',');
+      const photos = await db.all(`SELECT file_path FROM entity_photos WHERE entity_id IN (${placeholders})`, entityIds);
+      photos.forEach(p => { if (p.file_path) filesToDelete.add(p.file_path); });
+    }
+    if (tripIds.length > 0) {
+      const placeholders = tripIds.map(() => '?').join(',');
+      const reservations = await db.all(`SELECT file_path FROM reservations WHERE trip_id IN (${placeholders})`, tripIds);
+      reservations.forEach(r => { if (r.file_path) filesToDelete.add(r.file_path); });
+      const expenses = await db.all(`SELECT receipt_path FROM expenses WHERE trip_id IN (${placeholders})`, tripIds);
+      expenses.forEach(e => { if (e.receipt_path) filesToDelete.add(e.receipt_path); });
+    }
+
+    // 4. Delete physical files from disk
+    for (const relPath of filesToDelete) {
+      const filename = basename(relPath);
+      const fullPath = join(UPLOADS_DIR, filename);
+      if (fs.existsSync(fullPath)) {
+        try { await fs.promises.unlink(fullPath); } catch (_) {}
+      }
+    }
+
+    // 5. Delete dependent table rows
+    if (entityIds.length > 0) {
+      const placeholders = entityIds.map(() => '?').join(',');
+      await db.run(`DELETE FROM entity_tags WHERE entity_id IN (${placeholders})`, entityIds);
+      await db.run(`DELETE FROM entity_photos WHERE entity_id IN (${placeholders})`, entityIds);
+    }
+    await db.run('DELETE FROM places WHERE user_id = ?', [userId]);
+
+    if (tripIds.length > 0) {
+      const placeholders = tripIds.map(() => '?').join(',');
+      await db.run(`DELETE FROM itinerary_items WHERE trip_id IN (${placeholders})`, tripIds);
+      await db.run(`DELETE FROM reservations WHERE trip_id IN (${placeholders})`, tripIds);
+      await db.run(`DELETE FROM expenses WHERE trip_id IN (${placeholders})`, tripIds);
+      await db.run(`DELETE FROM trip_notes WHERE trip_id IN (${placeholders})`, tripIds);
+      await db.run(`DELETE FROM trip_currency_rates WHERE trip_id IN (${placeholders})`, tripIds);
+    }
+
+    // 6. Delete user-owned tables & account
+    await db.run('DELETE FROM locations WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM collections WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM trips WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM custom_categories WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM tags WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM gps_logs WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM ai_imports WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM saved_markdowns WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM people WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM user_addresses WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM user_configs WHERE user_id = ?', [userId]);
+    await db.run('DELETE FROM users WHERE id = ?', [userId]);
+
+    console.log(`[Admin] Permanently deleted user "${targetUser.username}" (${userId}) and all associated data.`);
+    res.json({ success: true, message: `User "${targetUser.username}" and all associated data deleted successfully.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -371,7 +508,7 @@ app.get('/api/immich/albums', authenticateToken, async (req, res) => {
   try {
     const config = await db.get('SELECT immich_url, immich_key FROM user_configs WHERE user_id = ?', [req.user.id]);
     if (!config || !config.immich_url || !config.immich_key) {
-      return res.status(400).json({ error: 'Immich not configured' });
+      return res.json([]);
     }
 
     const albums = await fetchImmich(config.immich_url, config.immich_key, 'albums');
@@ -386,7 +523,7 @@ app.get('/api/immich/album/:albumId', authenticateToken, async (req, res) => {
   try {
     const config = await db.get('SELECT immich_url, immich_key FROM user_configs WHERE user_id = ?', [req.user.id]);
     if (!config || !config.immich_url || !config.immich_key) {
-      return res.status(400).json({ error: 'Immich not configured' });
+      return res.json({ assets: [] });
     }
 
     const albumDetails = await fetchImmich(config.immich_url, config.immich_key, `albums/${albumId}`);
@@ -400,7 +537,7 @@ app.get('/api/immich/people', authenticateToken, async (req, res) => {
   try {
     const config = await db.get('SELECT immich_url, immich_key FROM user_configs WHERE user_id = ?', [req.user.id]);
     if (!config || !config.immich_url || !config.immich_key) {
-      return res.status(400).json({ error: 'Immich not configured' });
+      return res.json({ people: [] });
     }
 
     const people = await fetchImmich(config.immich_url, config.immich_key, 'people');
@@ -415,7 +552,7 @@ app.get('/api/immich/asset/thumbnail/:assetId', authenticateToken, async (req, r
   try {
     const config = await db.get('SELECT immich_url, immich_key FROM user_configs WHERE user_id = ?', [req.user.id]);
     if (!config || !config.immich_url || !config.immich_key) {
-      return res.status(400).json({ error: 'Immich not configured' });
+      return res.status(204).end();
     }
 
     proxyImmichStream(config.immich_url, config.immich_key, `assets/${assetId}/thumbnail`, res);
@@ -429,7 +566,7 @@ app.get('/api/immich/asset/original/:assetId', authenticateToken, async (req, re
   try {
     const config = await db.get('SELECT immich_url, immich_key FROM user_configs WHERE user_id = ?', [req.user.id]);
     if (!config || !config.immich_url || !config.immich_key) {
-      return res.status(400).json({ error: 'Immich not configured' });
+      return res.status(204).end();
     }
 
     proxyImmichStream(config.immich_url, config.immich_key, `assets/${assetId}/original`, res);
@@ -443,7 +580,7 @@ app.get('/api/immich/person/thumbnail/:personId', authenticateToken, async (req,
   try {
     const config = await db.get('SELECT immich_url, immich_key FROM user_configs WHERE user_id = ?', [req.user.id]);
     if (!config || !config.immich_url || !config.immich_key) {
-      return res.status(400).json({ error: 'Immich not configured' });
+      return res.status(204).end();
     }
 
     proxyImmichStream(config.immich_url, config.immich_key, `people/${personId}/thumbnail`, res);
@@ -745,7 +882,9 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
         'trips',
         'gps_logs',
         'ai_imports',
-        'saved_markdowns'
+        'saved_markdowns',
+        'people',
+        'user_addresses'
       ];
 
       for (const op of actions) {
@@ -1043,6 +1182,102 @@ app.post('/api/import/markdown', authenticateToken, async (req, res) => {
     res.json({ success: true, markdown, places });
   } catch (err) {
     console.error('Import error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/import/document', authenticateToken, upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No document file uploaded' });
+  }
+
+  const { parserEngine } = req.body;
+  const filePath = req.file.path;
+  const originalName = req.file.originalname;
+  const ext = extname(originalName).toLowerCase();
+
+  try {
+    let markdown = '';
+    let extractedImages = [];
+
+    if (ext === '.md' || ext === '.markdown' || ext === '.txt') {
+      markdown = fs.readFileSync(filePath, 'utf-8');
+    } else if (ext === '.html' || ext === '.htm') {
+      const htmlContent = fs.readFileSync(filePath, 'utf-8');
+      try {
+        const TurndownModule = await import('turndown');
+        const TurndownService = TurndownModule.default || TurndownModule;
+        const turndownService = new TurndownService({ headingStyle: 'atx' });
+        markdown = turndownService.turndown(htmlContent);
+      } catch (err) {
+        markdown = htmlContent.replace(/<[^>]+>/g, '\n');
+      }
+    } else if (ext === '.docx' || ext === '.doc') {
+      try {
+        const mammothModule = await import('mammoth');
+        const mammoth = mammothModule.default || mammothModule;
+        const result = await mammoth.convertToHtml({ path: filePath });
+        const html = result.value;
+        const TurndownModule = await import('turndown');
+        const TurndownService = TurndownModule.default || TurndownModule;
+        const turndownService = new TurndownService({ headingStyle: 'atx' });
+        markdown = turndownService.turndown(html);
+      } catch (err) {
+        markdown = `# ${originalName}\n\n${fs.readFileSync(filePath, 'utf-8')}`;
+      }
+    } else if (ext === '.pdf') {
+      try {
+        const pdfParseModule = await import('pdf-parse');
+        const pdfParse = pdfParseModule.default || pdfParseModule;
+        const pdfBuffer = fs.readFileSync(filePath);
+        const pdfData = await pdfParse(pdfBuffer);
+        const rawText = pdfData.text || '';
+
+        const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+        const formattedLines = [];
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const isNumberedHeading = /^(?:Day\s+\d+|Step\s+\d+|\d+[\.\:\)-])\s+[A-Z]/i.test(line);
+          const isShortTitle = line.length >= 3 && line.length <= 60 && (line === line.toUpperCase() || /^[A-Z][a-zA-Z0-9\s,–'-]+$/.test(line));
+
+          if ((isNumberedHeading || isShortTitle) && !line.endsWith('.')) {
+            formattedLines.push(`\n## ${line}\n`);
+          } else {
+            formattedLines.push(line);
+          }
+        }
+
+        markdown = `# ${originalName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ')}\n\n` + formattedLines.join('\n');
+      } catch (err) {
+        console.error('PDF parsing error:', err);
+        markdown = `# ${originalName}\n\n${fs.readFileSync(filePath, 'utf-8')}`;
+      }
+    } else {
+      markdown = fs.readFileSync(filePath, 'utf-8');
+    }
+
+    try { fs.unlinkSync(filePath); } catch (_) {}
+
+    const imgRegex = /!\[.*?\]\((.*?)\)/g;
+    let match;
+    while ((match = imgRegex.exec(markdown)) !== null) {
+      if (match[1] && !extractedImages.includes(match[1])) {
+        extractedImages.push(match[1]);
+      }
+    }
+
+    const cleanGuideName = originalName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+
+    res.json({
+      success: true,
+      guideName: cleanGuideName,
+      markdown,
+      images: extractedImages
+    });
+  } catch (err) {
+    console.error('Document import error:', err);
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (_) {}
     res.status(500).json({ error: err.message });
   }
 });
@@ -1385,6 +1620,118 @@ app.delete('/api/places/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// People Management Endpoints
+app.get('/api/people', authenticateToken, async (req, res) => {
+  try {
+    const rows = await db.all('SELECT * FROM people WHERE user_id = ? ORDER BY name ASC', [req.user.id]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/people', authenticateToken, async (req, res) => {
+  const { id, name, relation, immich_person_id, immich_person_name, notes } = req.body;
+  const pId = id || crypto.randomUUID();
+  try {
+    await db.run(
+      `INSERT INTO people (id, user_id, name, relation, immich_person_id, immich_person_name, notes) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [pId, req.user.id, name, relation || 'Friend', immich_person_id || null, immich_person_name || null, notes || '']
+    );
+    const row = await db.get('SELECT * FROM people WHERE id = ?', [pId]);
+    notifyUserClients(req.user.id);
+    res.json(row);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/people/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { name, relation, immich_person_id, immich_person_name, notes } = req.body;
+  try {
+    await db.run(
+      `UPDATE people SET name = ?, relation = ?, immich_person_id = ?, immich_person_name = ?, notes = ? WHERE id = ? AND user_id = ?`,
+      [name, relation, immich_person_id || null, immich_person_name || null, notes || '', id, req.user.id]
+    );
+    const row = await db.get('SELECT * FROM people WHERE id = ?', [id]);
+    notifyUserClients(req.user.id);
+    res.json(row);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/people/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.run('DELETE FROM people WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    notifyUserClients(req.user.id);
+    res.json({ success: true, id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Saved User Addresses Endpoints
+app.get('/api/user-addresses', authenticateToken, async (req, res) => {
+  try {
+    const rows = await db.all('SELECT * FROM user_addresses WHERE user_id = ? ORDER BY is_default DESC, label ASC', [req.user.id]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/user-addresses', authenticateToken, async (req, res) => {
+  const { id, label, address, latitude, longitude, is_default } = req.body;
+  const addrId = id || crypto.randomUUID();
+  try {
+    if (is_default) {
+      await db.run('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [req.user.id]);
+    }
+    await db.run(
+      `INSERT INTO user_addresses (id, user_id, label, address, latitude, longitude, is_default) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [addrId, req.user.id, label || 'Home', address || '', latitude ? parseFloat(latitude) : null, longitude ? parseFloat(longitude) : null, is_default ? 1 : 0]
+    );
+    const row = await db.get('SELECT * FROM user_addresses WHERE id = ?', [addrId]);
+    notifyUserClients(req.user.id);
+    res.json(row);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/user-addresses/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { label, address, latitude, longitude, is_default } = req.body;
+  try {
+    if (is_default) {
+      await db.run('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [req.user.id]);
+    }
+    await db.run(
+      `UPDATE user_addresses SET label = ?, address = ?, latitude = ?, longitude = ?, is_default = ? WHERE id = ? AND user_id = ?`,
+      [label, address, latitude ? parseFloat(latitude) : null, longitude ? parseFloat(longitude) : null, is_default ? 1 : 0, id, req.user.id]
+    );
+    const row = await db.get('SELECT * FROM user_addresses WHERE id = ?', [id]);
+    notifyUserClients(req.user.id);
+    res.json(row);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/user-addresses/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.run('DELETE FROM user_addresses WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    notifyUserClients(req.user.id);
+    res.json({ success: true, id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Photos
 app.get('/api/photos', authenticateToken, async (req, res) => {
   try {
@@ -1623,14 +1970,16 @@ app.get('/api/trips', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/trips', authenticateToken, async (req, res) => {
-  const { id, name, start_date, end_date, length, visited, notes, rates } = req.body;
+  const { id, name, start_date, end_date, length, visited, notes, rates, companions, start_address_id, stop_address_id } = req.body;
   const tId = id || crypto.randomUUID();
   try {
     await db.exec('BEGIN TRANSACTION');
 
+    const companionsStr = typeof companions === 'string' ? companions : (Array.isArray(companions) ? JSON.stringify(companions) : null);
+
     await db.run(
-      'INSERT INTO trips (id, user_id, name, start_date, end_date, length, visited, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [tId, req.user.id, name, start_date || null, end_date || null, length || 1, visited || 0, notes || '']
+      'INSERT INTO trips (id, user_id, name, start_date, end_date, length, visited, notes, companions, start_address_id, stop_address_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [tId, req.user.id, name, start_date || null, end_date || null, length || 1, visited || 0, notes || '', companionsStr, start_address_id || null, stop_address_id || null]
     );
 
     // Save rates
@@ -1663,14 +2012,16 @@ app.post('/api/trips', authenticateToken, async (req, res) => {
 
 app.put('/api/trips/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { name, start_date, end_date, length, visited, notes, rates } = req.body;
+  const { name, start_date, end_date, length, visited, notes, rates, companions, start_address_id, stop_address_id } = req.body;
   try {
     await db.exec('BEGIN TRANSACTION');
 
+    const companionsStr = typeof companions === 'string' ? companions : (Array.isArray(companions) ? JSON.stringify(companions) : null);
+
     await db.run(
-      `UPDATE trips SET name = ?, start_date = ?, end_date = ?, length = ?, visited = ?, notes = ? 
+      `UPDATE trips SET name = ?, start_date = ?, end_date = ?, length = ?, visited = ?, notes = ?, companions = ?, start_address_id = ?, stop_address_id = ? 
        WHERE id = ? AND user_id = ?`,
-      [name, start_date, end_date, length || 1, visited, notes, id, req.user.id]
+      [name, start_date, end_date, length || 1, visited, notes, companionsStr, start_address_id || null, stop_address_id || null, id, req.user.id]
     );
 
     // Update rates
@@ -1896,8 +2247,9 @@ app.get('/api/locations/:locationId/visits', authenticateToken, async (req, res)
 // ==========================================
 // Backup & Restore API
 // ==========================================
-app.get('/api/backup/export', async (req, res) => {
+app.get('/api/backup/export', authenticateToken, async (req, res) => {
   try {
+    const userId = req.user.id;
     const backup = {
       version: '1.0',
       export_date: new Date().toISOString(),
@@ -1905,28 +2257,24 @@ app.get('/api/backup/export', async (req, res) => {
       files: []
     };
 
-    const tables = [
-      'users',
+    // User-owned tables with direct user_id column
+    const directUserTables = [
       'user_configs',
       'locations',
       'places',
       'custom_categories',
       'tags',
-      'entity_tags',
       'collections',
       'trips',
-      'trip_currency_rates',
-      'reservations',
-      'itinerary_items',
-      'expenses',
       'gps_logs',
-      'entity_photos',
       'ai_imports',
-      'saved_markdowns'
+      'saved_markdowns',
+      'people',
+      'user_addresses'
     ];
 
-    for (const table of tables) {
-      let rows = await db.all(`SELECT * FROM ${table}`);
+    for (const table of directUserTables) {
+      let rows = await db.all(`SELECT * FROM ${table} WHERE user_id = ?`, [userId]);
       if (table === 'user_configs') {
         rows = rows.map(r => {
           const newRow = { ...r };
@@ -1937,7 +2285,68 @@ app.get('/api/backup/export', async (req, res) => {
       backup.data[table] = rows;
     }
 
+    // User's location & place IDs for dependent tables
+    const userLocationIds = (backup.data.locations || []).map(l => l.id);
+    const userPlaceIds = (backup.data.places || []).map(p => p.id);
+    const userEntityIds = [...userLocationIds, ...userPlaceIds];
+
+    // Dependent entity_tags
+    if (userEntityIds.length > 0) {
+      const placeholders = userEntityIds.map(() => '?').join(',');
+      backup.data.entity_tags = await db.all(
+        `SELECT * FROM entity_tags WHERE entity_id IN (${placeholders})`,
+        userEntityIds
+      );
+    } else {
+      backup.data.entity_tags = [];
+    }
+
+    // Dependent entity_photos
+    if (userEntityIds.length > 0) {
+      const placeholders = userEntityIds.map(() => '?').join(',');
+      backup.data.entity_photos = await db.all(
+        `SELECT * FROM entity_photos WHERE entity_id IN (${placeholders})`,
+        userEntityIds
+      );
+    } else {
+      backup.data.entity_photos = [];
+    }
+
+    // User's trip IDs for dependent trip tables
+    const userTripIds = (backup.data.trips || []).map(t => t.id);
+
+    const tripDependentTables = [
+      'trip_currency_rates',
+      'trip_notes',
+      'reservations',
+      'itinerary_items',
+      'expenses'
+    ];
+
+    for (const table of tripDependentTables) {
+      if (userTripIds.length > 0) {
+        const placeholders = userTripIds.map(() => '?').join(',');
+        backup.data[table] = await db.all(
+          `SELECT * FROM ${table} WHERE trip_id IN (${placeholders})`,
+          userTripIds
+        );
+      } else {
+        backup.data[table] = [];
+      }
+    }
+
+    // Backup only the active user's uploaded media files
     const filesToBackup = new Set();
+    if (backup.data.locations) {
+      backup.data.locations.forEach(l => {
+        if (l.local_file_data) filesToBackup.add(l.local_file_data);
+      });
+    }
+    if (backup.data.places) {
+      backup.data.places.forEach(p => {
+        if (p.local_file_data) filesToBackup.add(p.local_file_data);
+      });
+    }
     if (backup.data.entity_photos) {
       backup.data.entity_photos.forEach(p => {
         if (p.file_path) filesToBackup.add(p.file_path);
@@ -1979,6 +2388,231 @@ app.get('/api/backup/export', async (req, res) => {
   }
 });
 
+// Phase 1: Database Metadata Non-Blocking Restore Endpoint
+app.post('/api/backup/restore/metadata', async (req, res) => {
+  const { data, currentUserId } = req.body;
+  if (!data) {
+    return res.status(400).json({ error: 'Missing database data in restore payload' });
+  }
+
+  const idMap = new Map();
+  let restoredCount = 0;
+  let duplicatedCount = 0;
+  const warnings = [];
+  const tableCounts = {};
+
+  if (currentUserId) {
+    const oldUserIds = new Set();
+    const userIdTables = ['user_configs', 'locations', 'places', 'custom_categories', 'tags', 'collections', 'trips', 'gps_logs', 'ai_imports', 'saved_markdowns', 'people', 'user_addresses'];
+    userIdTables.forEach(table => {
+      const rows = data[table];
+      if (rows && Array.isArray(rows)) {
+        rows.forEach(row => {
+          if (row.user_id) oldUserIds.add(row.user_id);
+        });
+      }
+    });
+
+    for (const oldId of oldUserIds) {
+      if (oldId !== currentUserId) {
+        idMap.set(oldId, currentUserId);
+      }
+    }
+  }
+
+  // NOTE: 'users' table is strictly EXCLUDED from restore to prevent overwriting login accounts or logging users out
+  const tablesOrder = [
+    'user_configs',
+    'locations',
+    'places',
+    'custom_categories',
+    'tags',
+    'entity_tags',
+    'collections',
+    'trips',
+    'trip_currency_rates',
+    'trip_notes',
+    'reservations',
+    'itinerary_items',
+    'expenses',
+    'gps_logs',
+    'entity_photos',
+    'ai_imports',
+    'saved_markdowns',
+    'people',
+    'user_addresses'
+  ];
+
+  for (const table of tablesOrder) {
+    const rows = data[table];
+    if (!rows || !Array.isArray(rows)) continue;
+    tableCounts[table] = 0;
+
+    for (const row of rows) {
+      try {
+        // Explicitly assign user_id to currentUserId for user-owned records
+        if (currentUserId && row.user_id !== undefined) {
+          row.user_id = currentUserId;
+        }
+
+        const pkCol = (table === 'user_configs') ? 'user_id' : 'id';
+        let originalId = row[pkCol];
+
+        if (table !== 'entity_tags' && originalId) {
+          if (table === 'user_configs' && currentUserId) {
+            row[pkCol] = currentUserId;
+          } else {
+            const exists = await db.get(`SELECT 1 FROM ${table} WHERE ${pkCol} = ?`, [originalId]);
+            if (exists) {
+              const newId = `${table.slice(0, 3)}_${crypto.randomUUID()}`;
+              idMap.set(originalId, newId);
+              row[pkCol] = newId;
+            }
+          }
+        }
+
+        // Only append (Copy) if an entity with the SAME NAME already exists under currentUserId's account
+        if (['locations', 'places', 'trips', 'collections'].includes(table) && row.name && currentUserId) {
+          const nameExistsForUser = await db.get(
+            `SELECT 1 FROM ${table} WHERE user_id = ? AND name = ?`,
+            [currentUserId, row.name]
+          );
+          if (nameExistsForUser) {
+            row.name = `${row.name} (Copy)`;
+            duplicatedCount++;
+          }
+        }
+
+        if (table === 'user_configs' && row.owntracks_key) {
+          const existing = await db.get('SELECT 1 FROM user_configs WHERE owntracks_key = ?', [row.owntracks_key]);
+          if (existing) {
+            row.owntracks_key = crypto.randomBytes(8).toString('hex');
+          }
+        }
+
+        // Preserve existing immich_key when restoring user_configs
+        if (table === 'user_configs' && currentUserId) {
+          const existingConfig = await db.get('SELECT immich_key FROM user_configs WHERE user_id = ?', [currentUserId]);
+          if (existingConfig && existingConfig.immich_key && (!row.immich_key || row.immich_key === '')) {
+            row.immich_key = existingConfig.immich_key;
+          } else if (!row.immich_key) {
+            delete row.immich_key;
+          }
+        }
+
+        if (table === 'tags' && row.name && row.user_id) {
+          const finalUserId = idMap.has(row.user_id) ? idMap.get(row.user_id) : row.user_id;
+          let currentName = row.name;
+          let existing = await db.get('SELECT 1 FROM tags WHERE user_id = ? AND name = ?', [finalUserId, currentName]);
+          while (existing) {
+            currentName = `${currentName} (Copy)`;
+            existing = await db.get('SELECT 1 FROM tags WHERE user_id = ? AND name = ?', [finalUserId, currentName]);
+          }
+          row.name = currentName;
+        }
+
+        for (const key of Object.keys(row)) {
+          const val = row[key];
+          if (typeof val === 'string' && idMap.has(val)) {
+            row[key] = idMap.get(val);
+          }
+        }
+
+        if (table === 'collections' && typeof row.manual_location_ids === 'string' && row.manual_location_ids) {
+          const ids = row.manual_location_ids.split(',').map(id => {
+            const trimmed = id.trim();
+            return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
+          });
+          row.manual_location_ids = ids.join(',');
+        }
+
+        if (table === 'entity_tags') {
+          const exists = await db.get('SELECT 1 FROM entity_tags WHERE entity_id = ? AND tag_id = ?', [row.entity_id, row.tag_id]);
+          if (exists) {
+            continue;
+          }
+        }
+
+        const columns = Object.keys(row);
+        const placeholders = columns.map(() => '?').join(', ');
+        const isReplace = (table === 'user_configs');
+        const sql = `${isReplace ? 'INSERT OR REPLACE' : 'INSERT'} INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+        const params = columns.map(col => row[col]);
+        await db.run(sql, params);
+        restoredCount++;
+        tableCounts[table]++;
+      } catch (rowErr) {
+        console.warn(`[Restore Metadata Warning] Table '${table}' row failed:`, rowErr.message);
+        warnings.push(`Skipped row in ${table}: ${rowErr.message}`);
+      }
+    }
+  }
+
+  // Check configuration integration warnings
+  try {
+    const activeUserId = currentUserId;
+    if (activeUserId) {
+      const config = await db.get('SELECT immich_key FROM user_configs WHERE user_id = ?', [activeUserId]);
+      const hasPeople = (data.people && data.people.length > 0);
+      if ((!config || !config.immich_key) && hasPeople) {
+        warnings.push('Immich API Key not configured. Companion & member avatars are saved in pending state until Immich API key is added in Settings.');
+      }
+    }
+  } catch (_) {}
+
+  if (currentUserId) {
+    notifyUserClients(currentUserId);
+  }
+
+  res.json({
+    success: true,
+    restored_count: restoredCount,
+    duplicated_count: duplicatedCount,
+    table_counts: tableCounts,
+    warnings: warnings
+  });
+});
+
+// Phase 2: Chunked Media Batch Restore Endpoint
+app.post('/api/backup/restore/media-chunk', async (req, res) => {
+  const { files } = req.body;
+  if (!files || !Array.isArray(files)) {
+    return res.status(400).json({ error: 'Missing files array in chunk payload' });
+  }
+
+  let processedCount = 0;
+  let skippedCount = 0;
+  const chunkErrors = [];
+
+  for (const file of files) {
+    if (!file.file_path || !file.base64_data) continue;
+    try {
+      const filename = basename(file.file_path);
+      const destPath = join(UPLOADS_DIR, filename);
+
+      // Check if file already exists on server disk (Fast 1ms skip for resumed uploads)
+      if (fs.existsSync(destPath)) {
+        skippedCount++;
+        continue;
+      }
+
+      const buffer = Buffer.from(file.base64_data, 'base64');
+      await fs.promises.writeFile(destPath, buffer);
+      processedCount++;
+    } catch (writeErr) {
+      console.warn(`[Restore Media Chunk Warning] File '${file.file_path}' write error:`, writeErr.message);
+      chunkErrors.push(`Failed to save ${file.file_path}: ${writeErr.message}`);
+    }
+  }
+
+  res.json({
+    success: true,
+    files_processed: processedCount,
+    files_skipped: skippedCount,
+    errors: chunkErrors
+  });
+});
+
 app.post('/api/backup/restore', async (req, res) => {
   const { data, files, currentUserId } = req.body;
   if (!data) {
@@ -2013,8 +2647,8 @@ app.post('/api/backup/restore', async (req, res) => {
     }
   }
 
+  // NOTE: 'users' table is strictly EXCLUDED from restore to prevent overwriting login accounts or logging users out
   const tablesOrder = [
-    'users',
     'user_configs',
     'locations',
     'places',
@@ -2024,13 +2658,16 @@ app.post('/api/backup/restore', async (req, res) => {
     'collections',
     'trips',
     'trip_currency_rates',
+    'trip_notes',
     'reservations',
     'itinerary_items',
     'expenses',
     'gps_logs',
     'entity_photos',
     'ai_imports',
-    'saved_markdowns'
+    'saved_markdowns',
+    'people',
+    'user_addresses'
   ];
 
   try {
@@ -2039,119 +2676,93 @@ app.post('/api/backup/restore', async (req, res) => {
       if (!rows || !Array.isArray(rows)) continue;
 
       for (const row of rows) {
-        // 1. Uniquify single primary key conflicts
-        const pkCol = (table === 'user_configs') ? 'user_id' : 'id';
-        let originalId = row[pkCol];
+        try {
+          if (currentUserId && row.user_id !== undefined) {
+            row.user_id = currentUserId;
+          }
 
-        if (table !== 'entity_tags' && originalId) {
-          // If this is user_configs and we have currentUserId, assign it immediately
-          if (table === 'user_configs' && currentUserId) {
-            row[pkCol] = currentUserId;
-          } else {
-            const exists = await db.get(`SELECT 1 FROM ${table} WHERE ${pkCol} = ?`, [originalId]);
-            if (exists) {
-              const newId = `${table.slice(0, 3)}_${crypto.randomUUID()}`;
-              idMap.set(originalId, newId);
-              row[pkCol] = newId;
+          const pkCol = (table === 'user_configs') ? 'user_id' : 'id';
+          let originalId = row[pkCol];
+
+          if (table !== 'entity_tags' && originalId) {
+            if (table === 'user_configs' && currentUserId) {
+              row[pkCol] = currentUserId;
+            } else {
+              const exists = await db.get(`SELECT 1 FROM ${table} WHERE ${pkCol} = ?`, [originalId]);
+              if (exists) {
+                const newId = `${table.slice(0, 3)}_${crypto.randomUUID()}`;
+                idMap.set(originalId, newId);
+                row[pkCol] = newId;
+              }
+            }
+          }
+
+          if (['locations', 'places', 'trips', 'collections'].includes(table) && row.name && currentUserId) {
+            const nameExistsForUser = await db.get(
+              `SELECT 1 FROM ${table} WHERE user_id = ? AND name = ?`,
+              [currentUserId, row.name]
+            );
+            if (nameExistsForUser) {
+              row.name = `${row.name} (Copy)`;
               duplicatedCount++;
-
-              // Append copy labels for primary entities if duplicated
-              if (['locations', 'places', 'trips', 'collections'].includes(table) && row.name) {
-                row.name = `${row.name} (Copy)`;
-              }
             }
           }
-        }
 
-        // 2. Uniquify other UNIQUE constraint columns
-        if (table === 'users' && row.username) {
-          const existing = await db.get('SELECT 1 FROM users WHERE username = ?', [row.username]);
-          if (existing) {
-            row.username = `${row.username}_copy_${crypto.randomBytes(2).toString('hex')}`;
-          }
-        }
-        if (table === 'user_configs' && row.owntracks_key) {
-          const existing = await db.get('SELECT 1 FROM user_configs WHERE owntracks_key = ?', [row.owntracks_key]);
-          if (existing) {
-            row.owntracks_key = crypto.randomBytes(8).toString('hex');
-          }
-        }
-        if (table === 'tags' && row.name && row.user_id) {
-          const finalUserId = idMap.has(row.user_id) ? idMap.get(row.user_id) : row.user_id;
-          let currentName = row.name;
-          let existing = await db.get('SELECT 1 FROM tags WHERE user_id = ? AND name = ?', [finalUserId, currentName]);
-          while (existing) {
-            currentName = `${currentName} (Copy)`;
-            existing = await db.get('SELECT 1 FROM tags WHERE user_id = ? AND name = ?', [finalUserId, currentName]);
-          }
-          row.name = currentName;
-        }
-
-        // 3. Dynamically translate all foreign key IDs from idMap
-        for (const key of Object.keys(row)) {
-          const val = row[key];
-          if (typeof val === 'string' && idMap.has(val)) {
-            row[key] = idMap.get(val);
-          }
-        }
-
-        // Special handling for collections manual_location_ids list
-        if (table === 'collections' && typeof row.manual_location_ids === 'string' && row.manual_location_ids) {
-          const ids = row.manual_location_ids.split(',').map(id => {
-            const trimmed = id.trim();
-            return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
-          });
-          row.manual_location_ids = ids.join(',');
-        }
-
-        // Special handling for ai_imports selected_locations / selected_collections lists
-        if (table === 'ai_imports') {
-          if (typeof row.selected_locations === 'string' && row.selected_locations) {
-            try {
-              const locIds = JSON.parse(row.selected_locations);
-              if (Array.isArray(locIds)) {
-                row.selected_locations = JSON.stringify(locIds.map(id => idMap.has(id) ? idMap.get(id) : id));
-              }
-            } catch (e) {
-              const ids = row.selected_locations.split(',').map(id => {
-                const trimmed = id.trim();
-                return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
-              });
-              row.selected_locations = ids.join(',');
+          if (table === 'users' && row.username) {
+            const existing = await db.get('SELECT 1 FROM users WHERE username = ?', [row.username]);
+            if (existing) {
+              row.username = `${row.username}_copy_${crypto.randomBytes(2).toString('hex')}`;
             }
           }
-          if (typeof row.selected_collections === 'string' && row.selected_collections) {
-            try {
-              const colIds = JSON.parse(row.selected_collections);
-              if (Array.isArray(colIds)) {
-                row.selected_collections = JSON.stringify(colIds.map(id => idMap.has(id) ? idMap.get(id) : id));
-              }
-            } catch (e) {
-              const ids = row.selected_collections.split(',').map(id => {
-                const trimmed = id.trim();
-                return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
-              });
-              row.selected_collections = ids.join(',');
+          if (table === 'user_configs' && row.owntracks_key) {
+            const existing = await db.get('SELECT 1 FROM user_configs WHERE owntracks_key = ?', [row.owntracks_key]);
+            if (existing) {
+              row.owntracks_key = crypto.randomBytes(8).toString('hex');
             }
           }
-        }
-
-        // 4. Handle entity_tags composite primary key conflicts
-        if (table === 'entity_tags') {
-          const exists = await db.get('SELECT 1 FROM entity_tags WHERE entity_id = ? AND tag_id = ?', [row.entity_id, row.tag_id]);
-          if (exists) {
-            continue;
+          if (table === 'tags' && row.name && row.user_id) {
+            const finalUserId = idMap.has(row.user_id) ? idMap.get(row.user_id) : row.user_id;
+            let currentName = row.name;
+            let existing = await db.get('SELECT 1 FROM tags WHERE user_id = ? AND name = ?', [finalUserId, currentName]);
+            while (existing) {
+              currentName = `${currentName} (Copy)`;
+              existing = await db.get('SELECT 1 FROM tags WHERE user_id = ? AND name = ?', [finalUserId, currentName]);
+            }
+            row.name = currentName;
           }
-        }
 
-        // 5. Insert row into database
-        const columns = Object.keys(row);
-        const placeholders = columns.map(() => '?').join(', ');
-        const isReplace = (table === 'user_configs');
-        const sql = `${isReplace ? 'INSERT OR REPLACE' : 'INSERT'} INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
-        const params = columns.map(col => row[col]);
-        await db.run(sql, params);
-        restoredCount++;
+          for (const key of Object.keys(row)) {
+            const val = row[key];
+            if (typeof val === 'string' && idMap.has(val)) {
+              row[key] = idMap.get(val);
+            }
+          }
+
+          if (table === 'collections' && typeof row.manual_location_ids === 'string' && row.manual_location_ids) {
+            const ids = row.manual_location_ids.split(',').map(id => {
+              const trimmed = id.trim();
+              return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
+            });
+            row.manual_location_ids = ids.join(',');
+          }
+
+          if (table === 'entity_tags') {
+            const exists = await db.get('SELECT 1 FROM entity_tags WHERE entity_id = ? AND tag_id = ?', [row.entity_id, row.tag_id]);
+            if (exists) {
+              continue;
+            }
+          }
+
+          const columns = Object.keys(row);
+          const placeholders = columns.map(() => '?').join(', ');
+          const isReplace = (table === 'user_configs');
+          const sql = `${isReplace ? 'INSERT OR REPLACE' : 'INSERT'} INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+          const params = columns.map(col => row[col]);
+          await db.run(sql, params);
+          restoredCount++;
+        } catch (rowErr) {
+          console.warn(`[Legacy Restore Warning] Row skipped in ${table}:`, rowErr.message);
+        }
       }
     }
 

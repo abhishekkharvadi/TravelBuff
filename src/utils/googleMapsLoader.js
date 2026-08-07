@@ -2,6 +2,19 @@ export const loadGoogleMaps = () => {
   const apiKey = localStorage.getItem('google_maps_api_key');
   const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
 
+  if (typeof window !== 'undefined' && !window.__gmaps_unhandled_handler_set) {
+    window.__gmaps_unhandled_handler_set = true;
+    window.addEventListener('unhandledrejection', (event) => {
+      if (event.reason && (
+        (event.reason.stack && (event.reason.stack.includes('places.js') || event.reason.stack.includes('main.js'))) ||
+        (event.reason.message && (event.reason.message.includes('places') || event.reason.message.includes('Google')))
+      )) {
+        event.preventDefault();
+        console.warn('[Google Maps] Suppressed internal async error:', event.reason);
+      }
+    });
+  }
+
   if (!apiKey || !googleMapsEnabled) {
     return Promise.reject(new Error('Google Maps is disabled or API Key is missing'));
   }

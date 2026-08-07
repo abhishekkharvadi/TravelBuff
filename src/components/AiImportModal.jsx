@@ -14,7 +14,7 @@ const toSentenceTitleCase = (str) => {
     .join(' ');
 };
 
-const FilterableSelect = ({ value, onChange, options, placeholder, isMulti = false, activeValues = [] }) => {
+const FilterableSelect = ({ value, onChange, options, placeholder, isMulti = false, activeValues = [], hasError = false }) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   
@@ -29,14 +29,14 @@ const FilterableSelect = ({ value, onChange, options, placeholder, isMulti = fal
           padding: '6px 10px', 
           fontSize: '0.78rem', 
           backgroundColor: 'var(--bg-app)', 
-          border: '1px solid var(--border-glass)', 
+          border: hasError ? '1px solid rgba(239, 68, 68, 0.6)' : '1px solid var(--border-glass)', 
           borderRadius: '4px',
           cursor: 'pointer',
           minHeight: '28px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          color: 'var(--text-primary)'
+          color: hasError && !value ? '#ef4444' : 'var(--text-primary)'
         }}
         onClick={() => setIsOpen(!isOpen)}
       >
@@ -60,6 +60,7 @@ const FilterableSelect = ({ value, onChange, options, placeholder, isMulti = fal
           padding: '6px'
         }}>
           <input 
+            autoFocus
             type="text" 
             className="form-control"
             style={{ padding: '4px 8px', fontSize: '0.75rem', marginBottom: '6px', width: '100%', backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)' }}
@@ -111,8 +112,138 @@ const FilterableSelect = ({ value, onChange, options, placeholder, isMulti = fal
   );
 };
 
-export default function AiImportModal({ token, onClose, resumeMarkdown = null }) {
-  const [step, setStep] = useState(resumeMarkdown ? 1 : 0); // 0: URL input, 1: Review
+const MarkdownLineViewer = React.memo(({ 
+  line, 
+  idx, 
+  locationsList, 
+  savedLocations, 
+  savedPlaces, 
+  placesQueue, 
+  manualHighlights, 
+  onAddAsNewPlace 
+}) => {
+  const [hovered, setHovered] = useState(false);
+
+  const escapeHtml = (unsafe) => {
+    return (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+  };
+
+  const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+  if (headingMatch) {
+    const rawHeading = headingMatch[2].trim();
+    let cleanHeading = rawHeading.replace(/^(\d+[\.\-\s)]+\s*|\bStep\s+\d+[\.\-\s:]+\s*)/i, '').trim();
+    cleanHeading = cleanHeading.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+    const existingLoc = locationsList.find(l => l.name.toLowerCase() === cleanHeading) || savedLocations.find(l => l.name.toLowerCase() === cleanHeading);
+    const existingPlace = savedPlaces.find(p => p.name.toLowerCase() === cleanHeading);
+    const inQueue = placesQueue.find(p => p.name && p.name.toLowerCase() === cleanHeading);
+
+    const isDuplicate = existingLoc || existingPlace || inQueue;
+
+    if (isDuplicate) {
+      const isLoc = !!existingLoc;
+      const item = existingLoc || existingPlace || inQueue;
+
+      return (
+        <div style={{ minHeight: '1.5rem', position: 'relative', marginBottom: '6px' }}>
+          <span 
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={{ 
+              backgroundColor: 'rgba(74, 222, 128, 0.2)', 
+              color: '#4ade80', 
+              border: '1px solid rgba(74, 222, 128, 0.5)', 
+              padding: '2px 8px', 
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            ✓ {line} <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>(Already in Database/Queue)</span>
+          </span>
+
+          {hovered && (
+            <div 
+              style={{ 
+                position: 'absolute', 
+                left: '20px', 
+                top: '26px', 
+                zIndex: 99999, 
+                backgroundColor: 'var(--bg-surface-elevated)', 
+                border: '1px solid var(--border-glass)', 
+                borderRadius: '6px', 
+                padding: '12px 16px', 
+                boxShadow: '0 8px 24px rgba(0,0,0,0.6)', 
+                minWidth: '240px',
+                fontSize: '0.8rem',
+                color: 'var(--text-primary)',
+                lineHeight: 1.4
+              }}
+              onMouseEnter={() => setHovered(true)}
+              onMouseLeave={() => setHovered(false)}
+            >
+              <div style={{ fontWeight: 'bold', color: '#4ade80', marginBottom: '6px', fontSize: '0.85rem' }}>
+                {isLoc ? '📁 Existing Location' : '📍 Existing Place'}
+              </div>
+              <div style={{ marginBottom: '3px' }}><strong>Name:</strong> {item.name}</div>
+              {isLoc ? (
+                <>
+                  <div><strong>State:</strong> {item.state || 'N/A'}</div>
+                  <div><strong>Country:</strong> {item.country || 'N/A'}</div>
+                  <div><strong>Status:</strong> {item.visited === 1 ? 'Visited' : 'Bucket List'}</div>
+                </>
+              ) : (
+                <>
+                  <div><strong>Category:</strong> {item.category || 'Attraction'}</div>
+                  {item.address && <div><strong>Address:</strong> {item.address}</div>}
+                </>
+              )}
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ marginTop: '10px', padding: '4px 8px', fontSize: '0.72rem', width: '100%', border: '1px solid var(--border-glass)' }}
+                onClick={() => onAddAsNewPlace(rawHeading)}
+              >
+                + Add as New Place Anyway
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+  }
+
+  let htmlLine = escapeHtml(line);
+  manualHighlights.forEach(hl => {
+    if (hl && line.toLowerCase().includes(hl.toLowerCase())) {
+      const cleanHl = hl.toLowerCase().trim();
+      const isHlSaved = 
+        savedPlaces.some(p => p.name.toLowerCase() === cleanHl) || 
+        savedLocations.some(l => l.name.toLowerCase() === cleanHl) ||
+        locationsList.some(l => l.name.toLowerCase() === cleanHl);
+      
+      const escapedHl = escapeHtml(hl);
+      const colorStyle = isHlSaved 
+        ? 'background-color: rgba(74, 222, 128, 0.4); color: #4ade80;' 
+        : 'background-color: rgba(56, 189, 248, 0.4); color: #38bdf8;';
+      htmlLine = htmlLine.split(escapedHl).join(`<span style="${colorStyle} padding: 0 2px; border-radius: 2px;">${escapedHl}</span>`);
+    }
+  });
+
+  return (
+    <div dangerouslySetInnerHTML={{ __html: htmlLine || '&nbsp;' }} style={{ minHeight: '1.2rem', whiteSpace: 'pre-wrap' }} />
+  );
+});
+
+export default function AiImportModal({ token, onClose, initialMode = 'url', resumeMarkdown = null }) {
+  const [step, setStep] = useState(resumeMarkdown ? 1 : 0); // 0: URL/Doc input, 1: Review
+  const [importType, setImportType] = useState(initialMode); // 'url' or 'document'
+  const [parserEngine, setParserEngine] = useState('local'); // 'local' or 'ai'
+  const [docFile, setDocFile] = useState(null);
   const [activeTab, setActiveTab] = useState('markdown'); // 'markdown' or 'places'
   const [url, setUrl] = useState(resumeMarkdown?.url || '');
   const [scraper, setScraper] = useState('jina');
@@ -182,6 +313,19 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
     'Extract geocoding details (address, latitude, longitude) and classify category for the list of places provided.'
   );
   const [osmError, setOsmError] = useState(null);
+  // Inline location creation state
+  const [showCreateLocModal, setShowCreateLocModal] = useState(false);
+  const [locSearchQuery, setLocSearchQuery] = useState('');
+  const [locSearchResults, setLocSearchResults] = useState([]);
+  const [isLocSearching, setIsLocSearching] = useState(false);
+  const [newLocName, setNewLocName] = useState('');
+  const [newLocState, setNewLocState] = useState('');
+  const [newLocCountry, setNewLocCountry] = useState('');
+  const [locLat, setLocLat] = useState('');
+  const [locLon, setLocLon] = useState('');
+  const [isFolderChecked, setIsFolderChecked] = useState(false);
+  const [locNotes, setLocNotes] = useState('');
+  const [newLocLoading, setNewLocLoading] = useState(false);
 
   // For capturing manual selection
   const [selectedText, setSelectedText] = useState('');
@@ -262,6 +406,249 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
       console.error('Geocoding query failed', err);
     } finally {
       setSearching(false);
+    }
+  };
+
+  // Debounced Google Places / Nominatim Search for New Location Modal
+  useEffect(() => {
+    if (locSearchQuery.trim().length < 3) {
+      setLocSearchResults([]);
+      return;
+    }
+
+    setIsLocSearching(true);
+    const delayDebounceFn = setTimeout(() => {
+      const apiKey = localStorage.getItem('google_maps_api_key');
+      const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+      if (apiKey && googleMapsEnabled) {
+        loadGoogleMaps().then(async (google) => {
+          trackApiCall('Google Maps Places');
+          try {
+            const { AutocompleteSuggestion } = await google.maps.importLibrary("places");
+            const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({ input: locSearchQuery });
+            setIsLocSearching(false);
+            if (suggestions && suggestions.length > 0) {
+              const mapped = suggestions.map(s => ({
+                display_name: s.placePrediction.text.toString(),
+                place_id: s.placePrediction.placeId,
+                is_gmaps: true
+              }));
+              setLocSearchResults(mapped);
+            } else {
+              setLocSearchResults([]);
+            }
+          } catch (e) {
+            try {
+              const service = new google.maps.places.AutocompleteService();
+              service.getPlacePredictions({ input: locSearchQuery }, (predictions, status) => {
+                setIsLocSearching(false);
+                if (status === 'OK' && predictions) {
+                  const mapped = predictions.map(p => ({
+                    display_name: p.description,
+                    place_id: p.place_id,
+                    is_gmaps: true
+                  }));
+                  setLocSearchResults(mapped);
+                } else {
+                  setLocSearchResults([]);
+                }
+              });
+            } catch (_) {
+              setIsLocSearching(false);
+              setLocSearchResults([]);
+            }
+          }
+        }).catch(() => setIsLocSearching(false));
+      } else {
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(locSearchQuery)}`)
+          .then(res => res.json())
+          .then(data => {
+            setLocSearchResults(data);
+            setIsLocSearching(false);
+          })
+          .catch(() => setIsLocSearching(false));
+      }
+    }, 800);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [locSearchQuery]);
+
+  const handleSelectLocSearchResult = async (result) => {
+    setIsLocSearching(true);
+    if (result.is_gmaps) {
+      try {
+        const google = await loadGoogleMaps();
+        const { Geocoder } = await google.maps.importLibrary("geocoding");
+        const geocoder = new Geocoder();
+        geocoder.geocode({ placeId: result.place_id }, (results, status) => {
+          setIsLocSearching(false);
+          if (status === 'OK' && results[0]) {
+            const r = results[0];
+            const name = r.formatted_address.split(',')[0];
+            let state = '';
+            let country = '';
+            r.address_components.forEach(c => {
+              if (c.types.includes('administrative_area_level_1')) state = c.long_name;
+              if (c.types.includes('country')) country = c.long_name;
+            });
+            setNewLocName(name);
+            setNewLocState(state);
+            setNewLocCountry(country);
+            setLocLat(r.geometry.location.lat());
+            setLocLon(r.geometry.location.lng());
+            setLocSearchResults([]);
+            setLocSearchQuery('');
+          }
+        });
+      } catch (_) {
+        setIsLocSearching(false);
+      }
+      return;
+    }
+
+    const addr = result.address || {};
+    const name = result.display_name.split(',')[0];
+    const state = addr.state || addr.region || '';
+    const country = addr.country || '';
+
+    setNewLocName(name);
+    setNewLocState(state);
+    setNewLocCountry(country);
+    setLocLat(result.lat);
+    setLocLon(result.lon);
+    setLocSearchResults([]);
+    setLocSearchQuery('');
+    setIsLocSearching(false);
+  };
+
+  const handleCoordsPaste = (e, setLat, setLon) => {
+    const pasted = e.clipboardData.getData('text').trim();
+    const match = pasted.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
+    if (match) {
+      e.preventDefault();
+      setLat(match[1]);
+      setLon(match[2]);
+    }
+  };
+
+  const handleCreateLocationFromReviewData = async (e) => {
+    if (e) e.preventDefault();
+    if (!newLocName.trim()) return;
+    setNewLocLoading(true);
+
+    try {
+      const locId = generateUUID();
+      const queryParts = [newLocName.trim(), newLocState.trim(), newLocCountry.trim()].filter(Boolean).join(', ');
+
+      let lat = locLat ? parseFloat(locLat) : null;
+      let lon = locLon ? parseFloat(locLon) : null;
+      let photoUrl = null;
+
+      if (!lat || !lon) {
+        const apiKey = localStorage.getItem('google_maps_api_key');
+        const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+        if (apiKey && googleMapsEnabled) {
+          try {
+            trackApiCall('Google Maps Geocoding');
+            const google = await loadGoogleMaps();
+            const { Geocoder } = await google.maps.importLibrary("geocoding");
+            const geocoder = new Geocoder();
+            const gRes = await new Promise((resolve) => {
+              geocoder.geocode({ address: queryParts }, (results, status) => {
+                if (status === 'OK' && results && results[0]) resolve(results[0]);
+                else resolve(null);
+              });
+            });
+            if (gRes) {
+              lat = gRes.geometry.location.lat();
+              lon = gRes.geometry.location.lng();
+            }
+          } catch (err) {
+            console.error('Google Maps geocoding failed for new location', err);
+          }
+        }
+
+        if (!lat || !lon) {
+          try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(queryParts)}`, {
+              headers: { 'User-Agent': 'TravelBuff-App/1.0' }
+            });
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              lat = parseFloat(data[0].lat);
+              lon = parseFloat(data[0].lon);
+            }
+          } catch (err) {
+            console.error('OSM geocoding failed for new location', err);
+          }
+        }
+      }
+
+      // Fetch cover photo automatically
+      try {
+        const photoRes = await fetch(`/api/import/search-photo`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ query: newLocName.trim(), lat, lon })
+        });
+        const photoData = await photoRes.json();
+        if (photoData && (photoData.fileUrl || photoData.url)) {
+          photoUrl = photoData.fileUrl || photoData.url;
+        }
+      } catch (err) {}
+
+      const existingUrls = url ? [url] : [];
+      const newLocObj = {
+        id: locId,
+        name: newLocName.trim(),
+        state: newLocState.trim(),
+        country: newLocCountry.trim(),
+        latitude: lat,
+        longitude: lon,
+        visited: 0,
+        is_folder: isFolderChecked ? 1 : 0,
+        notes: locNotes.trim() || 'Created from Review Data',
+        local_file_data: photoUrl,
+        created_at: new Date().toISOString(),
+        source_urls: JSON.stringify(existingUrls)
+      };
+
+      await queueSyncAction('locations', 'insert', newLocObj);
+
+      if (photoUrl) {
+        await queueSyncAction('entity_photos', 'insert', {
+          id: generateUUID(),
+          entity_id: locId,
+          file_path: photoUrl,
+          is_featured: 1,
+          created_at: new Date().toISOString()
+        });
+      }
+
+      setSavedItemIds(prev => [...prev, { id: locId, type: 'location' }]);
+      setToastMessage(`Location "${newLocName.trim()}" created successfully!`);
+      setTimeout(() => setToastMessage(''), 2500);
+
+      // Reset modal fields
+      setNewLocName('');
+      setNewLocState('');
+      setNewLocCountry('');
+      setLocLat('');
+      setLocLon('');
+      setIsFolderChecked(false);
+      setLocNotes('');
+      setLocSearchQuery('');
+      setShowCreateLocModal(false);
+    } catch (err) {
+      console.error('Failed to create location:', err);
+      alert(`Error creating location: ${err.message}`);
+    } finally {
+      setNewLocLoading(false);
     }
   };
 
@@ -837,6 +1224,91 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
     }
   };
 
+  const handleDocumentImport = async (e) => {
+    if (e) e.preventDefault();
+    if (!docFile) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const fileName = docFile.name;
+      const isMd = fileName.endsWith('.md') || fileName.endsWith('.markdown');
+
+      let importedMarkdown = '';
+      let cleanTitle = guideName || fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+
+      if (isMd) {
+        // Read .md file directly client-side
+        importedMarkdown = await docFile.text();
+      } else {
+        // Submit document file to backend for conversion
+        const formData = new FormData();
+        formData.append('file', docFile);
+        formData.append('parserEngine', parserEngine);
+
+        const res = await fetch('/api/import/document', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to convert document');
+        }
+
+        importedMarkdown = data.markdown || '';
+        if (data.guideName && !guideName) {
+          cleanTitle = data.guideName;
+        }
+      }
+
+      setMarkdown(importedMarkdown);
+
+      // Parse headings & places from Markdown
+      const parsedHeadings = extractPlacesFromMarkdown(importedMarkdown, imageDirection);
+      const initialPlaces = parsedHeadings.map(p => ({
+        ...p,
+        id: generateUUID(),
+        status: 'pending'
+      }));
+      setPlaces(initialPlaces);
+
+      // Save to saved_markdowns
+      const newGuideId = generateUUID();
+      setActiveGuideId(newGuideId);
+
+      const newGuide = {
+        id: newGuideId,
+        name: cleanTitle,
+        url: `file://${fileName}`,
+        content: importedMarkdown,
+        status: 'pending'
+      };
+
+      await db.saved_markdowns.put(newGuide);
+
+      await fetch('/api/import/saved-markdowns', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(newGuide)
+      });
+
+      // Jump straight to Step 1 (Review Screen)!
+      setStep(1);
+    } catch (err) {
+      console.error('Document import error:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleMouseUp = (e) => {
     const selection = window.getSelection();
     const text = selection.toString().trim();
@@ -857,10 +1329,11 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
     setSelectionCoords(null);
   };
 
-  const handleExtractManual = () => {
-    if (!selectedText) return;
+  const handleExtractManual = (overrideText = null) => {
+    const textToUse = overrideText || selectedText;
+    if (!textToUse) return;
     
-    const textToExtract = toSentenceTitleCase(selectedText);
+    const textToExtract = toSentenceTitleCase(textToUse);
     setSelectedText('');
     setSelectionCoords(null);
     window.getSelection()?.removeAllRanges();
@@ -868,13 +1341,38 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
     setManualHighlights(prev => [...prev, textToExtract]);
     setToastMessage(`Added "${textToExtract}" to Curation Queue!`);
     setTimeout(() => setToastMessage(''), 2500);
+
+    // Search surrounding Markdown lines for nearby images
+    let nearbyImage = null;
+    if (markdown) {
+      const lines = markdown.split('\n');
+      const textLower = textToUse.toLowerCase();
+      let foundIdx = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().includes(textLower)) {
+          foundIdx = i;
+          break;
+        }
+      }
+
+      if (foundIdx !== -1) {
+        for (let i = Math.max(0, foundIdx - 5); i <= Math.min(lines.length - 1, foundIdx + 5); i++) {
+          const imgMatch = lines[i].match(/!\[.*?\]\((https?:\/\/[^\)]+)\)/i);
+          if (imgMatch) {
+            nearbyImage = imgMatch[1];
+            break;
+          }
+        }
+      }
+    }
  
+    const newPlaceId = generateUUID();
     const newPlace = {
-      id: generateUUID(),
+      id: newPlaceId,
       name: textToExtract,
       type: 'place',
       description: '',
-      localImagePath: null,
+      localImagePath: nearbyImage || null,
       latitude: '',
       longitude: '',
       target_location: '',
@@ -884,6 +1382,11 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
     };
  
     setPlaces(prev => [newPlace, ...prev]);
+
+    // Fetch photo in background if no nearby image was extracted
+    if (!nearbyImage) {
+      fetchPhotoForPlace(newPlaceId, textToExtract, null, null);
+    }
   };
  
   const performManualSearch = async (id, query) => {
@@ -1084,134 +1587,197 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
     setPlaces(prev => prev.map(p => p.id === id ? { ...p, status: 'pending' } : p));
   };
 
-  const escapeHtml = (unsafe) => {
-    return (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-  };
-  const renderMarkdownLines = () => {
+  const memoizedMarkdownLines = React.useMemo(() => {
+    if (!markdown) return null;
     const lines = markdown.split('\n');
-    return lines.map((line, idx) => {
-      let htmlLine = escapeHtml(line);
-      
-      if (line.match(/^(#{1,6})\s+/)) {
-        const headingText = line.replace(/^(#{1,6})\s+/, '').trim().toLowerCase();
-        
-        let cleanHeading = headingText.replace(/^(\d+[\.\-\s)]+\s*|\bStep\s+\d+[\.\-\s:]+\s*)/i, '').trim();
-        cleanHeading = cleanHeading.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
-
-        const isSaved = 
-          savedPlaces.some(p => p.name.toLowerCase() === cleanHeading) || 
-          savedLocations.some(l => l.name.toLowerCase() === cleanHeading);
-        
-        const placeInQueue = places.find(p => p.originalHeading && p.originalHeading.trim().toLowerCase() === headingText);
-        
-        if (isSaved) {
-          htmlLine = `<span style="background-color: rgba(74, 222, 128, 0.4); color: #4ade80; padding: 2px 4px; border-radius: 4px;">${htmlLine} (Saved)</span>`;
-        } else if (placeInQueue && placeInQueue.geocodeSuccess) {
-          htmlLine = `<span style="background-color: rgba(74, 222, 128, 0.4); color: #4ade80; padding: 2px 4px; border-radius: 4px;">${htmlLine}</span>`;
-        }
-      }
-
-      manualHighlights.forEach(hl => {
-        if (hl && line.toLowerCase().includes(hl.toLowerCase())) {
-          const cleanHl = hl.toLowerCase().trim();
-          const isHlSaved = 
-            savedPlaces.some(p => p.name.toLowerCase() === cleanHl) || 
-            savedLocations.some(l => l.name.toLowerCase() === cleanHl);
-          
-          const escapedHl = escapeHtml(hl);
-          const colorStyle = isHlSaved 
-            ? 'background-color: rgba(74, 222, 128, 0.4); color: #4ade80;' 
-            : 'background-color: rgba(56, 189, 248, 0.4); color: #38bdf8;';
-          htmlLine = htmlLine.split(escapedHl).join(`<span style="${colorStyle} padding: 0 2px; border-radius: 2px;">${escapedHl}</span>`);
-        }
-      });
-
-      return (
-        <div key={idx} dangerouslySetInnerHTML={{ __html: htmlLine || '&nbsp;' }} style={{ minHeight: '1.2rem', whiteSpace: 'pre-wrap' }} />
-      );
-    });
-  };
+    return lines.map((line, idx) => (
+      <MarkdownLineViewer
+        key={idx}
+        line={line}
+        idx={idx}
+        locationsList={locationsList}
+        savedLocations={savedLocations}
+        savedPlaces={savedPlaces}
+        placesQueue={places}
+        manualHighlights={manualHighlights}
+        onAddAsNewPlace={handleExtractManual}
+      />
+    ));
+  }, [markdown, locationsList, savedLocations, savedPlaces, places, manualHighlights]);
 
   if (step === 0) {
     return (
       <div className="modal-backdrop" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
-        <div className="modal-content" style={{ maxWidth: '500px', width: '90%', margin: '0 auto' }}>
+        <div className="modal-content" style={{ maxWidth: '540px', width: '90%', margin: '0 auto' }}>
           <div className="dialog-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Sparkles size={20} style={{ color: 'var(--accent-primary)' }} />
-              <h2 style={{ margin: 0 }}>Import Guide</h2>
+              <h2 style={{ margin: 0 }}>Import Content</h2>
             </div>
             <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer' }}>
               <X size={24} />
             </button>
           </div>
 
-          <form onSubmit={handleFetchMarkdown} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0 }}>
-              Enter the URL of a travel website or blog post to import its locations.
-            </p>
-            
-            <div className="form-group">
-              <label>Source URL</label>
-              <input
-                type="url"
-                className="form-control"
-                placeholder="https://example.com/best-places"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                required
-              />
-            </div>
+          {/* Import Mode Tabs */}
+          <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px', marginBottom: '16px' }}>
+            <button
+              type="button"
+              className={`btn ${importType === 'url' ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ flex: 1, padding: '8px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              onClick={() => setImportType('url')}
+            >
+              🌐 Import URL
+            </button>
+            <button
+              type="button"
+              className={`btn ${importType === 'document' ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ flex: 1, padding: '8px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              onClick={() => setImportType('document')}
+            >
+              📄 Import Document
+            </button>
+          </div>
 
-            <div className="form-group">
-              <label>Import Scraper Service</label>
-              <select className="form-control" value={scraper} onChange={(e) => setScraper(e.target.value)}>
-                <option value="jina">Jina Reader (Markdown conversion)</option>
-                <option value="cheerio">Cheerio Parser (Fast HTML parser)</option>
-                <option value="playwright">Playwright (Headless JS browser)</option>
-                <option value="firecrawl">Firecrawl (Advanced scraper API)</option>
-              </select>
-            </div>
+          {importType === 'url' ? (
+            <form onSubmit={handleFetchMarkdown} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+                Enter the URL of a travel website or blog post to import its locations.
+              </p>
+              
+              <div className="form-group">
+                <label>Source URL</label>
+                <input
+                  type="url"
+                  className="form-control"
+                  placeholder="https://example.com/best-places"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  required
+                />
+              </div>
 
-            <div className="form-group">
-              <label>Image Association Direction</label>
-              <select className="form-control" value={imageDirection} onChange={(e) => setImageDirection(e.target.value)}>
-                <option value="below">Below Headings (Default)</option>
-                <option value="above">Above Headings</option>
-              </select>
-            </div>
+              <div className="form-group">
+                <label>Import Scraper Service</label>
+                <select className="form-control" value={scraper} onChange={(e) => setScraper(e.target.value)}>
+                  <option value="jina">Jina Reader (Markdown conversion)</option>
+                  <option value="cheerio">Cheerio Parser (Fast HTML parser)</option>
+                  <option value="playwright">Playwright (Headless JS browser)</option>
+                  <option value="firecrawl">Firecrawl (Advanced scraper API)</option>
+                </select>
+              </div>
 
-            <div className="form-group">
-              <label>Guide Name (Optional)</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="My travel itinerary name"
-                value={guideName}
-                onChange={(e) => setGuideName(e.target.value)}
-              />
-            </div>
+              <div className="form-group">
+                <label>Image Association Direction</label>
+                <select className="form-control" value={imageDirection} onChange={(e) => setImageDirection(e.target.value)}>
+                  <option value="below">Below Headings (Default)</option>
+                  <option value="above">Above Headings</option>
+                </select>
+              </div>
 
-            {error && <div style={{ color: 'var(--error)', fontSize: '0.85rem' }}>{error}</div>}
+              <div className="form-group">
+                <label>Guide Name (Optional)</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="My travel itinerary name"
+                  value={guideName}
+                  onChange={(e) => setGuideName(e.target.value)}
+                />
+              </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
-              <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
-              <button type="submit" className="btn btn-primary" disabled={loading || !url}>
-                {loading ? (
-                  <><Loader size={16} className="sync-spinner" /> Fetching...</>
-                ) : (
-                  'Import'
+              {error && <div style={{ color: 'var(--error)', fontSize: '0.85rem' }}>{error}</div>}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={loading || !url}>
+                  {loading ? (
+                    <><Loader size={16} className="sync-spinner" /> Fetching...</>
+                  ) : (
+                    'Import URL'
+                  )}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleDocumentImport} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+                Upload a travel document (<strong>.md, .pdf, .docx, .html, .txt</strong>) to convert to Markdown and extract location pictures.
+              </p>
+
+              <div className="form-group">
+                <label>Select Document File</label>
+                <input
+                  type="file"
+                  className="form-control"
+                  accept=".md,.markdown,.pdf,.docx,.doc,.html,.htm,.txt"
+                  onChange={(e) => setDocFile(e.target.files[0] || null)}
+                  required
+                  style={{ padding: '6px' }}
+                />
+                {docFile && (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--success)', marginTop: '4px', display: 'block' }}>
+                    Selected: {docFile.name} ({(docFile.size / 1024).toFixed(1)} KB)
+                  </span>
                 )}
-              </button>
-            </div>
-          </form>
+              </div>
+
+              <div className="form-group">
+                <label style={{ marginBottom: '6px', display: 'block' }}>Parser Engine</label>
+                <div style={{ display: 'flex', gap: '16px', background: 'var(--bg-app)', padding: '10px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer', margin: 0 }}>
+                    <input
+                      type="radio"
+                      name="parserEngine"
+                      checked={parserEngine === 'local'}
+                      onChange={() => setParserEngine('local')}
+                    />
+                    ⚡ Fast Local Parser (pdf2md / mammoth / turndown)
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer', margin: 0 }}>
+                    <input
+                      type="radio"
+                      name="parserEngine"
+                      checked={parserEngine === 'ai'}
+                      onChange={() => setParserEngine('ai')}
+                    />
+                    🤖 AI Document Vision Parser
+                  </label>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Guide / Itinerary Title (Optional)</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Europe Trip 2026"
+                  value={guideName}
+                  onChange={(e) => setGuideName(e.target.value)}
+                />
+              </div>
+
+              {error && <div style={{ color: 'var(--error)', fontSize: '0.85rem' }}>{error}</div>}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={loading || !docFile}>
+                  {loading ? (
+                    <><Loader size={16} className="sync-spinner" /> Processing Document...</>
+                  ) : (
+                    'Import Document'
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="modal-backdrop" onMouseUp={handleMouseUp} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+    <div className="modal-backdrop" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
       {toastMessage && (
         <div style={{
           position: 'fixed',
@@ -1319,6 +1885,7 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
             {activeTab === 'markdown' && (
               <div 
                 id="markdown-viewer"
+                onMouseUp={handleMouseUp}
                 style={{ 
                   width: '100%', 
                   padding: '24px', 
@@ -1331,7 +1898,7 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
                   borderRadius: '6px'
                 }}
               >
-                {renderMarkdownLines()}
+                {memoizedMarkdownLines}
               </div>
             )}
 
@@ -1385,10 +1952,18 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
                     </div>
                   </div>
                   
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button 
+                      type="button"
+                      className="btn btn-secondary" 
+                      style={{ height: '34px', padding: '0 14px', fontSize: '0.78rem', backgroundColor: 'var(--accent-primary)', color: '#000', border: 'none', borderRadius: '4px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                      onClick={() => setShowCreateLocModal(true)}
+                    >
+                      <Plus size={14} /> Create Location
+                    </button>
                     <button 
                       className="btn" 
-                      style={{ padding: '8px 16px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', color: '#60a5fa', border: '1px solid rgba(96, 165, 250, 0.4)', borderRadius: '4px' }}
+                      style={{ height: '34px', padding: '0 14px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', color: '#60a5fa', border: '1px solid rgba(96, 165, 250, 0.4)', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                       onClick={handleGeocodeAllUnresolved}
                       title="Query OSM for all unresolved rows"
                     >
@@ -1396,7 +1971,7 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
                     </button>
                     <button 
                       className="btn" 
-                      style={{ padding: '8px 16px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', color: '#c084fc', border: '1px solid rgba(192, 132, 252, 0.4)', borderRadius: '4px' }}
+                      style={{ height: '34px', padding: '0 14px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', color: '#c084fc', border: '1px solid rgba(192, 132, 252, 0.4)', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                       onClick={() => handleExtractAI(null)}
                       title="Analyze unresolved rows using AI"
                     >
@@ -1404,7 +1979,7 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
                     </button>
                     <button 
                       className="btn btn-secondary" 
-                      style={{ padding: '8px 12px', fontSize: '0.78rem', borderRadius: '4px' }}
+                      style={{ height: '34px', padding: '0 12px', fontSize: '0.78rem', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                       onClick={() => setShowPromptConsole(!showPromptConsole)}
                     >
                       {showPromptConsole ? 'Hide Prompt' : 'Edit Prompt'}
@@ -1487,30 +2062,19 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
                                   </select>
                                   
                                   {place.type === 'place' && (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                      <select 
-                                        className="form-control" 
-                                        style={{ 
-                                          padding: '4px 8px', 
-                                          fontSize: '0.75rem', 
-                                          backgroundColor: 'var(--bg-app)', 
-                                          width: '100%', 
-                                          border: !place.parentLocationId ? '1px solid rgba(239, 68, 68, 0.6)' : '1px solid var(--border-glass)',
-                                          color: !place.parentLocationId ? '#ef4444' : 'var(--text-primary)'
-                                        }}
-                                        value={place.parentLocationId || ''}
-                                        onChange={(e) => setPlaces(prev => prev.map(p => p.id === place.id ? { ...p, parentLocationId: e.target.value } : p))}
-                                      >
-                                        <option value="">-- Parent Location --</option>
-                                        {locationsList.map(l => (
-                                          <option key={l.id} value={l.id}>{l.name}</option>
-                                        ))}
-                                      </select>
-                                      {!place.parentLocationId && (
-                                        <span style={{ fontSize: '0.62rem', color: '#ef4444', fontStyle: 'italic' }}>* Mandatory Location</span>
-                                      )}
-                                    </div>
-                                  )}
+                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                       <FilterableSelect
+                                         value={place.parentLocationId || ''}
+                                         placeholder="-- Parent Location --"
+                                         hasError={!place.parentLocationId}
+                                         options={locationsList.map(l => ({ id: l.id, name: l.name }))}
+                                         onChange={(val) => setPlaces(prev => prev.map(p => p.id === place.id ? { ...p, parentLocationId: val } : p))}
+                                       />
+                                       {!place.parentLocationId && (
+                                         <span style={{ fontSize: '0.62rem', color: '#ef4444', fontStyle: 'italic' }}>* Mandatory Location</span>
+                                       )}
+                                     </div>
+                                   )}
                                 </div>
                               </td>
 
@@ -1811,6 +2375,161 @@ export default function AiImportModal({ token, onClose, resumeMarkdown = null })
           </div>
         </div>
       </div>
+      {/* Create New Location Modal Overlay */}
+      {showCreateLocModal && (
+        <div className="modal-backdrop" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000, backgroundColor: 'rgba(0,0,0,0.8)', padding: '20px' }}>
+          <div className="login-card" style={{ maxWidth: '500px', width: '100%', padding: '24px', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-glass)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <MapPin size={18} style={{ color: 'var(--accent-primary)' }} /> Add New Location
+              </h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowCreateLocModal(false)} />
+            </div>
+
+            {/* Geocode Search Bar */}
+            <div className="form-group" style={{ marginBottom: '16px' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                Search {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'} for Region
+              </label>
+              <div style={{ position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ paddingLeft: '38px', fontSize: '0.85rem' }}
+                  placeholder="e.g. Paris, Tokyo, Bali..."
+                  value={locSearchQuery}
+                  onChange={(e) => setLocSearchQuery(e.target.value)}
+                />
+              </div>
+              {isLocSearching && <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px', margin: 0 }}>Searching region...</p>}
+              {locSearchResults.length > 0 && (
+                <div style={{
+                  background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-sm)', marginTop: '6px', maxHeight: '140px', overflowY: 'auto'
+                }}>
+                  {locSearchResults.map((r, i) => (
+                    <div 
+                      key={i} 
+                      onClick={() => handleSelectLocSearchResult(r)}
+                      style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-glass)', cursor: 'pointer', fontSize: '0.82rem' }}
+                      onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-app)'}
+                      onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                    >
+                      {r.display_name}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleCreateLocationFromReviewData} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div className="form-group">
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Location Name *</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Florence, Kyoto..."
+                  value={newLocName}
+                  onChange={(e) => setNewLocName(e.target.value)}
+                  required
+                  autoFocus
+                  style={{ padding: '8px 10px', fontSize: '0.85rem' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>State / Region</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Tuscany"
+                    value={newLocState}
+                    onChange={(e) => setNewLocState(e.target.value)}
+                    style={{ padding: '8px 10px', fontSize: '0.85rem' }}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Country</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Italy"
+                    value={newLocCountry}
+                    onChange={(e) => setNewLocCountry(e.target.value)}
+                    style={{ padding: '8px 10px', fontSize: '0.85rem' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Latitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    value={locLat}
+                    onChange={(e) => setLocLat(e.target.value)}
+                    onPaste={(e) => handleCoordsPaste(e, setLocLat, setLocLon)}
+                    style={{ padding: '8px 10px', fontSize: '0.85rem' }}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Longitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    value={locLon}
+                    onChange={(e) => setLocLon(e.target.value)}
+                    onPaste={(e) => handleCoordsPaste(e, setLocLat, setLocLon)}
+                    style={{ padding: '8px 10px', fontSize: '0.85rem' }}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <input
+                  type="checkbox"
+                  id="createAsFolderModal"
+                  checked={isFolderChecked}
+                  onChange={(e) => setIsFolderChecked(e.target.checked)}
+                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                <label htmlFor="createAsFolderModal" style={{ cursor: 'pointer', fontSize: '0.82rem', userSelect: 'none', margin: 0, color: 'var(--text-primary)' }}>
+                  Create as Folder (allows grouping other locations inside)
+                </label>
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Notes</label>
+                <textarea
+                  className="form-control"
+                  rows="2"
+                  value={locNotes}
+                  onChange={(e) => setLocNotes(e.target.value)}
+                  style={{ padding: '8px 10px', fontSize: '0.85rem' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowCreateLocModal(false)} disabled={newLocLoading}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={newLocLoading || !newLocName.trim()}>
+                  {newLocLoading ? (
+                    <><Loader size={14} className="sync-spinner" /> Saving...</>
+                  ) : (
+                    'Save Location'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -48,6 +48,15 @@ db.version(7).stores({
   locations: 'id, name, visited, immich_album_id, source_urls, parent_id, is_folder'
 });
 
+db.version(8).stores({
+  trip_notes: 'id, trip_id, category, created_at'
+});
+
+db.version(9).stores({
+  people: 'id, user_id, name, relation, immich_person_id',
+  user_addresses: 'id, user_id, label, is_default'
+});
+
 // Safe UUID generator supporting non-secure contexts
 export function generateUUID() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -163,7 +172,9 @@ export async function populateLocalDb(token) {
     { url: '/api/categories', table: 'custom_categories' },
     { url: '/api/trips', table: 'trips' },
     { url: '/api/ai_imports', table: 'ai_imports' },
-    { url: '/api/import/saved-markdowns', table: 'saved_markdowns' }
+    { url: '/api/import/saved-markdowns', table: 'saved_markdowns' },
+    { url: '/api/people', table: 'people' },
+    { url: '/api/user-addresses', table: 'user_addresses' }
   ];
 
   for (const item of tables) {
@@ -173,16 +184,22 @@ export async function populateLocalDb(token) {
         const rows = await res.json();
         
         if (item.table === 'entity_tags') {
-          await db[item.table].clear();
-          await db[item.table].bulkPut(rows);
+          await db.transaction('rw', [db.entity_tags], async () => {
+            await db.entity_tags.bulkPut(rows);
+          });
         } else {
-          // Non-destructive update: preserve rows that are pending sync
-          const localRows = await db[item.table].toArray();
-          const idsToDelete = localRows.map(r => r.id).filter(id => id !== undefined && id !== null && !pendingIds.has(id.toString()));
-          await db[item.table].bulkDelete(idsToDelete);
+          // Atomic non-destructive update: put updated rows first, delete missing rows second
+          await db.transaction('rw', [db[item.table]], async () => {
+            const localRows = await db[item.table].toArray();
+            const serverIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
+            const idsToDelete = localRows.map(r => r.id).filter(id => id !== undefined && id !== null && !serverIds.has(id.toString()) && !pendingIds.has(id.toString()));
+            const rowsToPut = rows.filter(r => r.id === undefined || r.id === null || !pendingIds.has(r.id.toString()));
 
-          const rowsToPut = rows.filter(r => r.id === undefined || r.id === null || !pendingIds.has(r.id.toString()));
-          await db[item.table].bulkPut(rowsToPut);
+            await db[item.table].bulkPut(rowsToPut);
+            if (idsToDelete.length > 0) {
+              await db[item.table].bulkDelete(idsToDelete);
+            }
+          });
         }
       }
     } catch (err) {
@@ -190,7 +207,7 @@ export async function populateLocalDb(token) {
     }
   }
 
-  // Prefetch dependent entities for trips
+  // Prefetch dependent entities for trips atomically
   try {
     const trips = await db.trips.toArray();
     for (const t of trips) {
@@ -226,68 +243,89 @@ export async function populateLocalDb(token) {
           });
         }
 
-        const localResRows = await db.reservations.where({ trip_id: t.id }).toArray();
-        const resIdsToDelete = localResRows.map(r => r.id).filter(id => id && !pendingIds.has(id.toString()));
-        await db.reservations.bulkDelete(resIdsToDelete);
+        await db.transaction('rw', [db.reservations], async () => {
+          const localResRows = await db.reservations.where({ trip_id: t.id }).toArray();
+          const serverResIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
+          const resIdsToDelete = localResRows.map(r => r.id).filter(id => id && !serverResIds.has(id.toString()) && !pendingIds.has(id.toString()));
+          const resRowsToPut = parsedRows.filter(r => !pendingIds.has(r.id.toString()));
 
-        const resRowsToPut = parsedRows.filter(r => !pendingIds.has(r.id.toString()));
-        await db.reservations.bulkPut(resRowsToPut);
+          await db.reservations.bulkPut(resRowsToPut);
+          if (resIdsToDelete.length > 0) {
+            await db.reservations.bulkDelete(resIdsToDelete);
+          }
+        });
       }
       
       // Itinerary items
       const itinRes = await fetch(`/api/itineraries/${t.id}`, { headers });
       if (itinRes.ok) {
         const rows = await itinRes.json();
-        const localItinRows = await db.itinerary_items.where({ trip_id: t.id }).toArray();
-        const itinIdsToDelete = localItinRows.map(r => r.id).filter(id => id && !pendingIds.has(id.toString()));
-        await db.itinerary_items.bulkDelete(itinIdsToDelete);
+        await db.transaction('rw', [db.itinerary_items], async () => {
+          const localItinRows = await db.itinerary_items.where({ trip_id: t.id }).toArray();
+          const serverItinIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
+          const itinIdsToDelete = localItinRows.map(r => r.id).filter(id => id && !serverItinIds.has(id.toString()) && !pendingIds.has(id.toString()));
+          const itinRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
 
-        const itinRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
-        await db.itinerary_items.bulkPut(itinRowsToPut);
+          await db.itinerary_items.bulkPut(itinRowsToPut);
+          if (itinIdsToDelete.length > 0) {
+            await db.itinerary_items.bulkDelete(itinIdsToDelete);
+          }
+        });
       }
       
       // Expenses
       const expRes = await fetch(`/api/expenses/${t.id}`, { headers });
       if (expRes.ok) {
         const rows = await expRes.json();
-        const localExpRows = await db.expenses.where({ trip_id: t.id }).toArray();
-        const expIdsToDelete = localExpRows.map(r => r.id).filter(id => id && !pendingIds.has(id.toString()));
-        await db.expenses.bulkDelete(expIdsToDelete);
+        await db.transaction('rw', [db.expenses], async () => {
+          const localExpRows = await db.expenses.where({ trip_id: t.id }).toArray();
+          const serverExpIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
+          const expIdsToDelete = localExpRows.map(r => r.id).filter(id => id && !serverExpIds.has(id.toString()) && !pendingIds.has(id.toString()));
+          const expRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
 
-        const expRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
-        await db.expenses.bulkPut(expRowsToPut);
+          await db.expenses.bulkPut(expRowsToPut);
+          if (expIdsToDelete.length > 0) {
+            await db.expenses.bulkDelete(expIdsToDelete);
+          }
+        });
       }
 
       // Rates
       const rateRes = await fetch(`/api/trips/${t.id}/rates`, { headers });
       if (rateRes.ok) {
         const rows = await rateRes.json();
-        const localRateRows = await db.trip_currency_rates.where({ trip_id: t.id }).toArray();
-        const rateIdsToDelete = localRateRows.map(r => r.id).filter(id => id && !pendingIds.has(id.toString()));
-        await db.trip_currency_rates.bulkDelete(rateIdsToDelete);
+        await db.transaction('rw', [db.trip_currency_rates], async () => {
+          const localRateRows = await db.trip_currency_rates.where({ trip_id: t.id }).toArray();
+          const serverRateIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
+          const rateIdsToDelete = localRateRows.map(r => r.id).filter(id => id && !serverRateIds.has(id.toString()) && !pendingIds.has(id.toString()));
+          const rateRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
 
-        const rateRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
-        await db.trip_currency_rates.bulkPut(rateRowsToPut);
+          await db.trip_currency_rates.bulkPut(rateRowsToPut);
+          if (rateIdsToDelete.length > 0) {
+            await db.trip_currency_rates.bulkDelete(rateIdsToDelete);
+          }
+        });
       }
     }
   } catch (err) {
     console.warn('Unable to prefetch trip itineraries/expenses (offline):', err);
   }
 
-  // Pre-fetch all photos in bulk
+  // Pre-fetch all photos in bulk atomically
   try {
     const photoRes = await fetch('/api/photos', { headers });
     if (photoRes.ok) {
       const photos = await photoRes.json();
-      await db.entity_photos.clear();
-      await db.entity_photos.bulkPut(photos);
+      await db.transaction('rw', [db.entity_photos], async () => {
+        await db.entity_photos.bulkPut(photos);
+      });
     }
   } catch (err) {
     console.warn('Unable to prefetch entity photos (offline):', err);
   }
 }
 
-// Clear all databases on logout
+// Clear all databases on logout or restore re-sync
 export async function clearLocalDb() {
   await db.locations.clear();
   await db.places.clear();
@@ -302,5 +340,9 @@ export async function clearLocalDb() {
   await db.itinerary_items.clear();
   await db.expenses.clear();
   await db.gps_logs.clear();
+  await db.ai_imports.clear();
+  await db.saved_markdowns.clear();
+  await db.people.clear();
+  await db.user_addresses.clear();
   await db.sync_queue.clear();
 }

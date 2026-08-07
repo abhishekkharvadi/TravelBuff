@@ -401,3 +401,44 @@ Once fetched, you are automatically redirected to the **Review Data (Curation Qu
 Keep your travel data safe:
 * **Export Backup**: Go to Settings and click **Backup Data** to download all locations, collections, trips, expenses, and configuration profiles as a single JSON file.
 * **Restore Backup**: Select **Restore Data** and upload your previously saved JSON file to overwrite and restore your database state.
+
+---
+
+## 9. Release Notes & Version History
+
+### Version 1.2.0 (Current Release)
+* **Browser Back (`←`) / Forward (`→`) Navigation & Hash Routing**:
+  - Implemented lightweight hash-based URL routing (`src/router.js`) synchronized with browser history states (`pushState`, `popstate`, `hashchange`).
+  - Pressing the browser Back button now seamlessly steps back through nested location folders (`/#/locations/:folderId`), collections, trip planners, and settings pages instead of exiting the app.
+* **Direct Deep-Linking**:
+  - Navigating directly to bookmarked URLs (e.g. `/#/locations/folder_japan_2026` or `/#/settings`) opens the target workspace and folder instantly on initial page boot.
+
+---
+
+### Version 1.1.0
+* **First-User Admin Role & Auto-Assignment**:
+  - The very first user registering on a server automatically receives `is_admin = 1` privileges.
+* **Admin User Management in Settings**:
+  - Admin users can view all registered accounts in Settings, reset passwords for any user, or permanently delete user accounts.
+* **Complete Cascade Data Cleanup & Deletion Warning**:
+  - Prompts an explicit warning modal before deleting a user account.
+  - Deletes user data across all 20 database tables (`locations`, `places`, `collections`, `trips`, `expenses`, `reservations`, `itinerary_items`, `trip_notes`, `saved_markdowns`, `ai_imports`, `people`, `user_addresses`, `tags`, `custom_categories`, `user_configs`, `users`) as well as uploaded media files from disk storage.
+* **Resilient Two-Phase Backup Restore Engine**:
+  - Split restore operations into Phase 1 (Database Metadata, < 10MB) and Phase 2 (Chunked Media Uploads, 10MB batches), resolving `413 Payload Too Large` and HTTP timeout errors.
+  - Skips existing media files in 1ms for fast resumable restores.
+* **User-Scoped Backup Exports & Name Collision Handling**:
+  - Backup exports are now strictly scoped to `req.user.id`.
+  - Duplicate `(Copy)` labels during restore are appended only if an entity with the exact same name already exists for the active user.
+* **UI Version Footers**:
+  - Added small-print version badges (`TravelBuff v1.1.0`) across the Login page, Header Dropdown menu, and Settings page.
+
+---
+
+### Version 1.0.0
+* Initial release of TravelBuff:
+  - Offline-first IndexedDB storage with real-time WebSocket server sync.
+  - Nested location folders, folder tags, and color-coded visited badges.
+  - OpenStreetMap & Google Maps integration with numbered sequence map pins.
+  - Daily trip itineraries, active trip mode, reservations, and multi-currency expense tracking.
+  - AI travel guide importer for web URLs, PDFs, and Word documents.
+  - Immich face photo sync, OwnTracks GPS log imports, and saved home address management.

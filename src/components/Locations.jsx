@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   MapPin, Plus, Check, Square, Star, Image as ImageIcon, Trash2, 
-  Search, X, Edit, Eye, Navigation, PlusCircle, Compass 
+  Search, X, Edit, Edit2, Eye, Navigation, PlusCircle, Compass, RefreshCw 
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
@@ -51,9 +51,13 @@ function FolderCover({ folderId, locations, getFeaturedPhoto }) {
   );
 }
 
-export default function Locations({ token, selectedLocation, setSelectedLocation, currentFolderId, setCurrentFolderId }) {
+export default function Locations({ token, selectedLocation: selectedLocationProp, setSelectedLocation, currentFolderId, setCurrentFolderId, returnToCollectionId, onReturnToCollection }) {
   // Dexie Queries (Reactive Live Updates)
   const locations = useLiveQuery(() => db.locations.toArray()) || [];
+  
+  const selectedLocation = typeof selectedLocationProp === 'object' && selectedLocationProp !== null 
+    ? selectedLocationProp 
+    : locations.find(l => String(l.id) === String(selectedLocationProp)) || null;
   const places = useLiveQuery(() => db.places.toArray()) || [];
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const entityTags = useLiveQuery(() => db.entity_tags.toArray()) || [];
@@ -68,6 +72,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     ...defaultCategories,
     ...customCategories.filter(c => !defaultCategories.some(d => d.name.toLowerCase() === c.name.toLowerCase()))
   ];
+
 
   // Local State
   const [folderToDelete, setFolderToDelete] = useState(null);
@@ -479,14 +484,31 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
       if (map[entId]) return; // already set by location/place local_file_data
       const pList = photoGroups[entId];
       const featured = pList.find(p => p.is_featured === 1);
-      map[entId] = featured ? featured.file_path : (pList[0] ? pList[0].file_path : '/placeholder.jpg');
+      if (featured && featured.file_path) map[entId] = featured.file_path;
+      else if (pList[0] && pList[0].file_path) map[entId] = pList[0].file_path;
     });
+
+    // Fallback: If a location has no photo, check if any of its sub-places has a photo!
+    locations.forEach(loc => {
+      if (!map[loc.id]) {
+        const childPlace = places.find(p => p.location_id === loc.id && map[p.id]);
+        if (childPlace) {
+          map[loc.id] = map[childPlace.id];
+        }
+      }
+    });
+
     return map;
   }, [locations, places, photos]);
 
   // Helper: Get featured image or fallback placeholder
   const getFeaturedPhoto = React.useCallback((entityId) => {
-    return featuredPhotoMap[entityId] || '/placeholder.jpg';
+    let url = featuredPhotoMap[entityId];
+    if (!url) return 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600';
+    if (typeof url === 'string' && !url.startsWith('http') && !url.startsWith('data:') && !url.startsWith('/')) {
+      url = '/' + url;
+    }
+    return url;
   }, [featuredPhotoMap]);
 
   // Helper: Get folder hierarchy path breadcrumbs
@@ -526,6 +548,19 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     }
     return path;
   };
+
+  // Helper: Get all child location IDs for a folder recursively
+  const getAllChildLocationIds = React.useCallback((fId) => {
+    let ids = [];
+    const children = locations.filter(l => l.parent_id && (String(l.parent_id) === String(fId)));
+    for (const child of children) {
+      ids.push(child.id);
+      if (child.is_folder === 1) {
+        ids = ids.concat(getAllChildLocationIds(child.id));
+      }
+    }
+    return ids;
+  }, [locations]);
 
   // Helper: Calculate dynamic visited status of a folder (recursively scanning contents)
   const getFolderVisitedStatus = (folderId) => {
@@ -975,6 +1010,44 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     }
   };
 
+  const handleFetchPhotoForEntity = async (entity, isPlace = false) => {
+    if (!entity || !entity.name) return;
+    trackApiCall('Wikipedia');
+    try {
+      const res = await fetch('/api/import/search-photo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          query: entity.name,
+          latitude: entity.latitude,
+          longitude: entity.longitude
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const url = data.fileUrl || data.url;
+        if (url) {
+          const table = isPlace ? 'places' : 'locations';
+          await db[table].update(entity.id, { local_file_data: url, photo_sync_status: 'completed' });
+          await queueSyncAction(table, 'update', { ...entity, local_file_data: url });
+          
+          await queueSyncAction('entity_photos', 'insert', {
+            id: generateUUID(),
+            entity_id: entity.id,
+            file_path: url,
+            is_featured: 1,
+            created_at: new Date().toISOString()
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch photo for entity:', e);
+    }
+  };
+
   const handleSaveName = async () => {
     if (tempName.trim()) {
       const latVal = tempLat.trim() ? parseFloat(tempLat) : null;
@@ -1097,6 +1170,18 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
       setLinkedAlbumData(results.filter(Boolean));
     });
   }, [selectedLocation?.immich_album_id, isImmichConfigured, token]);
+
+  // Auto-backfill local_file_data from featuredPhotoMap for client Dexie cache
+  useEffect(() => {
+    if (!locations || locations.length === 0) return;
+    locations.forEach(async (loc) => {
+      if (loc.is_folder === 1) return;
+      const featuredUrl = featuredPhotoMap[loc.id];
+      if (!loc.local_file_data && featuredUrl && !featuredUrl.includes('unsplash.com')) {
+        await db.locations.update(loc.id, { local_file_data: featuredUrl });
+      }
+    });
+  }, [locations, photos]);
 
   const handleLinkAlbum = async (albumId) => {
     if (!selectedLocation) return;
@@ -1235,6 +1320,16 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   if (selectedLocation) {
     return (
       <div className="container">
+        {returnToCollectionId && (
+          <button 
+            type="button"
+            className="btn btn-secondary"
+            onClick={onReturnToCollection}
+            style={{ marginBottom: '16px', display: 'inline-flex', alignItems: 'center', gap: '6px', width: 'auto' }}
+          >
+            ← Back to Collection
+          </button>
+        )}
         {/* Detail page header with Title (left) and Visited/Delete (right) */}
         <div className="page-header" style={{ alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
@@ -1452,7 +1547,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
 
             {/* Tags Section */}
             <div>
-              <h4 style={{ marginBottom: '8px' }}>Location Tags</h4>
+              <h4 style={{ marginBottom: '8px' }}>{selectedLocation.is_folder === 1 ? 'Folder Tags' : 'Location Tags'}</h4>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
                 {getEntityTagsList(selectedLocation.id).map(t => (
                   <span key={t.id} className="tag-badge" style={{ backgroundColor: t.color, color: '#000', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
@@ -1589,6 +1684,14 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                 >
                   <Plus size={12} /> Upload
                 </button>
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={() => handleFetchPhotoForEntity(selectedLocation, false)}
+                  style={{ width: 'auto', padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  title="Fetch cover image from Wikipedia"
+                >
+                  <RefreshCw size={12} /> Fetch Cover
+                </button>
                 <input
                   type="file"
                   id="photo-upload-loc"
@@ -1600,7 +1703,11 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
               <div className="photos-grid">
                 {photos.filter(p => p.entity_id === selectedLocation.id).map(photo => (
                   <div key={photo.id} className="photo-thumb">
-                    <img src={photo.file_path} alt="Location visual" />
+                    <img 
+                      src={photo.file_path && !photo.file_path.startsWith('http') && !photo.file_path.startsWith('data:') && !photo.file_path.startsWith('/') ? '/' + photo.file_path : photo.file_path} 
+                      onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }}
+                      alt="Location visual" 
+                    />
                     {photo.is_featured === 1 && <span className="featured-badge">Featured</span>}
                     <div className="photo-actions">
                       <button className={`photo-action-btn ${photo.is_featured === 1 ? 'featured-btn' : ''}`} onClick={() => handleSetFeaturedPhoto(photo)}>
@@ -1834,7 +1941,18 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
 
                         {/* Place Photos inside Inline Editor */}
                         <div style={{ marginTop: '8px' }}>
-                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Place Photos</label>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>Place Photos</label>
+                            <button 
+                              type="button"
+                              className="btn btn-secondary" 
+                              onClick={() => handleFetchPhotoForEntity(place, true)}
+                              style={{ width: 'auto', padding: '2px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                              title="Fetch cover image from Wikipedia"
+                            >
+                              <RefreshCw size={12} /> Fetch Cover
+                            </button>
+                          </div>
                           <div 
                             className="photo-uploader" 
                             onClick={() => document.getElementById(`photo-upload-${place.id}`).click()}
@@ -2274,15 +2392,20 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {currentFolderId && (
             <button 
+              type="button"
+              className="btn btn-secondary" 
               onClick={() => handleDeleteLocation(currentFolderId)} 
               style={{ 
-                width: '36px', height: '36px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                background: 'rgba(239, 68, 68, 0.15)', color: 'var(--error)', border: '1px solid var(--error-glow)', 
-                borderRadius: '50%', cursor: 'pointer' 
+                height: '36px', padding: '0 12px', fontSize: '0.78rem',
+                background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444', 
+                border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '6px', 
+                display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+                fontWeight: 600
               }}
               title="Delete Active Folder"
             >
-              <Trash2 size={16} />
+              <Trash2 size={15} />
+              <span>Delete Folder</span>
             </button>
           )}
           <button 
@@ -2298,6 +2421,137 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
           </button>
         </div>
       </div>
+
+      {/* Active Folder Tags Section */}
+      {currentFolderId && (
+        <div style={{
+          margin: '12px 0 20px 0',
+          padding: '10px 16px',
+          background: 'var(--bg-surface-elevated)',
+          border: '1px solid var(--border-glass)',
+          borderRadius: '8px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          flexWrap: 'wrap'
+        }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            🏷️ Folder Tags:
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {getEntityTagsList(currentFolderId).map(t => (
+              <span key={t.id} className="tag-badge" style={{ backgroundColor: t.color, color: '#000', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem', padding: '3px 8px' }}>
+                {t.name}
+                <X 
+                  size={12} 
+                  style={{ cursor: 'pointer' }} 
+                  onClick={() => handleRemoveTagFromEntity(currentFolderId, t.id)} 
+                />
+              </span>
+            ))}
+            
+            {/* Searchable Tag Dropdown */}
+            <div style={{ position: 'relative', display: 'inline-block', zIndex: 95 }}>
+              <input
+                type="text"
+                placeholder="+ Add Tag..."
+                className="form-control"
+                value={tagSearch}
+                onChange={(e) => {
+                  setTagSearch(e.target.value);
+                  setShowTagDropdown(true);
+                }}
+                onFocus={() => setShowTagDropdown(true)}
+                style={{
+                  background: 'var(--bg-app)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: '4px',
+                  padding: '4px 10px',
+                  fontSize: '0.78rem',
+                  color: 'var(--text-primary)',
+                  width: '120px'
+                }}
+              />
+              {showTagDropdown && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  background: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-sm)',
+                  zIndex: 100,
+                  maxHeight: '180px',
+                  overflowY: 'auto',
+                  width: '200px',
+                  marginTop: '4px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+                }}>
+                  {tags
+                    .filter(t => !getEntityTagsList(currentFolderId).map(et => et.id).includes(t.id))
+                    .filter(t => t.name.toLowerCase().includes(tagSearch.toLowerCase()))
+                    .map(t => (
+                      <div
+                        key={t.id}
+                        onClick={async () => {
+                          await queueSyncAction('entity_tags', 'insert', { entity_id: currentFolderId, tag_id: t.id });
+                          setTagSearch('');
+                          setShowTagDropdown(false);
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          borderBottom: '1px solid var(--border-glass)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          background: 'transparent'
+                        }}
+                      >
+                        <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: t.color, display: 'inline-block' }}></span>
+                        {t.name}
+                      </div>
+                    ))}
+                  {tagSearch.trim() && !tags.some(t => t.name.toLowerCase() === tagSearch.trim().toLowerCase()) && (
+                    <div
+                      onClick={async () => {
+                        await handleCreateAndAssignTag(currentFolderId, tagSearch);
+                        setTagSearch('');
+                        setShowTagDropdown(false);
+                      }}
+                      style={{
+                        padding: '8px 12px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        borderBottom: '1px solid var(--border-glass)',
+                        color: 'var(--accent-primary-hover)',
+                        fontWeight: '600',
+                        background: 'transparent'
+                      }}
+                    >
+                      + Create Tag "{tagSearch.trim()}"
+                    </div>
+                  )}
+                  {tags
+                    .filter(t => !getEntityTagsList(currentFolderId).map(et => et.id).includes(t.id))
+                    .filter(t => t.name.toLowerCase().includes(tagSearch.toLowerCase())).length === 0 && !tagSearch.trim() && (
+                    <div style={{ padding: '8px 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      No matching tags
+                    </div>
+                  )}
+                </div>
+              )}
+              {showTagDropdown && (
+                <div 
+                  onClick={() => setShowTagDropdown(false)} 
+                  style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 90 }}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
 
       {/* Delete Folder Custom Dialog Modal */}
@@ -2771,7 +3025,12 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
             // Tag
             if (filterTag) {
               const locTagIds = entityTags.filter(et => et.entity_id === loc.id).map(et => et.tag_id);
-              if (!locTagIds.includes(filterTag)) return false;
+              let hasTag = locTagIds.includes(filterTag);
+              if (!hasTag && loc.is_folder === 1) {
+                const childLocIds = getAllChildLocationIds(loc.id);
+                hasTag = entityTags.some(et => childLocIds.includes(et.entity_id) && et.tag_id === filterTag);
+              }
+              if (!hasTag) return false;
             }
             // Category
             if (filterCategory) {
