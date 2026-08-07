@@ -46,6 +46,25 @@ server.on('upgrade', (request, socket, head) => {
     socket.destroy();
   }
 });
+// Mutex to prevent concurrent database transactions in SQLite
+class Mutex {
+  constructor() {
+    this.queue = Promise.resolve();
+  }
+  async run(fn) {
+    const previous = this.queue;
+    let resolveNext;
+    this.queue = new Promise(resolve => { resolveNext = resolve; });
+    try {
+      await previous;
+      return await fn();
+    } finally {
+      resolveNext();
+    }
+  }
+}
+const dbMutex = new Mutex();
+
 
 // Broadcast changes to user's client sockets
 function notifyUserClients(userId, excludeWs = null) {
@@ -712,66 +731,151 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
 
   const userId = req.user.id;
 
-  try {
-    await db.exec('BEGIN TRANSACTION');
+  await dbMutex.run(async () => {
+    try {
+      await db.exec('BEGIN TRANSACTION');
 
-    const tablesWithUserId = [
-      'user_configs',
-      'locations',
-      'places',
-      'custom_categories',
-      'tags',
-      'collections',
-      'trips',
-      'gps_logs',
-      'ai_imports',
-      'saved_markdowns'
-    ];
+      const tablesWithUserId = [
+        'user_configs',
+        'locations',
+        'places',
+        'custom_categories',
+        'tags',
+        'collections',
+        'trips',
+        'gps_logs',
+        'ai_imports',
+        'saved_markdowns'
+      ];
 
-    for (const op of actions) {
-      const { table, action, data } = op;
-      const hasUserId = tablesWithUserId.includes(table);
-      
-      if (hasUserId) {
-        data.user_id = userId; 
-      }
-
-      if (action === 'insert') {
-        const columns = Object.keys(data).filter(col => data[col] !== undefined);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
-        
-        await db.run(
-          `INSERT OR REPLACE INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
-          values
-        );
-      } 
-      else if (action === 'update') {
-        const id = data.id;
-        if (!id) continue;
-
-        const columns = Object.keys(data).filter(col => col !== 'id' && data[col] !== undefined);
-        const assignments = columns.map(col => `${col} = ?`).join(', ');
-        const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
+      for (const op of actions) {
+        const { table, action, data } = op;
+        console.log("[Sync Debug]", table, action, JSON.stringify(data));
+        if (!data || typeof data !== 'object') continue;
+        const hasUserId = tablesWithUserId.includes(table);
         
         if (hasUserId) {
-          values.push(id, userId);
-          await db.run(
-            `UPDATE ${table} SET ${assignments} WHERE id = ? AND user_id = ?`,
-            values
-          );
-        } else {
-          values.push(id);
-          await db.run(
-            `UPDATE ${table} SET ${assignments} WHERE id = ?`,
-            values
-          );
+          data.user_id = userId; 
         }
-      } 
-      else if (action === 'delete_folder') {
-        if (table === 'locations') {
+
+        if (action === 'insert') {
+          const columns = Object.keys(data).filter(col => data[col] !== undefined);
+          if (columns.length === 0) continue;
+          const placeholders = columns.map(() => '?').join(', ');
+          const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
+          
+          await db.run(
+            `INSERT OR REPLACE INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
+            values
+          );
+        } 
+        else if (action === 'update') {
           const id = data.id;
-          if (id) {
+          if (!id) continue;
+
+          const columns = Object.keys(data).filter(col => col !== 'id' && data[col] !== undefined);
+          if (columns.length === 0) continue;
+          const assignments = columns.map(col => `${col} = ?`).join(', ');
+          const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
+          
+          if (hasUserId) {
+            values.push(id, userId);
+            await db.run(
+              `UPDATE ${table} SET ${assignments} WHERE id = ? AND user_id = ?`,
+              values
+            );
+          } else {
+            values.push(id);
+            await db.run(
+              `UPDATE ${table} SET ${assignments} WHERE id = ?`,
+              values
+            );
+          }
+        } 
+        else if (action === 'delete_folder') {
+          if (table === 'locations') {
+            const id = data.id;
+            if (id) {
+              const deletePhotosForEntity = async (entityId) => {
+                try {
+                  const photos = await db.all('SELECT file_path FROM entity_photos WHERE entity_id = ?', [entityId]);
+                  for (const p of photos) {
+                    if (p.file_path && p.file_path.startsWith('/uploads/')) {
+                      const filename = p.file_path.replace('/uploads/', '');
+                      const filePath = join(UPLOADS_DIR, filename);
+                      if (fs.existsSync(filePath)) {
+                        fs.unlinkSync(filePath);
+                      }
+                    }
+                  }
+                  await db.run('DELETE FROM entity_photos WHERE entity_id = ?', [entityId]);
+                } catch (err) {
+                  console.error('Failed to delete photos for entity:', entityId, err);
+                }
+              };
+
+              const deleteLocationRecursively = async (locId) => {
+                const childLocs = await db.all('SELECT id FROM locations WHERE parent_id = ? AND user_id = ?', [locId, userId]);
+                for (const child of childLocs) {
+                  await deleteLocationRecursively(child.id);
+                }
+                const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [locId]);
+                if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
+                  const filename = loc.local_file_data.replace('/uploads/', '');
+                  const filePath = join(UPLOADS_DIR, filename);
+                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                }
+                await deletePhotosForEntity(locId);
+
+                const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [locId]);
+                for (const sp of subPlaces) {
+                  if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
+                    const filename = sp.local_file_data.replace('/uploads/', '');
+                    const filePath = join(UPLOADS_DIR, filename);
+                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                  }
+                  await deletePhotosForEntity(sp.id);
+                  await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
+                }
+                await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [locId, userId]);
+              };
+
+              const deleteContents = data.deleteContents;
+              if (deleteContents) {
+                await deleteLocationRecursively(id);
+              } else {
+                await db.run('UPDATE locations SET parent_id = NULL WHERE parent_id = ? AND user_id = ?', [id, userId]);
+                const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [id]);
+                if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
+                  const filename = loc.local_file_data.replace('/uploads/', '');
+                  const filePath = join(UPLOADS_DIR, filename);
+                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                }
+                await deletePhotosForEntity(id);
+
+                const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [id]);
+                for (const sp of subPlaces) {
+                  if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
+                    const filename = sp.local_file_data.replace('/uploads/', '');
+                    const filePath = join(UPLOADS_DIR, filename);
+                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                  }
+                  await deletePhotosForEntity(sp.id);
+                  await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
+                }
+                await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+              }
+            }
+          }
+        }
+        else if (action === 'delete') {
+          if (table === 'entity_tags') {
+            const { entity_id, tag_id } = data;
+            await db.run(`DELETE FROM entity_tags WHERE entity_id = ? AND tag_id = ?`, [entity_id, tag_id]);
+          } else {
+            const id = data.id;
+            if (!id) continue;
+
             const deletePhotosForEntity = async (entityId) => {
               try {
                 const photos = await db.all('SELECT file_path FROM entity_photos WHERE entity_id = ?', [entityId]);
@@ -790,37 +894,7 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
               }
             };
 
-            const deleteLocationRecursively = async (locId) => {
-              const childLocs = await db.all('SELECT id FROM locations WHERE parent_id = ? AND user_id = ?', [locId, userId]);
-              for (const child of childLocs) {
-                await deleteLocationRecursively(child.id);
-              }
-              const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [locId]);
-              if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
-                const filename = loc.local_file_data.replace('/uploads/', '');
-                const filePath = join(UPLOADS_DIR, filename);
-                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-              }
-              await deletePhotosForEntity(locId);
-
-              const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [locId]);
-              for (const sp of subPlaces) {
-                if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
-                  const filename = sp.local_file_data.replace('/uploads/', '');
-                  const filePath = join(UPLOADS_DIR, filename);
-                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                }
-                await deletePhotosForEntity(sp.id);
-                await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
-              }
-              await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [locId, userId]);
-            };
-
-            const deleteContents = data.deleteContents;
-            if (deleteContents) {
-              await deleteLocationRecursively(id);
-            } else {
-              await db.run('UPDATE locations SET parent_id = NULL WHERE parent_id = ? AND user_id = ?', [id, userId]);
+            if (table === 'locations') {
               const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [id]);
               if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
                 const filename = loc.local_file_data.replace('/uploads/', '');
@@ -839,97 +913,45 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
                 await deletePhotosForEntity(sp.id);
                 await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
               }
-              await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
-            }
-          }
-        }
-      }
-      else if (action === 'delete') {
-        if (table === 'entity_tags') {
-          // entity_tags uses composite key [entity_id, tag_id]
-          const { entity_id, tag_id } = data;
-          await db.run(`DELETE FROM entity_tags WHERE entity_id = ? AND tag_id = ?`, [entity_id, tag_id]);
-        } else {
-          const id = data.id;
-          if (!id) continue;
-
-          // Perform cascading photo file deletions on the host filesystem
-          const deletePhotosForEntity = async (entityId) => {
-            try {
-              const photos = await db.all('SELECT file_path FROM entity_photos WHERE entity_id = ?', [entityId]);
-              for (const p of photos) {
-                if (p.file_path && p.file_path.startsWith('/uploads/')) {
-                  const filename = p.file_path.replace('/uploads/', '');
-                  const filePath = join(UPLOADS_DIR, filename);
-                  if (fs.existsSync(filePath)) {
-                    fs.unlinkSync(filePath);
-                  }
-                }
-              }
-              await db.run('DELETE FROM entity_photos WHERE entity_id = ?', [entityId]);
-            } catch (err) {
-              console.error('Failed to delete photos for entity:', entityId, err);
-            }
-          };
-
-          if (table === 'locations') {
-            const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [id]);
-            if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
-              const filename = loc.local_file_data.replace('/uploads/', '');
-              const filePath = join(UPLOADS_DIR, filename);
-              if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-            }
-            await deletePhotosForEntity(id);
-
-            // Cascade delete sub-places and their files
-            const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [id]);
-            for (const sp of subPlaces) {
-              if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
-                const filename = sp.local_file_data.replace('/uploads/', '');
+            } else if (table === 'places') {
+              const pl = await db.get('SELECT local_file_data FROM places WHERE id = ?', [id]);
+              if (pl && pl.local_file_data && pl.local_file_data.startsWith('/uploads/')) {
+                const filename = pl.local_file_data.replace('/uploads/', '');
                 const filePath = join(UPLOADS_DIR, filename);
                 if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
               }
-              await deletePhotosForEntity(sp.id);
-              await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
+              await deletePhotosForEntity(id);
             }
-          } else if (table === 'places') {
-            const pl = await db.get('SELECT local_file_data FROM places WHERE id = ?', [id]);
-            if (pl && pl.local_file_data && pl.local_file_data.startsWith('/uploads/')) {
-              const filename = pl.local_file_data.replace('/uploads/', '');
-              const filePath = join(UPLOADS_DIR, filename);
-              if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-            }
-            await deletePhotosForEntity(id);
-          }
 
-          if (hasUserId) {
-            await db.run(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`, [id, userId]);
-          } else {
-            await db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
+            if (hasUserId) {
+              await db.run(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`, [id, userId]);
+            } else {
+              await db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
+            }
           }
         }
       }
-    }
 
-    await db.exec('COMMIT');
-    res.json({ success: true });
-    notifyUserClients(userId);
-  } catch (err) {
-    try {
-      await db.exec('ROLLBACK');
-    } catch (rollbackErr) {
-      console.warn('Rollback failed (possibly no transaction active):', rollbackErr.message);
+      await db.exec('COMMIT');
+      res.json({ success: true });
+      notifyUserClients(userId);
+    } catch (err) {
+      try {
+        await db.exec('ROLLBACK');
+      } catch (rollbackErr) {
+        console.warn('Rollback failed (possibly no transaction active):', rollbackErr.message);
+      }
+      try {
+        const dataDir = process.env.DATABASE_DIR || join(__dirname, 'data');
+        const logPath = join(dataDir, 'server_error.log');
+        const logMessage = `[${new Date().toISOString()}] Sync failed: ${err.message}\nStack: ${err.stack}\n\n`;
+        fs.appendFileSync(logPath, logMessage);
+      } catch (logErr) {
+        console.error('Failed to write to error log:', logErr);
+      }
+      res.status(500).json({ error: err.message });
     }
-    try {
-      const dataDir = process.env.DATABASE_DIR || join(__dirname, 'data');
-      const logPath = join(dataDir, 'server_error.log');
-      const logMessage = `[${new Date().toISOString()}] Sync failed: ${err.message}\nStack: ${err.stack}\n\n`;
-      fs.appendFileSync(logPath, logMessage);
-    } catch (logErr) {
-      console.error('Failed to write to error log:', logErr);
-    }
-    res.status(500).json({ error: err.message });
-  }
+  });
 });
 
 // ==========================================
@@ -1364,6 +1386,22 @@ app.delete('/api/places/:id', authenticateToken, async (req, res) => {
 });
 
 // Photos
+app.get('/api/photos', authenticateToken, async (req, res) => {
+  try {
+    const photos = await db.all(`
+      SELECT ep.* FROM entity_photos ep
+      WHERE ep.entity_id IN (
+        SELECT id FROM locations WHERE user_id = ?
+        UNION
+        SELECT id FROM places WHERE location_id IN (SELECT id FROM locations WHERE user_id = ?)
+      )
+    `, [req.user.id, req.user.id]);
+    res.json(photos);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/photos/:entityId', authenticateToken, async (req, res) => {
   const { entityId } = req.params;
   try {

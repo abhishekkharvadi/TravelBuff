@@ -85,3 +85,2010 @@ Stack: Error: Failed to download Wikimedia image: Too many requests (f061ab2)
     at file:///app/server.js:673:13
     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
 
+[2026-07-29T15:54:28.641Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:28.644Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:29.035Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:29.049Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:29.227Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:29.263Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:29.795Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:29.993Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.033Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.038Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:30.040Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:30.094Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.151Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.163Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:30.180Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.209Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.237Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.238Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.250Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:30.270Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:30.499Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.514Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:30.638Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.644Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:30.802Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:30.828Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:31.384Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:31.394Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:31.802Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:31.828Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:32.055Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:32.059Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:32.106Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:32.107Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:32.746Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:32.754Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:32.771Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:32.773Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:32.852Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:32.868Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:32.902Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:32.949Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:32.963Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:33.156Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.215Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:33.252Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.289Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.320Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.328Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.351Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:33.363Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.365Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.379Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:33.401Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.418Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:33.532Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:33.685Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.893Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:33.914Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.940Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:33.981Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:34.135Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.419Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:35.422Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.440Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:35.457Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.546Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.690Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:35.719Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:35.726Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.736Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:35.801Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.846Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:35.848Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.850Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.918Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:35.939Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:35.940Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:35.942Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.005Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.031Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.279Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.310Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.331Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.424Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.476Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.488Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.493Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.510Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.541Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.552Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.580Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.592Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.611Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.663Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.699Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.703Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.707Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.757Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.771Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.776Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.799Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.817Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.853Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.889Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.896Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:36.918Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.969Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:36.985Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.020Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.026Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.048Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.126Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.140Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.141Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.158Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.161Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.162Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.166Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.242Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.248Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.255Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.554Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.566Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.666Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.670Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.684Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.690Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.750Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.756Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:37.806Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:37.812Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.055Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.061Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.098Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.098Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.105Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.177Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.178Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.222Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.306Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.317Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.318Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.324Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.345Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.348Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.359Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.400Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.401Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.429Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.452Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.494Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.529Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.531Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.538Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.575Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.576Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.599Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.601Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.661Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.661Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.663Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.673Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.680Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.707Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.708Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.710Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.711Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.755Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.756Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.832Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.876Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.915Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.938Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:38.961Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:38.977Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.024Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.031Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.167Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.176Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.200Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.200Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.212Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.263Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.266Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.284Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.285Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.351Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.354Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.391Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.392Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.419Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.421Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.553Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.556Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.579Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.629Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.636Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.639Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.715Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:39.717Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:39.810Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.108Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.109Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:40.205Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.211Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:40.311Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.323Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.371Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.410Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.412Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.425Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:40.489Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.519Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:40.561Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.619Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.620Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.641Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.642Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.647Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:40.695Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.696Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.698Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.701Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.835Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.839Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.902Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.926Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:40.951Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.952Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:40.953Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.035Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.038Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.108Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.114Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.121Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.123Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.164Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.165Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.223Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.571Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.573Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.596Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.597Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.604Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.670Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.672Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.683Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.685Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.727Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.779Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.783Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:41.842Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:41.847Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:42.445Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:42.448Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:42.478Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:42.479Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:42.623Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:42.632Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:42.647Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:42.654Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:42.688Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:42.733Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:42.744Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:42.764Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:42.867Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:42.877Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:42.996Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.000Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.022Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.047Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.173Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.179Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.298Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.299Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.334Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.341Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.486Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.547Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.597Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.626Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.665Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.676Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.691Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.771Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.772Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.783Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.796Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.820Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.821Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.849Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.925Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.945Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.945Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.950Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:43.957Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:43.996Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:44.015Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:44.069Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:44.070Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:44.628Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:44.856Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:44.948Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:44.971Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:45.367Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:45.424Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:45.453Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:45.456Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:45.566Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:45.857Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:45.873Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:45.875Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:46.150Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:46.199Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:46.210Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:46.234Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:46.395Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:46.397Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:46.400Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:46.719Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:46.721Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:47.250Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:47.251Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:47.258Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:47.468Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:47.470Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:47.524Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:47.528Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:47.708Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:47.709Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:47.740Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:47.943Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:47.944Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:48.102Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:48.109Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:48.249Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:48.263Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:48.303Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:48.311Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:48.643Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:48.645Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:48.803Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:48.805Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:48.938Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:48.939Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:48.964Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:48.970Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:49.057Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:49.172Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:49.607Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:49.616Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:49.684Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:49.686Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:49.761Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:49.858Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:49.869Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:50.623Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:50.639Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:50.731Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:50.736Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:50.777Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:50.799Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:50.816Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:50.932Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:50.971Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:50.982Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:50.989Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:51.019Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:51.021Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:51.862Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:51.864Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:52.068Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:52.090Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:52.516Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:52.522Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:52.875Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:52.876Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:52.881Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:53.699Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:53.741Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:53.749Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:53.752Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:53.864Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:53.874Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:54.063Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:54.065Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:54.833Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:54.835Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:55.046Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:55.058Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:55.304Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:55.306Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:55.928Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:55.935Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:56.069Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:56.238Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:56.251Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:56.310Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:58.830Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:58.895Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:54:59.195Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:54:59.196Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:01.021Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:01.033Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:02.514Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:02.516Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:03.726Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:03.764Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:05.007Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:05.016Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:08.997Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:09.063Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:09.087Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:09.090Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:09.092Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:09.213Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:09.215Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:11.793Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:12.155Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:13.655Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:13.693Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:14.119Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:14.130Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:14.315Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:14.320Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:15.996Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:16.000Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:16.066Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:16.072Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:17.373Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:17.382Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:17.511Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:17.516Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:18.544Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:18.559Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:19.101Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:19.115Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:19.216Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:19.232Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:19.344Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:19.348Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:19.667Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:19.669Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:19.859Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:19.865Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:20.766Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:20.781Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:21.010Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:21.051Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:22.149Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:22.158Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:22.298Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:22.307Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:23.476Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:23.548Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:23.871Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:23.943Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:24.461Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:24.631Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:24.883Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:24.974Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:25.111Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:25.179Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:25.551Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:25.554Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:26.001Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:26.083Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:26.364Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:26.413Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:27.123Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:27.160Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:27.788Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:27.798Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:29.819Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:29.829Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:30.645Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:30.721Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:30.811Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:30.820Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:31.149Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:31.158Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:31.511Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:31.528Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:31.894Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:31.916Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:32.038Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:32.048Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T15:55:32.346Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T15:55:32.371Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:00:39.756Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:00:39.759Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:09.596Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:09.619Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:09.678Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:09.856Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:10.137Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:10.182Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:10.404Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:10.699Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:10.702Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:10.703Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:11.009Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:11.291Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:12.029Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:12.060Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:12.976Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:12.995Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:13.880Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:13.908Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:15.920Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:15.932Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:16.237Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:16.377Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:16.619Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:16.629Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:16.916Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:17.105Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:17.108Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:17.117Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:17.206Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:17.247Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:18.711Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:18.729Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:18.919Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:19.410Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:19.714Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:20.056Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:20.601Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:20.656Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:21.092Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:21.379Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:21.388Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:22.574Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:22.899Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:23.100Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:24.742Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:24.796Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:26.691Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:26.706Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:28.048Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:28.164Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:28.181Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:29.746Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:29.835Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:32.168Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:32.752Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:32.759Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:32.951Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:32.985Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:33.106Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:36.526Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:36.532Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:36.610Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:36.831Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:37.347Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:37.530Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:37.714Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:37.721Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:38.354Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:38.452Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:38.518Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:38.520Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:38.530Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T16:01:41.965Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T16:01:41.967Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:52.207Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:52.487Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:52.736Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:52.824Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:52.866Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:52.872Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:52.883Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:52.911Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:52.974Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:52.979Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:53.035Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:53.153Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:53.166Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:53.239Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:53.263Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:53.311Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:53.319Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:53.369Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:54.891Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:54.921Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:54.986Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:54.995Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:55.291Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:55.600Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:55.951Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:56.087Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:56.088Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:56.211Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:56.488Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:56.580Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:56.710Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:56.728Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:56.840Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:56.960Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:56.970Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:57.050Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:57.135Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:57.477Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:57.613Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:57.617Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:57.657Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:57.721Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:57.742Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:57.801Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:57.804Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:57.835Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:18:58.354Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:18:58.433Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:19:20.470Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:19:20.484Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:19:25.966Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:19:25.987Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:19:30.298Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:19:45.220Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:19:45.232Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:19:55.661Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:19:55.662Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:19:59.896Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:19:59.898Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:20:00.233Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:20:00.235Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:20:04.831Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:20:07.124Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:20:07.170Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:20:07.438Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:20:07.549Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:20:07.580Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:20:10.455Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:20:10.462Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:20:14.514Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:20:14.525Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:20:51.268Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:20:51.270Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:21:02.801Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:21:02.836Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:21:40.687Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:21:44.643Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:21:44.650Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:21:56.389Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:21:56.396Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:21:56.402Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:21:57.291Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:21:57.448Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:22:42.664Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:22:42.714Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-29T17:22:42.805Z] Sync failed: SQLITE_ERROR: cannot start a transaction within a transaction
+Stack: Error: SQLITE_ERROR: cannot start a transaction within a transaction
+
+[2026-07-29T17:22:42.927Z] Sync failed: SQLITE_ERROR: cannot commit - no transaction is active
+Stack: Error: SQLITE_ERROR: cannot commit - no transaction is active
+
+[2026-07-30T00:20:00.484Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T00:42:31.455Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:09:44.364Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:09:49.097Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:12:16.562Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:21:17.714Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:21:20.449Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:22:18.779Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:37:08.327Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:37:19.698Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:37:22.690Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:37:28.174Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:38:58.598Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:41:09.028Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:44:41.138Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+
+[2026-07-30T01:44:46.193Z] Sync failed: SQLITE_ERROR: table expenses has no column named reservation_id
+Stack: Error: SQLITE_ERROR: table expenses has no column named reservation_id
+

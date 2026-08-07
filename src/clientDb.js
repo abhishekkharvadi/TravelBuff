@@ -145,6 +145,15 @@ export function triggerSync() {
 export async function populateLocalDb(token) {
   const headers = { Authorization: `Bearer ${token}` };
   
+  // Extract all pending ids to prevent overwriting them during populate
+  const pendingActions = await db.sync_queue.toArray();
+  const pendingIds = new Set();
+  for (const act of pendingActions) {
+    if (act.data && act.data.id) {
+      pendingIds.add(act.data.id.toString());
+    }
+  }
+
   const tables = [
     { url: '/api/locations', table: 'locations' },
     { url: '/api/places', table: 'places' },
@@ -162,8 +171,19 @@ export async function populateLocalDb(token) {
       const res = await fetch(item.url, { headers });
       if (res.ok) {
         const rows = await res.json();
-        await db[item.table].clear();
-        await db[item.table].bulkPut(rows);
+        
+        if (item.table === 'entity_tags') {
+          await db[item.table].clear();
+          await db[item.table].bulkPut(rows);
+        } else {
+          // Non-destructive update: preserve rows that are pending sync
+          const localRows = await db[item.table].toArray();
+          const idsToDelete = localRows.map(r => r.id).filter(id => id !== undefined && id !== null && !pendingIds.has(id.toString()));
+          await db[item.table].bulkDelete(idsToDelete);
+
+          const rowsToPut = rows.filter(r => r.id === undefined || r.id === null || !pendingIds.has(r.id.toString()));
+          await db[item.table].bulkPut(rowsToPut);
+        }
       }
     } catch (err) {
       console.warn(`Unable to prefetch table ${item.table} from server (offline):`, err);
@@ -205,51 +225,62 @@ export async function populateLocalDb(token) {
             local_file_data: localFileData
           });
         }
-        await db.reservations.where({ trip_id: t.id }).delete();
-        await db.reservations.bulkPut(parsedRows);
+
+        const localResRows = await db.reservations.where({ trip_id: t.id }).toArray();
+        const resIdsToDelete = localResRows.map(r => r.id).filter(id => id && !pendingIds.has(id.toString()));
+        await db.reservations.bulkDelete(resIdsToDelete);
+
+        const resRowsToPut = parsedRows.filter(r => !pendingIds.has(r.id.toString()));
+        await db.reservations.bulkPut(resRowsToPut);
       }
       
       // Itinerary items
       const itinRes = await fetch(`/api/itineraries/${t.id}`, { headers });
       if (itinRes.ok) {
         const rows = await itinRes.json();
-        await db.itinerary_items.where({ trip_id: t.id }).delete();
-        await db.itinerary_items.bulkPut(rows);
+        const localItinRows = await db.itinerary_items.where({ trip_id: t.id }).toArray();
+        const itinIdsToDelete = localItinRows.map(r => r.id).filter(id => id && !pendingIds.has(id.toString()));
+        await db.itinerary_items.bulkDelete(itinIdsToDelete);
+
+        const itinRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
+        await db.itinerary_items.bulkPut(itinRowsToPut);
       }
       
       // Expenses
       const expRes = await fetch(`/api/expenses/${t.id}`, { headers });
       if (expRes.ok) {
         const rows = await expRes.json();
-        await db.expenses.where({ trip_id: t.id }).delete();
-        await db.expenses.bulkPut(rows);
+        const localExpRows = await db.expenses.where({ trip_id: t.id }).toArray();
+        const expIdsToDelete = localExpRows.map(r => r.id).filter(id => id && !pendingIds.has(id.toString()));
+        await db.expenses.bulkDelete(expIdsToDelete);
+
+        const expRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
+        await db.expenses.bulkPut(expRowsToPut);
       }
 
       // Rates
       const rateRes = await fetch(`/api/trips/${t.id}/rates`, { headers });
       if (rateRes.ok) {
         const rows = await rateRes.json();
-        await db.trip_currency_rates.where({ trip_id: t.id }).delete();
-        await db.trip_currency_rates.bulkPut(rows);
+        const localRateRows = await db.trip_currency_rates.where({ trip_id: t.id }).toArray();
+        const rateIdsToDelete = localRateRows.map(r => r.id).filter(id => id && !pendingIds.has(id.toString()));
+        await db.trip_currency_rates.bulkDelete(rateIdsToDelete);
+
+        const rateRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
+        await db.trip_currency_rates.bulkPut(rateRowsToPut);
       }
     }
   } catch (err) {
     console.warn('Unable to prefetch trip itineraries/expenses (offline):', err);
   }
 
-  // Pre-fetch all photos for locations and places
+  // Pre-fetch all photos in bulk
   try {
-    const locs = await db.locations.toArray();
-    const places = await db.places.toArray();
-    const entities = [...locs.map(l => l.id), ...places.map(p => p.id)];
-    
-    await db.entity_photos.clear();
-    for (const id of entities) {
-      const photoRes = await fetch(`/api/photos/${id}`, { headers });
-      if (photoRes.ok) {
-        const photos = await photoRes.json();
-        await db.entity_photos.bulkPut(photos);
-      }
+    const photoRes = await fetch('/api/photos', { headers });
+    if (photoRes.ok) {
+      const photos = await photoRes.json();
+      await db.entity_photos.clear();
+      await db.entity_photos.bulkPut(photos);
     }
   } catch (err) {
     console.warn('Unable to prefetch entity photos (offline):', err);

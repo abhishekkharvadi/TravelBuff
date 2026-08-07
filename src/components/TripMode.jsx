@@ -8,18 +8,27 @@ import {
 import { performSync } from '../sync.js';
 
 export default function TripMode({ token }) {
-  // Dexie live queries
-  const trips = useLiveQuery(() => db.trips.toArray()) || [];
-  const places = useLiveQuery(() => db.places.toArray()) || [];
-  const itineraries = useLiveQuery(() => db.itinerary_items.toArray()) || [];
-  const expenses = useLiveQuery(() => db.expenses.toArray()) || [];
-  const rates = useLiveQuery(() => db.trip_currency_rates.toArray()) || [];
+  // Consolidate live queries to eliminate PWA rendering flicker on sync updates
+  const syncData = useLiveQuery(async () => {
+    return {
+      trips: await db.trips.toArray(),
+      places: await db.places.toArray(),
+      itineraries: await db.itinerary_items.toArray(),
+      expenses: await db.expenses.toArray(),
+      rates: await db.trip_currency_rates.toArray(),
+      locations: await db.locations.toArray(),
+      reservations: await db.reservations.toArray()
+    };
+  }) || { trips: [], places: [], itineraries: [], expenses: [], rates: [], locations: [], reservations: [] };
+
+  const { trips, places, itineraries, expenses, rates, locations, reservations } = syncData;
 
   // Local State
   const [activeTrip, setActiveTrip] = useState(null);
   const [isAutoSelected, setIsAutoSelected] = useState(false);
   const [forceUpdate, setForceUpdate] = useState(0);
   const [currentDayStr, setCurrentDayStr] = useState('');
+  const [activePdfUrl, setActivePdfUrl] = useState(null);
   
   // Quick Expense Modal
   const [showExpenseModal, setShowExpenseModal] = useState(false);
@@ -39,12 +48,18 @@ export default function TripMode({ token }) {
     if (trips.length > 0) {
       const today = new Date().toISOString().split('T')[0];
       
-      // 1. First priority: Check localStorage for explicit active trip
-      const storedActiveId = localStorage.getItem('active_trip_id');
-      const storedActiveTrip = storedActiveId ? trips.find(t => t.id.toString() === storedActiveId) : null;
+      // 1. First priority: Check trips table for explicit active trip marked synced in DB
+      const dbActiveTrip = trips.find(t => {
+        try {
+          const notesObj = typeof t.notes === 'string' ? JSON.parse(t.notes) : t.notes || {};
+          return notesObj.isActive === true;
+        } catch (e) {
+          return false;
+        }
+      });
       
-      if (storedActiveTrip) {
-        setActiveTrip(storedActiveTrip);
+      if (dbActiveTrip) {
+        setActiveTrip(dbActiveTrip);
         setIsAutoSelected(false);
       } else {
         // 2. Filter out past trips, only allow ongoing and upcoming
@@ -92,6 +107,18 @@ export default function TripMode({ token }) {
     setCurrentDayStr(new Date().toISOString().split('T')[0]);
   }, [trips, forceUpdate]);
 
+  useEffect(() => {
+    const handleActiveTripChange = () => {
+      setForceUpdate(prev => prev + 1);
+    };
+    window.addEventListener('active_trip_changed', handleActiveTripChange);
+    window.addEventListener('storage', handleActiveTripChange);
+    return () => {
+      window.removeEventListener('active_trip_changed', handleActiveTripChange);
+      window.removeEventListener('storage', handleActiveTripChange);
+    };
+  }, []);
+
   // Pull OwnTracks distance data
   const handlePullOwnTracks = async () => {
     if (!activeTrip) return;
@@ -114,6 +141,25 @@ export default function TripMode({ token }) {
       console.error('OwnTracks fetch error:', err);
     } finally {
       setOwnTracksLoading(false);
+    }
+  };
+
+  const handlePinActiveTrip = async (tripId) => {
+    for (const t of trips) {
+      let notesObj = {};
+      try {
+        notesObj = typeof t.notes === 'string' ? JSON.parse(t.notes) : t.notes || {};
+      } catch (e) {}
+
+      const shouldBeActive = t.id.toString() === tripId.toString();
+      if (notesObj.isActive !== shouldBeActive) {
+        const updatedNotes = { ...notesObj, isActive: shouldBeActive };
+        const updatedTrip = {
+          ...t,
+          notes: JSON.stringify(updatedNotes)
+        };
+        await queueSyncAction('trips', 'update', updatedTrip);
+      }
     }
   };
 
@@ -202,8 +248,14 @@ export default function TripMode({ token }) {
 
   const activeDayObj = itineraryDays.find(d => d.date === displayDayStr);
 
-  const storedActiveId = localStorage.getItem('active_trip_id');
-  const isCurrentlyActive = activeTrip && storedActiveId === activeTrip.id.toString();
+  const isCurrentlyActive = activeTrip && (() => {
+    try {
+      const notesObj = typeof activeTrip.notes === 'string' ? JSON.parse(activeTrip.notes) : activeTrip.notes || {};
+      return notesObj.isActive === true;
+    } catch(e) {
+      return false;
+    }
+  })();
 
   return (
     <div className="container" style={{ maxWidth: '480px', padding: '16px' }}>
@@ -227,10 +279,7 @@ export default function TripMode({ token }) {
           <button 
             className="btn btn-primary"
             style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px' }}
-            onClick={() => {
-              localStorage.setItem('active_trip_id', activeTrip.id);
-              setForceUpdate(prev => prev + 1);
-            }}
+            onClick={() => handlePinActiveTrip(activeTrip.id)}
           >
             Pin active
           </button>
@@ -291,11 +340,86 @@ export default function TripMode({ token }) {
               <div className="timeline" style={{ paddingLeft: '16px' }}>
                 {activeDayStops.map((item, idx) => {
                   const place = places.find(p => p.id === item.place_id);
+                  const dbDist = item.distance_from_prev || 0;
+                  const dbDur = item.duration_from_prev || 0;
+                  const isVisited = place && place.visited === 1;
+
+                  const isAppleDevice = typeof window !== 'undefined' && 
+                    (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) || 
+                     (navigator.userAgent.includes('Mac') && 'ontouchend' in document));
+                  const navPref = localStorage.getItem('navigation_provider') || 'google';
+                  const actualProvider = isAppleDevice ? navPref : 'google';
+
+                  const handleNavigate = () => {
+                    if (!place) return;
+                    const query = (place.latitude && place.longitude) 
+                      ? `${place.latitude},${place.longitude}` 
+                      : place.name;
+                    let url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+                    if (actualProvider === 'apple') {
+                      url = `maps://?q=${encodeURIComponent(place.name)}`;
+                      if (place.latitude && place.longitude) {
+                        url += `&ll=${place.latitude},${place.longitude}`;
+                      }
+                    }
+                    window.open(url, '_blank');
+                  };
+
                   return (
                     <div key={item.id} className="timeline-item" style={{ paddingBottom: '16px' }}>
-                      <div className="timeline-card" style={{ padding: '12px', background: 'var(--bg-surface-elevated)' }}>
+                      {idx > 0 && dbDist > 0 && (() => {
+                        const isUsingGmaps = typeof window !== 'undefined' && 
+                          localStorage.getItem('google_maps_api_key') && 
+                          localStorage.getItem('google_maps_enabled') !== 'false';
+                        return (
+                          <div className="timeline-distance" style={{ marginBottom: '8px', fontSize: '0.75rem', color: 'var(--accent-primary-hover)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <img 
+                              src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
+                              style={{ width: 12, height: 12, objectFit: 'contain' }} 
+                              alt={isUsingGmaps ? "GMaps" : "OSM"}
+                              title={isUsingGmaps ? "Route calculated via Google Maps" : "Route calculated via OpenStreetMap (OSRM)"}
+                            />
+                            <span>{dbDist} km {dbDur > 0 ? `(${dbDur} mins)` : ''} to next stop</span>
+                          </div>
+                        );
+                      })()}
+                      <div className="timeline-card" style={{ padding: '12px', background: 'var(--bg-surface-elevated)', border: isVisited ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid var(--border-glass)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <b style={{ fontSize: '0.95rem' }}>{place ? place.name : 'Unknown Stop'}</b>
+                          <b style={{ fontSize: '0.95rem', textDecoration: isVisited ? 'line-through' : 'none', color: isVisited ? 'var(--text-muted)' : 'var(--text-primary)' }}>
+                            {place ? place.name : 'Unknown Stop'}
+                          </b>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {place && (
+                              <button 
+                                onClick={handleNavigate}
+                                title={`Navigate using ${actualProvider === 'apple' ? 'Apple Maps' : 'Google Maps'}`}
+                                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '4px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+                              >
+                                <Navigation size={12} style={{ color: 'var(--accent-secondary)' }} />
+                              </button>
+                            )}
+                            {place && !isVisited && (
+                              <button 
+                                onClick={async () => {
+                                  await queueSyncAction('places', 'update', { ...place, visited: 1 });
+                                  const parentLoc = locations.find(l => l.id === place.location_id);
+                                  if (parentLoc && parentLoc.visited !== 1) {
+                                    await queueSyncAction('locations', 'update', { ...parentLoc, visited: 1 });
+                                  }
+                                }}
+                                title="Mark Done"
+                                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '0 8px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', height: '24px' }}
+                              >
+                                <Check size={12} style={{ color: 'var(--success)' }} />
+                                <span style={{ fontSize: '0.7rem', color: 'var(--text-primary)' }}>Done</span>
+                              </button>
+                            )}
+                            {isVisited && (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '2px', fontWeight: 'bold' }}>
+                                <Check size={12} /> Visited
+                              </span>
+                            )}
+                          </div>
                         </div>
                         {place && <span style={{ fontSize: '0.7rem', color: 'var(--accent-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>{place.category}</span>}
                         {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>{place.notes}</p>}
@@ -305,6 +429,60 @@ export default function TripMode({ token }) {
                 })}
               </div>
             )}
+
+            {/* Daily Reservations */}
+            {(() => {
+              const activeDayReservations = reservations.filter(r => {
+                if (!activeTrip || r.trip_id !== activeTrip.id) return false;
+                try {
+                  const details = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
+                  return details && details.date === displayDayStr;
+                } catch (e) {
+                  return false;
+                }
+              });
+
+              if (activeDayReservations.length === 0) return null;
+
+              return (
+                <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px dashed var(--border-glass)' }}>
+                  <h4 style={{ fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    📅 Reservations for Today
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {activeDayReservations.map(res => {
+                      const details = typeof res.details === 'string' ? JSON.parse(res.details) : res.details || {};
+                      return (
+                        <div key={res.id} style={{ padding: '12px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', borderRadius: '6px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-secondary)', textTransform: 'uppercase' }}>
+                              {res.type}
+                            </span>
+                            {res.file_path && (
+                              <button 
+                                onClick={() => setActivePdfUrl(res.file_path)}
+                                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '2px 8px', fontSize: '0.65rem', cursor: 'pointer', color: 'var(--text-primary)' }}
+                              >
+                                View Ticket
+                              </button>
+                            )}
+                          </div>
+                          <b style={{ display: 'block', fontSize: '0.9rem', margin: '4px 0', color: 'var(--text-primary)' }}>{res.title}</b>
+                          {details.confirmation && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                              Conf #: <strong>{details.confirmation}</strong>
+                            </div>
+                          )}
+                          {details.notes && (
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>{details.notes}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       ) : (
@@ -416,6 +594,44 @@ export default function TripMode({ token }) {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {activePdfUrl && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'var(--bg-app)', zIndex: 2000
+        }}>
+          <button 
+            onClick={() => setActivePdfUrl(null)} 
+            style={{ 
+              position: 'absolute', 
+              top: '16px', 
+              right: '16px', 
+              width: '36px', 
+              height: '36px', 
+              borderRadius: '50%', 
+              background: 'rgba(0, 0, 0, 0.5)', 
+              color: '#fff', 
+              border: '1px solid rgba(255, 255, 255, 0.2)', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              cursor: 'pointer',
+              zIndex: 2010,
+              fontSize: '18px',
+              fontWeight: 'bold',
+              backdropFilter: 'blur(4px)'
+            }}
+            title="Close"
+          >
+            ✕
+          </button>
+          <iframe 
+            src={activePdfUrl} 
+            style={{ width: '100%', height: '100%', border: 'none' }} 
+            title="PDF Document Viewer"
+          />
         </div>
       )}
     </div>

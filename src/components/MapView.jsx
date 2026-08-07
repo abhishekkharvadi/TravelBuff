@@ -52,13 +52,14 @@ export default function MapView({ points = [], drawLine = false }) {
   
   // Leaflet refs
   const mapInstanceRef = useRef(null);
-  const markersRef = useRef([]);
+  const leafletMarkersRef = useRef({});
   const polylineRef = useRef(null);
 
   // Google Maps refs
   const googleMapInstanceRef = useRef(null);
-  const googleMarkersRef = useRef([]);
+  const googleMarkersRef = useRef({});
   const googlePolylinesRef = useRef([]);
+  const prevPointsSigRef = useRef('');
 
   const [isGoogleMapsReady, setIsGoogleMapsReady] = useState(false);
   const apiKey = localStorage.getItem('google_maps_api_key');
@@ -81,6 +82,8 @@ export default function MapView({ points = [], drawLine = false }) {
   }, [apiKey, googleMapsEnabled]);
 
   useEffect(() => {
+    let active = true;
+
     // 1. Filter valid geocoded points
     const validPoints = points.filter(p => {
       if (!p) return false;
@@ -88,6 +91,9 @@ export default function MapView({ points = [], drawLine = false }) {
       const lng = parseFloat(p.longitude);
       return !isNaN(lat) && !isNaN(lng);
     });
+
+    const pointsSig = validPoints.map(p => `${p.id}-${p.latitude}-${p.longitude}`).join(',');
+    const hasPointsChanged = pointsSig !== prevPointsSigRef.current;
 
     // Helper: Map categories to emojis/markers
     const getCategoryEmoji = (category) => {
@@ -123,14 +129,22 @@ export default function MapView({ points = [], drawLine = false }) {
             mapInstanceRef.current = null;
           }
 
-          // Clean up old Google markers & polylines
-          googleMarkersRef.current.forEach(m => m.setMap(null));
-          googleMarkersRef.current = [];
+          // Clean up old Google polylines
           googlePolylinesRef.current.forEach(p => p.setMap(null));
           googlePolylinesRef.current = [];
 
+          // Clean up markers that are no longer in validPoints
+          const currentPointIds = new Set(validPoints.map(p => p.id));
+          Object.keys(googleMarkersRef.current).forEach(id => {
+            if (!currentPointIds.has(id)) {
+              googleMarkersRef.current[id].setMap(null);
+              delete googleMarkersRef.current[id];
+            }
+          });
+
           if (!mapContainerRef.current) return;
 
+          let isJustInitialized = false;
           // Initialize Google Map if not created yet
           if (!googleMapInstanceRef.current) {
             googleMapInstanceRef.current = new Map(mapContainerRef.current, {
@@ -139,6 +153,7 @@ export default function MapView({ points = [], drawLine = false }) {
               disableDefaultUI: false,
               mapId: 'DEMO_MAP_ID' // Required map ID for AdvancedMarkerElement
             });
+            isJustInitialized = true;
           }
 
           const googleMap = googleMapInstanceRef.current;
@@ -147,51 +162,65 @@ export default function MapView({ points = [], drawLine = false }) {
           const innerColor = isLightTheme ? '#ffffff' : '#1e1e2c';
           const labelTextColor = isLightTheme ? '#111111' : '#ffffff';
 
-          // Place Google advanced markers
+          // Place or update Google advanced markers
           validPoints.forEach(p => {
-            const dayNum = p.dayLabel ? parseInt(p.dayLabel.replace(/\D/g, ''), 10) : 1;
-            const color = dayColors[(dayNum - 1) % dayColors.length] || '#8b5cf6';
-            const markerLabel = String(p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : getCategoryEmoji(p.category || p.type));
+             const color = p.dayLabel 
+               ? (dayColors[(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1) % dayColors.length] || '#8b5cf6')
+               : '#6b7280';
+             const markerLabel = String(p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : getCategoryEmoji(p.category || p.type));
+             const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${color}; color: #fff; font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border-glass, rgba(255,255,255,0.15)); font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${p.dayLabel}</span>` : '';
 
-            // Custom HTML element content for deprecation-free pins
-            const pinContent = document.createElement('div');
-            pinContent.style.position = 'relative';
-            pinContent.style.width = '36px';
-            pinContent.style.height = '42px';
-            pinContent.innerHTML = `
-              <svg xmlns="http://www.w3.org/2000/svg" width="36" height="42" viewBox="0 0 36 42" style="display: block;">
-                <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${color}"/>
-                <circle cx="18" cy="18" r="14" fill="${innerColor}"/>
-              </svg>
-              <div style="position: absolute; top: 0; left: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: ${labelTextColor}; font-size: 11px; font-weight: bold; pointer-events: none; line-height: 1;">
-                ${markerLabel}
-              </div>
-            `;
+             const pinContent = document.createElement('div');
+             pinContent.style.position = 'relative';
+             pinContent.style.width = '36px';
+             pinContent.style.height = '42px';
+             pinContent.innerHTML = `
+               <svg xmlns="http://www.w3.org/2000/svg" width="36" height="42" viewBox="0 0 36 42" style="display: block;">
+                 <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${p.visited ? '#10b981' : color}"/>
+                 <circle cx="18" cy="18" r="14" fill="${innerColor}"/>
+               </svg>
+               <div style="position: absolute; top: 0; left: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: ${labelTextColor}; font-size: 11px; font-weight: bold; pointer-events: none; line-height: 1;">
+                 ${markerLabel}
+               </div>
+               ${dayBadge}
+             `;
 
-            const marker = new AdvancedMarkerElement({
-              position: { lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) },
-              map: googleMap,
-              content: pinContent,
-              title: p.name
-            });
+            const latVal = parseFloat(p.latitude);
+            const lngVal = parseFloat(p.longitude);
 
-            const infoWindow = new window.google.maps.InfoWindow({
-              content: `
-                <div style="padding: 10px; color: #111;">
-                  <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold;">${p.name}</h4>
-                  <span style="font-size: 0.75rem; color: #666;">
-                    ${p.category || 'Location'} ${p.dayLabel ? `• ${p.dayLabel}` : ''}
-                  </span>
-                  ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: #444;">${p.notes.substring(0, 80)}...</p>` : ''}
-                </div>
-              `
-            });
+            let marker = googleMarkersRef.current[p.id];
+            if (marker) {
+              // Update position and content to avoid re-rendering flicker
+              marker.position = { lat: latVal, lng: lngVal };
+              marker.content = pinContent;
+              marker.title = p.name;
+            } else {
+              // Create new marker
+              marker = new AdvancedMarkerElement({
+                position: { lat: latVal, lng: lngVal },
+                map: googleMap,
+                content: pinContent,
+                title: p.name
+              });
 
-            marker.addListener('click', () => {
-              infoWindow.open(googleMap, marker);
-            });
+              const infoWindow = new window.google.maps.InfoWindow({
+                content: `
+                  <div style="padding: 10px; color: #111;">
+                    <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold;">${p.name}</h4>
+                    <span style="font-size: 0.75rem; color: #666;">
+                      ${p.category || 'Location'} ${p.dayLabel ? `• ${p.dayLabel}` : ''}
+                    </span>
+                    ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: #444;">${p.notes.substring(0, 80)}...</p>` : ''}
+                  </div>
+                `
+              });
 
-            googleMarkersRef.current.push(marker);
+              marker.addListener('click', () => {
+                infoWindow.open(googleMap, marker);
+              });
+
+              googleMarkersRef.current[p.id] = marker;
+            }
           });
 
           // Draw Google driving paths
@@ -207,6 +236,7 @@ export default function MapView({ points = [], drawLine = false }) {
 
             let colorIdx = 0;
             Object.keys(dayGroups).forEach(dayKey => {
+              if (dayKey === 'All') return;
               const sortedDayPoints = dayGroups[dayKey].sort((a, b) => (a.sequenceOrder || 0) - (b.sequenceOrder || 0));
               const color = dayColors[colorIdx % dayColors.length];
               colorIdx++;
@@ -224,6 +254,7 @@ export default function MapView({ points = [], drawLine = false }) {
 
                 trackApiCall('Google Maps Directions');
                 directionsService.route(request, (result, status) => {
+                  if (!active) return;
                   if (status === 'OK') {
                     const routePolyline = new window.google.maps.Polyline({
                       path: result.routes[0].overview_path,
@@ -233,7 +264,11 @@ export default function MapView({ points = [], drawLine = false }) {
                       strokeWeight: 4,
                       map: googleMap
                     });
-                    googlePolylinesRef.current.push(routePolyline);
+                    if (active) {
+                      googlePolylinesRef.current.push(routePolyline);
+                    } else {
+                      routePolyline.setMap(null);
+                    }
                   } else {
                     const routePolyline = new window.google.maps.Polyline({
                       path: [
@@ -246,7 +281,11 @@ export default function MapView({ points = [], drawLine = false }) {
                       strokeWeight: 4,
                       map: googleMap
                     });
-                    googlePolylinesRef.current.push(routePolyline);
+                    if (active) {
+                      googlePolylinesRef.current.push(routePolyline);
+                    } else {
+                      routePolyline.setMap(null);
+                    }
                   }
                 });
               }
@@ -254,7 +293,7 @@ export default function MapView({ points = [], drawLine = false }) {
           }
 
           // Auto-fit Google bounds
-          if (validPoints.length > 0) {
+          if (validPoints.length > 0 && (hasPointsChanged || isJustInitialized)) {
             const bounds = new window.google.maps.LatLngBounds();
             validPoints.forEach(p => {
               bounds.extend({ lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) });
@@ -296,9 +335,14 @@ export default function MapView({ points = [], drawLine = false }) {
       
       if (!map || !L) return;
 
-      // Clear old Leaflet markers & polylines
-      markersRef.current.forEach(marker => map.removeLayer(marker));
-      markersRef.current = [];
+      // Clean up Leaflet markers that are no longer in validPoints
+      const currentPointIds = new Set(validPoints.map(p => p.id));
+      Object.keys(leafletMarkersRef.current).forEach(id => {
+        if (!currentPointIds.has(id)) {
+          map.removeLayer(leafletMarkersRef.current[id]);
+          delete leafletMarkersRef.current[id];
+        }
+      });
 
       if (polylineRef.current) {
         if (Array.isArray(polylineRef.current)) {
@@ -311,10 +355,11 @@ export default function MapView({ points = [], drawLine = false }) {
 
       if (validPoints.length === 0) return;
 
-      // Place Leaflet markers
+      // Place or update Leaflet markers
       validPoints.forEach(p => {
-        const dayNum = p.dayLabel ? parseInt(p.dayLabel.replace(/\D/g, ''), 10) : 1;
-        const color = dayColors[(dayNum - 1) % dayColors.length] || 'var(--accent-primary, #8b5cf6)';
+        const color = p.dayLabel 
+          ? (dayColors[(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1) % dayColors.length] || 'var(--accent-primary, #8b5cf6)')
+          : '#6b7280';
         const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${color}; color: #fff; font-size: 0.6rem; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border-glass); font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${p.dayLabel}</span>` : '';
         const markerHtml = `
           <div style="
@@ -343,19 +388,29 @@ export default function MapView({ points = [], drawLine = false }) {
           iconAnchor: [16, 16]
         });
 
-        const marker = L.marker([p.latitude, p.longitude], { icon })
-          .addTo(map)
-          .bindPopup(`
-            <div style="padding: 10px; color: var(--text-primary);">
-              <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold; color: var(--text-primary);">${p.name}</h4>
-              <span style="font-size: 0.75rem; color: var(--text-secondary);">
-                ${p.category || 'Location'} ${p.dayLabel ? `• ${p.dayLabel}` : ''}
-              </span>
-              ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: var(--text-secondary);">${p.notes.substring(0, 80)}...</p>` : ''}
-            </div>
-          `);
+        const popupHtml = `
+          <div style="padding: 10px; color: var(--text-primary);">
+            <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold; color: var(--text-primary);">${p.name}</h4>
+            <span style="font-size: 0.75rem; color: var(--text-secondary);">
+              ${p.category || 'Location'} ${p.dayLabel ? `• ${p.dayLabel}` : ''}
+            </span>
+            ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: var(--text-secondary);">${p.notes.substring(0, 80)}...</p>` : ''}
+          </div>
+        `;
 
-        markersRef.current.push(marker);
+        let marker = leafletMarkersRef.current[p.id];
+        if (marker) {
+          // Update position, icon, and popup to prevent recreation flicker
+          marker.setLatLng([p.latitude, p.longitude]);
+          marker.setIcon(icon);
+          marker.setPopupContent(popupHtml);
+        } else {
+          // Create new marker
+          marker = L.marker([p.latitude, p.longitude], { icon })
+            .addTo(map)
+            .bindPopup(popupHtml);
+          leafletMarkersRef.current[p.id] = marker;
+        }
       });
 
       // Draw Leaflet actual routes
@@ -372,11 +427,13 @@ export default function MapView({ points = [], drawLine = false }) {
         const drawActualRoutes = async () => {
           let colorIdx = 0;
           for (const dayKey of Object.keys(dayGroups)) {
+            if (dayKey === 'All') continue;
             const sortedDayPoints = dayGroups[dayKey].sort((a, b) => (a.sequenceOrder || 0) - (b.sequenceOrder || 0));
             const color = dayColors[colorIdx % dayColors.length];
             colorIdx++;
 
             for (let i = 1; i < sortedDayPoints.length; i++) {
+              if (!active) return;
               const p1 = sortedDayPoints[i - 1];
               const p2 = sortedDayPoints[i];
               if (p1.latitude === p2.latitude && p1.longitude === p2.longitude) continue;
@@ -386,6 +443,7 @@ export default function MapView({ points = [], drawLine = false }) {
               try {
                 trackApiCall('OSRM Routing');
                 const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${p1.longitude},${p1.latitude};${p2.longitude},${p2.latitude}?overview=full&geometries=geojson`);
+                if (!active) return;
                 if (res.ok) {
                   const data = await res.json();
                   if (data.routes && data.routes[0] && data.routes[0].geometry) {
@@ -396,6 +454,7 @@ export default function MapView({ points = [], drawLine = false }) {
                 console.warn('Failed to fetch OSRM route line:', err);
               }
 
+              if (!active) return;
               const polyline = L.polyline(routeLatLngs, {
                 color: color,
                 weight: 4,
@@ -404,18 +463,29 @@ export default function MapView({ points = [], drawLine = false }) {
               polylines.push(polyline);
             }
           }
-          polylineRef.current = polylines;
+          if (active) {
+            polylineRef.current = polylines;
+          } else {
+            polylines.forEach(line => map.removeLayer(line));
+          }
         };
 
         drawActualRoutes();
       }
 
       // Auto-zoom to fit bounds Leaflet
-      if (validPoints.length > 0) {
-        const group = new L.featureGroup(markersRef.current);
+      if (validPoints.length > 0 && hasPointsChanged) {
+        const markerArray = Object.values(leafletMarkersRef.current);
+        const group = new L.featureGroup(markerArray);
         map.fitBounds(group.getBounds().pad(0.15));
       }
+      
+      prevPointsSigRef.current = pointsSig;
     }
+
+    return () => {
+      active = false;
+    };
   }, [points, drawLine, isGoogleMapsReady]);
 
   // Clean up on unmount

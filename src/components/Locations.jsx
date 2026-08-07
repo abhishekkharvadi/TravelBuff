@@ -92,6 +92,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   const [isFolderChecked, setIsFolderChecked] = useState(false);
 
   // List Filter/Sort State
+  const [showFilters, setShowFilters] = useState(false);
   const [listSearchQuery, setListSearchQuery] = useState('');
   const [filterCountry, setFilterCountry] = useState('');
   const [filterState, setFilterState] = useState('');
@@ -118,6 +119,30 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
 
   // Selected place detailing inside dialog
   const [selectedPlaceId, setSelectedPlaceId] = useState(null);
+  const [editPlaceName, setEditPlaceName] = useState('');
+  const [editPlaceLat, setEditPlaceLat] = useState('');
+  const [editPlaceLon, setEditPlaceLon] = useState('');
+  const [editPlaceCategory, setEditPlaceCategory] = useState('');
+  const [editPlaceNotes, setEditPlaceNotes] = useState('');
+
+  useEffect(() => {
+    if (selectedPlaceId) {
+      const p = places.find(item => item.id === selectedPlaceId);
+      if (p) {
+        setEditPlaceName(p.name || '');
+        setEditPlaceLat(p.latitude !== undefined && p.latitude !== null ? String(p.latitude) : '');
+        setEditPlaceLon(p.longitude !== undefined && p.longitude !== null ? String(p.longitude) : '');
+        setEditPlaceCategory(p.category || '');
+        setEditPlaceNotes(p.notes || '');
+      }
+    } else {
+      setEditPlaceName('');
+      setEditPlaceLat('');
+      setEditPlaceLon('');
+      setEditPlaceCategory('');
+      setEditPlaceNotes('');
+    }
+  }, [selectedPlaceId]);
 
   // Visit History details for active location
   const [visitsHistory, setVisitsHistory] = useState([]);
@@ -251,6 +276,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
             if (suggestions && suggestions.length > 0) {
               const mapped = suggestions.map(s => ({
                 display_name: s.placePrediction.text.toString(),
+                place_name: s.placePrediction.mainText ? s.placePrediction.mainText.toString() : s.placePrediction.text.toString().split(',')[0],
                 place_id: s.placePrediction.placeId,
                 is_gmaps: true,
                 types: s.placePrediction.types || []
@@ -268,6 +294,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                 if (status === 'OK' && predictions) {
                   const mapped = predictions.map(p => ({
                     display_name: p.description,
+                    place_name: p.structured_formatting && p.structured_formatting.main_text ? p.structured_formatting.main_text : p.description.split(',')[0],
                     place_id: p.place_id,
                     is_gmaps: true,
                     types: p.types || []
@@ -337,7 +364,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
             else if (types.includes('transit_station') || types.includes('subway_station') || types.includes('train_station')) setPlaceCategory('station');
             else setPlaceCategory('cafe');
 
-            setPlaceName(r.formatted_address.split(',')[0]);
+            setPlaceName(result.place_name || r.formatted_address.split(',')[0]);
             setPlaceLat(lat);
             setPlaceLon(lon);
             setPlaceSearchResults([]);
@@ -430,18 +457,37 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     }
   };
 
+  // Memoized featured photo map for O(1) lookups to avoid main page flickering/lag
+  const featuredPhotoMap = React.useMemo(() => {
+    const map = {};
+    // Pre-populate with locations
+    locations.forEach(loc => {
+      if (loc.local_file_data) map[loc.id] = loc.local_file_data;
+    });
+    // Pre-populate with places
+    places.forEach(place => {
+      if (place.local_file_data) map[place.id] = place.local_file_data;
+    });
+    // Group photos by entity
+    const photoGroups = {};
+    photos.forEach(p => {
+      if (!photoGroups[p.entity_id]) photoGroups[p.entity_id] = [];
+      photoGroups[p.entity_id].push(p);
+    });
+    // Find featured or first photo
+    Object.keys(photoGroups).forEach(entId => {
+      if (map[entId]) return; // already set by location/place local_file_data
+      const pList = photoGroups[entId];
+      const featured = pList.find(p => p.is_featured === 1);
+      map[entId] = featured ? featured.file_path : (pList[0] ? pList[0].file_path : '/placeholder.jpg');
+    });
+    return map;
+  }, [locations, places, photos]);
+
   // Helper: Get featured image or fallback placeholder
-  const getFeaturedPhoto = (entityId) => {
-    const loc = locations.find(l => l.id === entityId);
-    if (loc && loc.local_file_data) return loc.local_file_data;
-
-    const place = places.find(p => p.id === entityId);
-    if (place && place.local_file_data) return place.local_file_data;
-
-    const pList = photos.filter(p => p.entity_id === entityId);
-    const featured = pList.find(p => p.is_featured === 1);
-    return featured ? featured.file_path : (pList[0] ? pList[0].file_path : '/placeholder.jpg');
-  };
+  const getFeaturedPhoto = React.useCallback((entityId) => {
+    return featuredPhotoMap[entityId] || '/placeholder.jpg';
+  }, [featuredPhotoMap]);
 
   // Helper: Get folder hierarchy path breadcrumbs
   const getBreadcrumbs = () => {
@@ -516,11 +562,21 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     }
   };
 
+  // Memoized tag lookup map for O(1) rendering efficiency
+  const entityTagsMap = React.useMemo(() => {
+    const map = {};
+    entityTags.forEach(et => {
+      if (!map[et.entity_id]) map[et.entity_id] = [];
+      const tag = tags.find(t => t.id === et.tag_id);
+      if (tag) map[et.entity_id].push(tag);
+    });
+    return map;
+  }, [entityTags, tags]);
+
   // Helper: Get tags for an entity
-  const getEntityTagsList = (entityId) => {
-    const tIds = entityTags.filter(et => et.entity_id === entityId).map(et => et.tag_id);
-    return tags.filter(t => tIds.includes(t.id));
-  };
+  const getEntityTagsList = React.useCallback((entityId) => {
+    return entityTagsMap[entityId] || [];
+  }, [entityTagsMap]);
 
   // Create new location
   const handleCreateLocation = async (e) => {
@@ -730,7 +786,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
   };
 
   // Handle comma-separated coords paste directly in database sync (Edit Place block)
-  const handleCoordsPasteDirect = (e, place) => {
+  const handleCoordsPasteDirect = (e) => {
     const pastedText = e.clipboardData.getData('text');
     if (pastedText && pastedText.includes(',')) {
       e.preventDefault();
@@ -739,7 +795,8 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
         const lat = parseFloat(parts[0]);
         const lon = parseFloat(parts[1]);
         if (!isNaN(lat) && !isNaN(lon)) {
-          queueSyncAction('places', 'update', { ...place, latitude: lat, longitude: lon });
+          setEditPlaceLat(String(lat));
+          setEditPlaceLon(String(lon));
         }
       }
     }
@@ -850,6 +907,24 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
     if (!selectedTagToAdd) return;
     await queueSyncAction('entity_tags', 'insert', { entity_id: entityId, tag_id: selectedTagToAdd });
     setSelectedTagToAdd('');
+  };
+
+  const handleCreateAndAssignTag = async (entityId, tagNameVal) => {
+    if (!tagNameVal.trim() || !entityId) return;
+    const newTagId = generateUUID();
+    const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    const newTag = {
+      id: newTagId,
+      name: tagNameVal.trim(),
+      color: randomColor
+    };
+    try {
+      await queueSyncAction('tags', 'insert', newTag);
+      await queueSyncAction('entity_tags', 'insert', { entity_id: entityId, tag_id: newTagId });
+    } catch (err) {
+      console.error('Failed to create and assign tag:', err);
+    }
   };
 
   // Remove Tag from Location/Place
@@ -1451,16 +1526,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                       {tagSearch.trim() && !tags.some(t => t.name.toLowerCase() === tagSearch.trim().toLowerCase()) && (
                         <div
                           onClick={async () => {
-                            const newTagId = generateUUID();
-                            const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
-                            const randomColor = colors[Math.floor(Math.random() * colors.length)];
-                            const newTag = {
-                              id: newTagId,
-                              name: tagSearch.trim(),
-                              color: randomColor
-                            };
-                            await queueSyncAction('tags', 'insert', newTag);
-                            await queueSyncAction('entity_tags', 'insert', { entity_id: selectedLocation.id, tag_id: newTagId });
+                            await handleCreateAndAssignTag(selectedLocation.id, tagSearch);
                             setTagSearch('');
                             setShowTagDropdown(false);
                           }}
@@ -1564,7 +1630,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
 
               {/* Form to Add New Place (Toggleable) */}
               {showAddPlaceForm && (
-                <form onSubmit={handleAddPlace} style={{ background: '#1c1b22', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
+                <form onSubmit={handleAddPlace} style={{ background: 'var(--bg-surface-elevated)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
                   
                   {/* OSM Place Search */}
                   <div className="form-group">
@@ -1675,6 +1741,168 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
                 {activeLocationPlaces.map(place => {
                   const featuredPlaceImg = getFeaturedPhoto(place.id);
+
+                  if (selectedPlaceId === place.id) {
+                    return (
+                      <div 
+                        key={place.id} 
+                        style={{
+                          background: 'var(--bg-surface-elevated)', 
+                          border: '1px solid var(--border-glass)', 
+                          borderRadius: 'var(--radius-md)',
+                          padding: '16px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--accent-primary-hover)' }}>Edit Details: {place.name}</h4>
+                          <button 
+                            type="button"
+                            onClick={async () => {
+                              if (window.confirm('Are you sure you want to delete this place? This will permanently delete the place of visit and all its associated photo files.')) {
+                                await queueSyncAction('places', 'delete', { id: place.id });
+                                setSelectedPlaceId(null);
+                              }
+                            }}
+                            style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                            title="Delete place"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+
+                        <div className="form-group" style={{ margin: 0 }}>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Place Name</label>
+                          <input 
+                            type="text" 
+                            className="form-control" 
+                            value={editPlaceName}
+                            onChange={(e) => setEditPlaceName(e.target.value)}
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                          <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                            <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Latitude</label>
+                            <input 
+                              type="number" 
+                              step="any"
+                              className="form-control" 
+                              value={editPlaceLat}
+                              onChange={(e) => setEditPlaceLat(e.target.value)}
+                              onPaste={handleCoordsPasteDirect}
+                            />
+                          </div>
+                          <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                            <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Longitude</label>
+                            <input 
+                              type="number" 
+                              step="any"
+                              className="form-control" 
+                              value={editPlaceLon}
+                              onChange={(e) => setEditPlaceLon(e.target.value)}
+                              onPaste={handleCoordsPasteDirect}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="form-group" style={{ margin: 0 }}>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Category</label>
+                          <select
+                            className="form-control"
+                            value={editPlaceCategory}
+                            onChange={(e) => setEditPlaceCategory(e.target.value)}
+                          >
+                            <option value="">Select Category</option>
+                            {allCategories.map(c => (
+                              <option key={c.id} value={c.name}>{c.icon || '📌'} {c.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ margin: 0 }}>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Notes</label>
+                          <textarea 
+                            className="form-control" 
+                            rows="2"
+                            value={editPlaceNotes}
+                            onChange={(e) => setEditPlaceNotes(e.target.value)}
+                          />
+                        </div>
+
+                        {/* Place Photos inside Inline Editor */}
+                        <div style={{ marginTop: '8px' }}>
+                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Place Photos</label>
+                          <div 
+                            className="photo-uploader" 
+                            onClick={() => document.getElementById(`photo-upload-${place.id}`).click()}
+                            style={{ border: '1px dashed var(--border-glass)', borderRadius: 'var(--radius-sm)', padding: '12px', textAlign: 'center', cursor: 'pointer' }}
+                          >
+                            <ImageIcon size={18} style={{ color: 'var(--text-muted)', marginBottom: '4px' }} />
+                            <p style={{ fontSize: '0.75rem', margin: 0 }}>Upload Photo</p>
+                            <input
+                              type="file"
+                              id={`photo-upload-${place.id}`}
+                              accept="image/*"
+                              onChange={(e) => handlePhotoUpload(e, place.id)}
+                              style={{ display: 'none' }}
+                            />
+                          </div>
+                          <div className="photos-grid" style={{ marginTop: '8px' }}>
+                            {photos.filter(p => p.entity_id === place.id).map(photo => (
+                              <div key={photo.id} className="photo-thumb">
+                                <img src={photo.file_path} alt="Place visual" />
+                                {photo.is_featured === 1 && <span className="featured-badge">Featured</span>}
+                                <div className="photo-actions">
+                                  <button className={`photo-action-btn ${photo.is_featured === 1 ? 'featured-btn' : ''}`} onClick={() => handleSetFeaturedPhoto(photo)}>
+                                    <Star size={12} fill={photo.is_featured === 1 ? '#f59e0b' : 'none'} />
+                                  </button>
+                                  <button className="photo-action-btn" onClick={() => handleDeletePhoto(photo.id)}>
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                          <button 
+                            type="button" 
+                            className="btn btn-secondary" 
+                            onClick={() => setSelectedPlaceId(null)}
+                            style={{ flex: 1 }}
+                          >
+                            Cancel
+                          </button>
+                          <button 
+                            type="button" 
+                            className="btn btn-primary" 
+                            onClick={async () => {
+                              if (!editPlaceName.trim()) return;
+                              const updatedPlace = {
+                                ...place,
+                                name: editPlaceName,
+                                latitude: editPlaceLat ? parseFloat(editPlaceLat) : null,
+                                longitude: editPlaceLon ? parseFloat(editPlaceLon) : null,
+                                category: editPlaceCategory,
+                                notes: editPlaceNotes,
+                                created_at: new Date().toISOString()
+                              };
+                              await queueSyncAction('places', 'update', updatedPlace);
+                              setSelectedPlaceId(null);
+                            }}
+                            style={{ flex: 1 }}
+                          >
+                            Save Changes
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div 
                       key={place.id} 
@@ -1732,121 +1960,6 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                   );
                 })}
               </div>
-
-              {/* Sub-place Form Editor (Dynamic toggle inline) */}
-              {selectedPlaceId && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '16px', marginBottom: '24px' }}>
-                  {(() => {
-                    const place = places.find(p => p.id === selectedPlaceId);
-                    if (!place) return null;
-                    return (
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-                          <h4>Edit Details: {place.name}</h4>
-                          <Trash2 size={16} style={{ color: 'var(--error)', cursor: 'pointer' }} onClick={async () => {
-                            if (window.confirm('Are you sure you want to delete this place? This will permanently delete the place of visit and all its associated photo files.')) {
-                              await queueSyncAction('places', 'delete', { id: place.id });
-                              setSelectedPlaceId(null);
-                            }
-                          }} />
-                        </div>
-
-                        <div className="form-group">
-                          <label>Place Name</label>
-                          <input 
-                            type="text" 
-                            className="form-control" 
-                            value={place.name}
-                            onChange={(e) => queueSyncAction('places', 'update', { ...place, name: e.target.value })}
-                          />
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '12px' }}>
-                          <div className="form-group" style={{ flex: 1 }}>
-                            <label>Latitude</label>
-                            <input 
-                              type="number" 
-                              step="any"
-                              className="form-control" 
-                              value={place.latitude || ''}
-                              onChange={(e) => queueSyncAction('places', 'update', { ...place, latitude: parseFloat(e.target.value) || null })}
-                              onPaste={(e) => handleCoordsPasteDirect(e, place)}
-                            />
-                          </div>
-                          <div className="form-group" style={{ flex: 1 }}>
-                            <label>Longitude</label>
-                            <input 
-                              type="number" 
-                              step="any"
-                              className="form-control" 
-                              value={place.longitude || ''}
-                              onChange={(e) => queueSyncAction('places', 'update', { ...place, longitude: parseFloat(e.target.value) || null })}
-                              onPaste={(e) => handleCoordsPasteDirect(e, place)}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="form-group">
-                          <label>Category</label>
-                          <select
-                            className="form-control"
-                            value={place.category || ''}
-                            onChange={(e) => queueSyncAction('places', 'update', { ...place, category: e.target.value })}
-                          >
-                            <option value="">Select Category</option>
-                            {allCategories.map(c => (
-                              <option key={c.id} value={c.name}>{c.icon || '📌'} {c.name}</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="form-group">
-                          <label>Notes</label>
-                          <textarea 
-                            className="form-control" 
-                            rows="2"
-                            value={place.notes || ''}
-                            onChange={(e) => queueSyncAction('places', 'update', { ...place, notes: e.target.value })}
-                          />
-                        </div>
-
-                        {/* Place Photos */}
-                        <div style={{ marginTop: '16px' }}>
-                          <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '8px' }}>Place Photos</label>
-                          <div className="photo-uploader" onClick={() => document.getElementById(`photo-upload-${place.id}`).click()}>
-                            <ImageIcon size={18} style={{ color: 'var(--text-muted)', marginBottom: '4px' }} />
-                            <p style={{ fontSize: '0.75rem' }}>Upload Photo</p>
-                            <input
-                              type="file"
-                              id={`photo-upload-${place.id}`}
-                              accept="image/*"
-                              onChange={(e) => handlePhotoUpload(e, place.id)}
-                              style={{ display: 'none' }}
-                            />
-                          </div>
-                          <div className="photos-grid">
-                            {photos.filter(p => p.entity_id === place.id).map(photo => (
-                              <div key={photo.id} className="photo-thumb">
-                                <img src={photo.file_path} alt="Place visual" />
-                                {photo.is_featured === 1 && <span className="featured-badge">Featured</span>}
-                                <div className="photo-actions">
-                                  <button className={`photo-action-btn ${photo.is_featured === 1 ? 'featured-btn' : ''}`} onClick={() => handleSetFeaturedPhoto(photo)}>
-                                    <Star size={12} fill={photo.is_featured === 1 ? '#f59e0b' : 'none'} />
-                                  </button>
-                                  <button className="photo-action-btn" onClick={() => handleDeletePhoto(photo.id)}>
-                                    <Trash2 size={12} />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-
 
             </div>
           </div>
@@ -2172,6 +2285,13 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
               <Trash2 size={16} />
             </button>
           )}
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => setShowFilters(!showFilters)} 
+            style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '6px', height: '36px', padding: '0 12px' }}
+          >
+            <span>🔍 {showFilters ? 'Hide Filters' : 'Filters'}</span>
+          </button>
           <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <MapPin size={16} />
             <span className="desktop-only-text">Add Location</span>
@@ -2389,177 +2509,7 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
         border: '1px solid var(--border-glass)',
         marginBottom: '20px'
       }}>
-        {/* Row 1: Filters & Sort & Reset */}
-        <div style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '8px',
-          alignItems: 'center',
-          width: '100%'
-        }}>
-          {/* Filter by Country */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Country</label>
-            <select
-              className="form-control"
-              value={filterCountry}
-              onChange={(e) => setFilterCountry(e.target.value)}
-              style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
-            >
-              <option value="">All Countries</option>
-              {Array.from(new Set(locations.map(l => l.country).filter(Boolean))).sort().map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-
-          {/* Filter by Source Website */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Source Website</label>
-            <select
-              className="form-control"
-              value={filterSource}
-              onChange={(e) => setFilterSource(e.target.value)}
-              style={{ minWidth: '120px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
-            >
-              <option value="">All Sources</option>
-              {(() => {
-                const allSources = new Set();
-                locations.forEach(loc => {
-                  if (loc.source_urls) {
-                    try {
-                      const urls = JSON.parse(loc.source_urls);
-                      if (Array.isArray(urls)) {
-                        urls.forEach(u => {
-                          try {
-                            const host = new URL(u).hostname.replace('www.', '');
-                            if (host) allSources.add(host);
-                          } catch (_) {}
-                        });
-                      }
-                    } catch (_) {}
-                  }
-                });
-                return Array.from(allSources).sort().map(src => (
-                  <option key={src} value={src}>{src}</option>
-                ));
-              })()}
-            </select>
-          </div>
-
-          {/* Filter by State */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>State</label>
-            <select
-              className="form-control"
-              value={filterState}
-              onChange={(e) => setFilterState(e.target.value)}
-              style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
-            >
-              <option value="">All States</option>
-              {Array.from(new Set(locations.map(l => l.state).filter(Boolean))).sort().map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-
-          {/* Filter by Tags */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Tag</label>
-            <select
-              className="form-control"
-              value={filterTag}
-              onChange={(e) => setFilterTag(e.target.value)}
-              style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
-            >
-              <option value="">All Tags</option>
-              {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </div>
-
-          {/* Filter by Category */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Category</label>
-            <select
-              className="form-control"
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
-            >
-              <option value="">All Categories</option>
-              {Array.from(new Set(places.map(p => p.category).filter(Boolean))).sort().map(cat => <option key={cat} value={cat}>{cat}</option>)}
-            </select>
-          </div>
-
-          {/* Filter by Date Added */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Date Added</label>
-            <select
-              className="form-control"
-              value={filterDateAdded}
-              onChange={(e) => setFilterDateAdded(e.target.value)}
-              style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
-            >
-              <option value="">All Time</option>
-              <option value="today">Today</option>
-              <option value="week">This Week</option>
-              <option value="month">This Month</option>
-              <option value="year">This Year</option>
-            </select>
-          </div>
-
-          {/* Filter by Visited status */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Status</label>
-            <select
-              className="form-control"
-              value={filterVisited}
-              onChange={(e) => setFilterVisited(e.target.value)}
-              style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
-            >
-              <option value="">All Statuses</option>
-              <option value="visited">Visited</option>
-              <option value="not-visited">Not Visited</option>
-            </select>
-          </div>
-
-          {/* Sort option */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Sort By</label>
-            <select
-              className="form-control"
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              style={{ minWidth: '120px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
-            >
-              <option value="date-desc">Date Added (Newest)</option>
-              <option value="date-asc">Date Added (Oldest)</option>
-              <option value="name-asc">Name (A-Z)</option>
-              <option value="name-desc">Name (Z-A)</option>
-              <option value="country-asc">Country (A-Z)</option>
-              <option value="state-asc">State (A-Z)</option>
-            </select>
-          </div>
-
-          {/* Reset Button */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignSelf: 'flex-end' }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                setListSearchQuery('');
-                setFilterCountry('');
-                setFilterState('');
-                setFilterTag('');
-                setFilterCategory('');
-                setFilterDateAdded('');
-                setFilterVisited('');
-                setSortBy('date-desc');
-              }}
-              style={{ padding: '4px 12px', fontSize: '0.75rem', width: 'auto', height: '28px', display: 'flex', alignItems: 'center' }}
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-
-        {/* Row 2: Search */}
+        {/* Row 2: Search (Always Visible) */}
         <div style={{ width: '100%' }}>
           <input
             type="text"
@@ -2570,6 +2520,191 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
             style={{ fontSize: '0.8rem', padding: '6px 12px', height: '34px' }}
           />
         </div>
+
+        {/* Row 1: Filters & Sort & Reset (Collapsible) */}
+        {showFilters && (
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '8px',
+            alignItems: 'center',
+            width: '100%',
+            paddingTop: '12px',
+            borderTop: '1px solid var(--border-glass)'
+          }}>
+            {/* Filter by Country */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Country</label>
+              <select
+                className="form-control"
+                value={filterCountry}
+                onChange={(e) => {
+                  setFilterCountry(e.target.value);
+                  setFilterState('');
+                }}
+                style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+              >
+                <option value="">All Countries</option>
+                {Array.from(new Set(locations.map(l => l.country).filter(Boolean))).sort().map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+
+            {/* Filter by Source Website */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Source Website</label>
+              <select
+                className="form-control"
+                value={filterSource}
+                onChange={(e) => setFilterSource(e.target.value)}
+                style={{ minWidth: '120px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+              >
+                <option value="">All Sources</option>
+                {(() => {
+                  const allSources = new Set();
+                  locations.forEach(loc => {
+                    if (loc.source_urls) {
+                      try {
+                        const urls = JSON.parse(loc.source_urls);
+                        if (Array.isArray(urls)) {
+                          urls.forEach(u => {
+                            try {
+                              const host = new URL(u).hostname.replace('www.', '');
+                              if (host) allSources.add(host);
+                            } catch (_) {}
+                          });
+                        }
+                      } catch (_) {}
+                    }
+                  });
+                  return Array.from(allSources).sort().map(src => (
+                    <option key={src} value={src}>{src}</option>
+                  ));
+                })()}
+              </select>
+            </div>
+
+            {/* Filter by State */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>State</label>
+              <select
+                className="form-control"
+                value={filterState}
+                onChange={(e) => setFilterState(e.target.value)}
+                style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+              >
+                <option value="">All States</option>
+                {(() => {
+                  let filteredLocs = locations;
+                  if (filterCountry) {
+                    filteredLocs = locations.filter(l => l.country === filterCountry);
+                  }
+                  return Array.from(new Set(filteredLocs.map(l => l.state).filter(Boolean))).sort().map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ));
+                })()}
+              </select>
+            </div>
+
+            {/* Filter by Tags */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Tag</label>
+              <select
+                className="form-control"
+                value={filterTag}
+                onChange={(e) => setFilterTag(e.target.value)}
+                style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+              >
+                <option value="">All Tags</option>
+                {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+
+            {/* Filter by Category */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Category</label>
+              <select
+                className="form-control"
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+              >
+                <option value="">All Categories</option>
+                {Array.from(new Set(places.map(p => p.category).filter(Boolean))).sort().map(cat => <option key={cat} value={cat}>{cat}</option>)}
+              </select>
+            </div>
+
+            {/* Filter by Date Added */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Date Added</label>
+              <select
+                className="form-control"
+                value={filterDateAdded}
+                onChange={(e) => setFilterDateAdded(e.target.value)}
+                style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+              >
+                <option value="">Any Time</option>
+                <option value="today">Added Today</option>
+                <option value="week">Added This Week</option>
+                <option value="month">Added This Month</option>
+                <option value="year">Added This Year</option>
+              </select>
+            </div>
+
+            {/* Filter by Visited status */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Status</label>
+              <select
+                className="form-control"
+                value={filterVisited}
+                onChange={(e) => setFilterVisited(e.target.value)}
+                style={{ minWidth: '100px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+              >
+                <option value="">All Statuses</option>
+                <option value="visited">Visited Only</option>
+                <option value="not-visited">Not Visited Only</option>
+              </select>
+            </div>
+
+            {/* Sort option */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Sort By</label>
+              <select
+                className="form-control"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                style={{ minWidth: '120px', padding: '4px 8px', fontSize: '0.75rem', height: '28px' }}
+              >
+                <option value="date-desc">Date Added (Newest)</option>
+                <option value="date-asc">Date Added (Oldest)</option>
+                <option value="name-asc">Name (A-Z)</option>
+                <option value="name-desc">Name (Z-A)</option>
+                <option value="country-asc">Country (A-Z)</option>
+                <option value="state-asc">State (A-Z)</option>
+              </select>
+            </div>
+
+            {/* Reset Button */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignSelf: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setListSearchQuery('');
+                  setFilterCountry('');
+                  setFilterState('');
+                  setFilterTag('');
+                  setFilterCategory('');
+                  setFilterDateAdded('');
+                  setFilterVisited('');
+                  setSortBy('date-desc');
+                }}
+                style={{ padding: '4px 12px', fontSize: '0.75rem', width: 'auto', height: '28px', display: 'flex', alignItems: 'center' }}
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Empty State */}
@@ -2711,7 +2846,14 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
             <div 
               key={loc.id} 
               className="card" 
-              onClick={() => loc.is_folder === 1 ? setCurrentFolderId(loc.id) : setSelectedLocation(loc)}
+              onClick={() => {
+                if (loc.is_folder === 1) {
+                  setCurrentFolderId(loc.id);
+                  setListSearchQuery('');
+                } else {
+                  setSelectedLocation(loc);
+                }
+              }}
               draggable={loc.is_folder !== 1}
               onDragStart={(e) => handleDragStart(e, loc.id)}
               onDragOver={(e) => handleDragOver(e, loc)}
@@ -2721,8 +2863,9 @@ export default function Locations({ token, selectedLocation, setSelectedLocation
                 border: dragOverFolderId === loc.id 
                   ? '2px dashed var(--accent-primary)' 
                   : (loc.is_folder === 1 
-                      ? '1px dashed var(--accent-secondary)' 
+                      ? 'var(--border-folder-card)' 
                       : '1px solid var(--border-glass)'),
+                background: loc.is_folder === 1 ? 'var(--bg-folder-card)' : 'var(--bg-surface)',
                 boxShadow: loc.is_folder === 1 ? 'var(--shadow-glow)' : 'var(--shadow-panel)'
               }}
             >

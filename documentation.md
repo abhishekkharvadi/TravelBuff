@@ -123,3 +123,41 @@ Redirection to Google Maps requires an API key:
 ### Backup & Restore
 * **Export**: Go to Settings and click **Backup Data** to download all locations, collections, trips, expenses, and configurations as a single JSON file.
 * **Restore**: Import a previously exported JSON backup to fully restore your workspace state.
+
+---
+
+## 7. Importing Travel Guides via URL
+
+TravelBuff allows you to bootstrap your travel planning by scraping and importing structured data from external travel articles, blogs, and list websites.
+
+### Step 1: Fetching the Guide (Import URL)
+1. Click the **Import URL** button at the top header of the application.
+2. In the modal, paste the full HTTP/HTTPS link of the travel guide or article.
+3. Select one of the **4 Markdown Import Options** (tailored parsers/scrapers) to fetch and convert the web page content into a clean markdown document.
+4. Click **Fetch** to retrieve the page content. The parsed content is forwarded directly to the staging queue.
+
+### Step 2: Staging & Curation (Review Data Tab)
+Once the article is converted, the system redirects you to the **Review Data** (Curation Queue) interface:
+1. Review the parsed lists of sights, restaurants, and spots.
+2. Curate the list by selecting which parent folder/location, custom tags, and categories (e.g. `temple`, `restaurant`, `stay`) should be associated with each sight.
+3. You can edit sight titles and delete irrelevant entries before importing.
+
+### Step 3: Autocomplete Addresses & Detail Autofills
+Before committing the sights to your active locations database, you can automatically fill in their coordinates, address details, and notes:
+
+> [!IMPORTANT]
+> **Use City, State, and Country Context Fields!**
+> There are three text boxes at the top of the Review Data page: **City**, **State**, and **Country**.
+> **Always fill in these boxes before executing automated details parsing.** Adding this regional filter focuses the search engine and guarantees highly accurate address and location mapping the first time.
+
+With the regional text boxes filled:
+* **Option A: "Get All Maps"**
+  - Sends the sight names and regional constraints to the geocoding engine.
+  - If Google Maps is enabled in Settings, the app queries the **Google Maps Places API** to retrieve exact addresses and geocodes.
+  - If Google Maps is disabled, the app queries **OpenStreetMap (Nominatim)** for free location geocodes.
+* **Option B: "Send All to AI"**
+  - Passes the sight names, context fields, and description text to Gemini/selected LLM to draft descriptions, identify categories, and suggest coordinates.
+
+Once geocodes are populated, review the locations on the side-by-side preview map and click **Save/Approve** to add them to your locations list.
+
+

@@ -181,6 +181,7 @@ export async function initDatabase() {
       title TEXT NOT NULL,
       details TEXT,
       file_path TEXT,
+      completed INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
     );
@@ -191,6 +192,8 @@ export async function initDatabase() {
       date TEXT NOT NULL,
       place_id TEXT NOT NULL,
       sequence_order INTEGER NOT NULL,
+      distance_from_prev REAL DEFAULT -1,
+      duration_from_prev REAL DEFAULT -1,
       FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,
       FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
     );
@@ -205,6 +208,7 @@ export async function initDatabase() {
       notes TEXT,
       receipt_path TEXT,
       is_planned INTEGER DEFAULT 0,
+      reservation_id TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
     );
@@ -265,6 +269,12 @@ export async function initDatabase() {
   await db.run('ALTER TABLE places ADD COLUMN photo_sync_status TEXT DEFAULT "pending"').catch(() => {});
   await db.run('ALTER TABLE locations ADD COLUMN parent_id TEXT DEFAULT NULL').catch(() => {});
   await db.run('ALTER TABLE locations ADD COLUMN is_folder INTEGER DEFAULT 0').catch(() => {});
+  await db.run('ALTER TABLE reservations ADD COLUMN completed INTEGER DEFAULT 0').catch(() => {});
+  await db.run('ALTER TABLE itinerary_items ADD COLUMN distance_from_prev REAL DEFAULT -1').catch(() => {});
+  await db.run('ALTER TABLE itinerary_items ADD COLUMN duration_from_prev REAL DEFAULT -1').catch(() => {});
+  await db.run('UPDATE itinerary_items SET distance_from_prev = -1 WHERE (distance_from_prev IS NULL OR distance_from_prev = 0) AND sequence_order > 1').catch(() => {});
+  await db.run('UPDATE itinerary_items SET duration_from_prev = -1 WHERE (duration_from_prev IS NULL OR duration_from_prev = 0) AND sequence_order > 1').catch(() => {});
+  await db.run('ALTER TABLE expenses ADD COLUMN reservation_id TEXT').catch(() => {});
 
   // Seed custom categories for all existing users
   try {

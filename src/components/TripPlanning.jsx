@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
+import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
 import MapView from './MapView.jsx';
 
 const dayColors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#14b8a6', '#ef4444'];
@@ -187,93 +188,47 @@ const getItineraryDays = (trip) => {
 
 export default function TripPlanning({ token }) {
   // Dexie query
-  const trips = useLiveQuery(() => db.trips.toArray()) || [];
-  const locations = useLiveQuery(() => db.locations.toArray()) || [];
-  const places = useLiveQuery(() => db.places.toArray()) || [];
-  const tags = useLiveQuery(() => db.tags.toArray()) || [];
-  const entityTags = useLiveQuery(() => db.entity_tags.toArray()) || [];
-  const collections = useLiveQuery(() => db.collections.toArray()) || [];
-  
-  // Trip dependents
-  const reservations = useLiveQuery(() => db.reservations.toArray()) || [];
-  const itineraries = useLiveQuery(() => db.itinerary_items.toArray()) || [];
-  const expenses = useLiveQuery(() => db.expenses.toArray()) || [];
-  const rates = useLiveQuery(() => db.trip_currency_rates.toArray()) || [];
+  // Consolidate all Dexie queries to avoid back-to-back renders (WebSocket flickering)
+  const syncData = useLiveQuery(async () => {
+    return {
+      trips: await db.trips.toArray(),
+      locations: await db.locations.toArray(),
+      places: await db.places.toArray(),
+      tags: await db.tags.toArray(),
+      entityTags: await db.entity_tags.toArray(),
+      collections: await db.collections.toArray(),
+      reservations: await db.reservations.toArray(),
+      itineraries: await db.itinerary_items.toArray(),
+      expenses: await db.expenses.toArray(),
+      rates: await db.trip_currency_rates.toArray(),
+      syncQueue: await db.sync_queue.toArray()
+    };
+  }) || {
+    trips: [], locations: [], places: [], tags: [], entityTags: [],
+    collections: [], reservations: [], itineraries: [], expenses: [], rates: [], syncQueue: []
+  };
+
+  const { 
+    trips, locations, places, tags, entityTags, collections, 
+    reservations, itineraries, expenses, rates, syncQueue 
+  } = syncData;
 
   // Local State
   const [selectedTrip, setSelectedTrip] = useState(null);
+  
+  useEffect(() => {
+    const apiKey = localStorage.getItem('google_maps_api_key');
+    const enabled = localStorage.getItem('google_maps_enabled') !== 'false';
+    if (apiKey && enabled) {
+      loadGoogleMaps(apiKey).catch(err => console.warn('Failed to load Google Maps SDK on Trip Planning:', err));
+    }
+  }, []);
+  const currentTrip = selectedTrip ? (trips.find(t => t.id === selectedTrip.id) || selectedTrip) : null;
   const [forceUpdateActiveTrip, setForceUpdateActiveTrip] = useState(0);
   const [showFullScreenMap, setShowFullScreenMap] = useState(false);
   const [unmappedRecommendations, setUnmappedRecommendations] = useState([]);
 
-  const itineraryDays = getItineraryDays(selectedTrip);
-
-  const mapPoints = useMemo(() => {
-    if (!selectedTrip) return [];
-
-    let hotelsObj = {};
-    try {
-      const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
-      hotelsObj = notesObj.hotels || {};
-    } catch (e) {}
-
-    const pointsList = [];
-
-    itineraryDays.forEach((day, dIdx) => {
-      const dayDate = day.date;
-      const dayNum = dIdx + 1;
-      const dayLabelText = `D${dayNum}`;
-
-      const hotelPlaceId = hotelsObj[dayDate];
-      if (hotelPlaceId) {
-        const hotelPlace = places.find(p => p.id === hotelPlaceId);
-        if (hotelPlace) {
-          pointsList.push({
-            ...hotelPlace,
-            dayLabel: dayLabelText,
-            sequenceOrder: 0,
-            sequenceLabel: 'H',
-            isHotel: true
-          });
-        }
-      }
-
-      const dayItems = itineraries
-        .filter(i => i.trip_id === selectedTrip.id && i.date === dayDate)
-        .sort((a, b) => a.sequence_order - b.sequence_order);
-
-      dayItems.forEach(item => {
-        const place = places.find(p => p.id === item.place_id);
-        if (place) {
-          pointsList.push({
-            ...place,
-            dayLabel: dayLabelText,
-            sequenceOrder: item.sequence_order,
-            sequenceLabel: item.sequence_order
-          });
-        }
-      });
-
-      const nextDay = itineraryDays[dIdx + 1];
-      if (nextDay) {
-        const nextHotelPlaceId = hotelsObj[nextDay.date];
-        if (nextHotelPlaceId) {
-          const nextHotelPlace = places.find(p => p.id === nextHotelPlaceId);
-          if (nextHotelPlace) {
-            pointsList.push({
-              ...nextHotelPlace,
-              dayLabel: dayLabelText,
-              sequenceOrder: 999999,
-              sequenceLabel: 'H',
-              isHotel: true
-            });
-          }
-        }
-      }
-    });
-
-    return pointsList;
-  }, [itineraries, places, selectedTrip, itineraryDays]);
+  const itineraryDays = getItineraryDays(currentTrip);
   const [showAddForm, setShowAddForm] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardTrip, setWizardTrip] = useState(null);
@@ -281,6 +236,7 @@ export default function TripPlanning({ token }) {
   const [showAddLocationDropdown, setShowAddLocationDropdown] = useState(false);
   const [isManualOrAi, setIsManualOrAi] = useState('manual');
   const [show3ColumnWorkspace, setShow3ColumnWorkspace] = useState(false);
+  const [showNavigationLines, setShowNavigationLines] = useState(false);
   const [tripName, setTripName] = useState('');
   const [tripNotes, setTripNotes] = useState('');
   const [tripStartDate, setTripStartDate] = useState('');
@@ -291,8 +247,20 @@ export default function TripPlanning({ token }) {
   const [selectedLocationsForAi, setSelectedLocationsForAi] = useState([]);
   const [selectedCollectionsForAi, setSelectedCollectionsForAi] = useState([]);
   const [isGeneratingTrip, setIsGeneratingTrip] = useState(false);
+  const [wizardSearchQuery, setWizardSearchQuery] = useState('');
   const [customPromptText, setCustomPromptText] = useState('');
   const [arrivalTime, setArrivalTime] = useState('morning'); // 'morning', 'afternoon', 'evening'
+
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [activeMobilePane, setActiveMobilePane] = useState('itinerary'); // 'map', 'itinerary', 'bank'
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const syncActive = syncQueue.length > 0;
 
   useEffect(() => {
     if (aiMode === 'ai') {
@@ -409,6 +377,7 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
 
   // Calculated Road Distances cache: { "placeId1-placeId2": distanceKm }
   const [distances, setDistances] = useState({});
+  const pendingOSRMFetches = useRef(new Set());
 
   // Filters for Add Stop
   const [stopFilterLocationIds, setStopFilterLocationIds] = useState([]);
@@ -437,13 +406,96 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     });
   }, [places, itineraries, selectedTrip, stopFilterLocationIds, stopFilterTagIds, stopPlaceSearch, entityTags]);
 
+  const mapPoints = useMemo(() => {
+    if (!selectedTrip) return [];
+
+    let hotelsObj = {};
+    try {
+      const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
+      hotelsObj = notesObj.hotels || {};
+    } catch (e) {}
+
+    // 1. Get all unscheduled and scheduled places belonging to selected trip locations
+    const activePlaces = places.filter(p => p.is_folder !== 1 && stopFilterLocationIds.includes(p.location_id));
+    const sortedActivePlaces = [...activePlaces].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    const pointsList = sortedActivePlaces.map((place, idx) => {
+      const scheduledItem = itineraries.find(i => i.trip_id === selectedTrip.id && i.place_id === place.id);
+      
+      let dayLabelText = null;
+      let sequenceOrder = 1000 + idx;
+      if (scheduledItem) {
+        const dayIndex = itineraryDays.findIndex(d => d.date === scheduledItem.date);
+        if (dayIndex !== -1) {
+          dayLabelText = `D${dayIndex + 1}`;
+          sequenceOrder = (dayIndex + 1) * 1000 + scheduledItem.sequence_order;
+        }
+      }
+
+      return {
+        ...place,
+        dayLabel: dayLabelText,
+        sequenceOrder: sequenceOrder,
+        sequenceLabel: idx + 1
+      };
+    });
+
+    // 2. Append daily stays (hotels) if assigned
+    itineraryDays.forEach((day, dIdx) => {
+      const dayDate = day.date;
+      const dayNum = dIdx + 1;
+      const dayLabelText = `D${dayNum}`;
+
+      const hotelPlaceId = hotelsObj[dayDate];
+      if (hotelPlaceId) {
+        const hotelPlace = places.find(p => p.id === hotelPlaceId);
+        if (hotelPlace) {
+          pointsList.push({
+            ...hotelPlace,
+            dayLabel: dayLabelText,
+            sequenceOrder: dIdx * 1000 + 0,
+            sequenceLabel: 'H',
+            isHotel: true
+          });
+        }
+      }
+
+      const nextDay = itineraryDays[dIdx + 1];
+      if (nextDay) {
+        const nextHotelPlaceId = hotelsObj[nextDay.date];
+        if (nextHotelPlaceId) {
+          const nextHotelPlace = places.find(p => p.id === nextHotelPlaceId);
+          if (nextHotelPlace) {
+            pointsList.push({
+              ...nextHotelPlace,
+              dayLabel: dayLabelText,
+              sequenceOrder: dIdx * 1000 + 999,
+              sequenceLabel: 'H',
+              isHotel: true
+            });
+          }
+        }
+      }
+    });
+
+    return pointsList;
+  }, [itineraries, places, selectedTrip, itineraryDays, stopFilterLocationIds]);
+
   // Base configurations and Trip configuration states
   const [baseCurrency, setBaseCurrency] = useState('USD');
   const [plannedBudgetInput, setPlannedBudgetInput] = useState('');
   const [selectedTripCurrencies, setSelectedTripCurrencies] = useState([]);
   const [isInternational, setIsInternational] = useState(false);
 
-  const [activeTripId, setActiveTripId] = useState(localStorage.getItem('active_trip_id') || '');
+  const activeTripObj = trips.find(t => {
+    try {
+      const notesObj = typeof t.notes === 'string' ? JSON.parse(t.notes) : t.notes || {};
+      return notesObj.isActive === true;
+    } catch (e) {
+      return false;
+    }
+  });
+  const activeTripId = activeTripObj ? activeTripObj.id.toString() : '';
   const [tripModeActive, setTripModeActive] = useState(localStorage.getItem('tripModeActive') === 'true');
 
   // Cost and Tracker control states
@@ -461,22 +513,113 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     localStorage.setItem('tripModeActive', tripModeActive);
   }, [tripModeActive]);
 
+
+
   useEffect(() => {
     if (tripModeActive && activeTripId) {
       const activeTripObj = trips.find(t => t.id.toString() === activeTripId.toString());
-      if (activeTripObj) {
+      if (activeTripObj && (!selectedTrip || selectedTrip.id !== activeTripObj.id)) {
         setSelectedTrip(activeTripObj);
       }
     }
-  }, [tripModeActive, activeTripId, trips]);
+  }, [tripModeActive, activeTripId, trips, selectedTrip]);
+
+  useEffect(() => {
+    if (!selectedTrip || itineraries.length === 0 || places.length === 0) return;
+
+    const runRecalculate = async () => {
+      const tripItins = itineraries.filter(i => i.trip_id === selectedTrip.id);
+      
+      const days = {};
+      tripItins.forEach(item => {
+        if (!days[item.date]) days[item.date] = [];
+        days[item.date].push(item);
+      });
+
+      for (const date in days) {
+        const items = days[date].sort((a, b) => a.sequence_order - b.sequence_order);
+        for (let idx = 0; idx < items.length; idx++) {
+          const currentItem = items[idx];
+          if (idx === 0) {
+            if (currentItem.distance_from_prev !== 0 || currentItem.duration_from_prev !== 0) {
+              await queueSyncAction('itinerary_items', 'update', {
+                ...currentItem,
+                distance_from_prev: 0,
+                duration_from_prev: 0
+              });
+            }
+          } else {
+            const prevItem = items[idx - 1];
+            const p1 = places.find(p => p.id === prevItem.place_id);
+            const p2 = places.find(p => p.id === currentItem.place_id);
+            if (p1 && p2) {
+              let expectedDistance = 0;
+              let expectedDuration = 0;
+
+              const key = `${p1.id}-${p2.id}`;
+              if (distances[key] !== undefined) {
+                const distObj = distances[key];
+                if (typeof distObj === 'object') {
+                  expectedDistance = parseFloat(distObj.distance) || 0;
+                  expectedDuration = parseFloat(distObj.duration) || 0;
+                } else {
+                  expectedDistance = parseFloat(distObj) || 0;
+                  expectedDuration = 0;
+                }
+              } else {
+                fetchOSRMDistance(p1, p2);
+                continue;
+              }
+
+              const needsRecalculate = currentItem.distance_from_prev === null || 
+                                       currentItem.distance_from_prev === undefined ||
+                                       currentItem.distance_from_prev === -1;
+              
+              if (!needsRecalculate) continue;
+
+              await queueSyncAction('itinerary_items', 'update', {
+                ...currentItem,
+                distance_from_prev: expectedDistance,
+                duration_from_prev: expectedDuration
+              });
+            }
+          }
+        }
+      }
+    };
+
+    runRecalculate();
+  }, [selectedTrip, itineraries, places, distances]);
 
   useEffect(() => {
     if (selectedTrip) {
       setItinTargetDate(selectedTrip.start_date || '');
+      
+      try {
+        const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
+        const savedLocIds = notesObj.locationIds || [];
+        const savedColIds = notesObj.collectionIds || [];
+        
+        let locIdsToSet = [...savedLocIds];
+        if (savedColIds.length > 0) {
+          const colPlaces = places.filter(p => 
+            collections.some(col => 
+              savedColIds.includes(col.id) && 
+              (typeof col.place_ids === 'string' ? JSON.parse(col.place_ids) : col.place_ids || []).includes(p.id)
+            )
+          );
+          const colLocIds = colPlaces.map(p => p.location_id);
+          locIdsToSet = [...new Set([...locIdsToSet, ...colLocIds])];
+        }
+        setStopFilterLocationIds(locIdsToSet);
+      } catch (e) {
+        console.warn('Failed to parse trip notes for locations/collections:', e);
+      }
     } else {
       setItinTargetDate('');
+      setStopFilterLocationIds([]);
     }
-  }, [selectedTrip]);
+  }, [selectedTrip, places, collections]);
 
   useEffect(() => {
     fetch('/api/auth/me', {
@@ -610,6 +753,8 @@ Only return the places to visit for each day in the itinerary.`;
   const [mainResTitle, setMainResTitle] = useState('');
   const [mainResDetails, setMainResDetails] = useState('');
   const [mainResFile, setMainResFile] = useState(null);
+  const [editingReservationId, setEditingReservationId] = useState(null);
+  const [activePdfUrl, setActivePdfUrl] = useState(null);
 
   // Helper: Haversine distance
   const getHaversine = (p1, p2) => {
@@ -629,58 +774,64 @@ Only return the places to visit for each day in the itinerary.`;
   const fetchOSRMDistance = async (p1, p2) => {
     const key = `${p1.id}-${p2.id}`;
     if (distances[key]) return distances[key];
+    if (pendingOSRMFetches.current.has(key)) return;
+    pendingOSRMFetches.current.add(key);
 
-    if (window.google && window.google.maps && localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false') {
-      try {
-        trackApiCall('Google Maps Distance Matrix');
-        const service = new window.google.maps.DistanceMatrixService();
-        const response = await new Promise((resolve, reject) => {
-          service.getDistanceMatrix({
-            origins: [{ lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) }],
-            destinations: [{ lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }],
-            travelMode: window.google.maps.TravelMode.DRIVING
-          }, (res, status) => {
-            if (status === 'OK') resolve(res);
-            else reject(new Error('Distance Matrix failed with status: ' + status));
+    try {
+      if (window.google && window.google.maps && localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false') {
+        try {
+          trackApiCall('Google Maps Distance Matrix');
+          const service = new window.google.maps.DistanceMatrixService();
+          const response = await new Promise((resolve, reject) => {
+            service.getDistanceMatrix({
+              origins: [{ lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) }],
+              destinations: [{ lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }],
+              travelMode: window.google.maps.TravelMode.DRIVING
+            }, (res, status) => {
+              if (status === 'OK') resolve(res);
+              else reject(new Error('Distance Matrix failed with status: ' + status));
+            });
           });
-        });
 
-        if (response.rows && response.rows[0] && response.rows[0].elements && response.rows[0].elements[0]) {
-          const element = response.rows[0].elements[0];
-          if (element.status === 'OK') {
-            const distKm = Math.round((element.distance.value / 1000) * 10) / 10;
-            const durationMins = Math.round(element.duration.value / 60);
+          if (response.rows && response.rows[0] && response.rows[0].elements && response.rows[0].elements[0]) {
+            const element = response.rows[0].elements[0];
+            if (element.status === 'OK') {
+              const distKm = Math.round((element.distance.value / 1000) * 10) / 10;
+              const durationMins = Math.round(element.duration.value / 60);
+              const valObj = { distance: distKm, duration: durationMins };
+              setDistances(prev => ({ ...prev, [key]: valObj }));
+              return valObj;
+            }
+          }
+        } catch (err) {
+          console.warn('Google Distance Matrix failed, falling back to OSRM:', err);
+        }
+      }
+
+      try {
+        trackApiCall('OSRM Routing');
+        const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${p1.longitude},${p1.latitude};${p2.longitude},${p2.latitude}?overview=false`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.routes && data.routes[0]) {
+            const distKm = Math.round((data.routes[0].distance / 1000) * 10) / 10;
+            const durationMins = Math.round(data.routes[0].duration / 60);
             const valObj = { distance: distKm, duration: durationMins };
             setDistances(prev => ({ ...prev, [key]: valObj }));
             return valObj;
           }
         }
       } catch (err) {
-        console.warn('Google Distance Matrix failed, falling back to OSRM:', err);
+        console.warn('OSRM router error, falling back to Haversine:', err);
       }
+      const havDist = getHaversine(p1, p2);
+      const durMins = Math.round((havDist / 40) * 60);
+      const valObj = { distance: havDist, duration: durMins };
+      setDistances(prev => ({ ...prev, [key]: valObj }));
+      return valObj;
+    } finally {
+      pendingOSRMFetches.current.delete(key);
     }
-
-    try {
-      trackApiCall('OSRM Routing');
-      const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${p1.longitude},${p1.latitude};${p2.longitude},${p2.latitude}?overview=false`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.routes && data.routes[0]) {
-          const distKm = Math.round((data.routes[0].distance / 1000) * 10) / 10;
-          const durationMins = Math.round(data.routes[0].duration / 60);
-          const valObj = { distance: distKm, duration: durationMins };
-          setDistances(prev => ({ ...prev, [key]: valObj }));
-          return valObj;
-        }
-      }
-    } catch (err) {
-      console.warn('OSRM router error, falling back to Haversine:', err);
-    }
-    const havDist = getHaversine(p1, p2);
-    const durMins = Math.round((havDist / 40) * 60);
-    const valObj = { distance: havDist, duration: durMins };
-    setDistances(prev => ({ ...prev, [key]: valObj }));
-    return valObj;
   };
 
   const handleWizardNext = async (e) => {
@@ -740,10 +891,35 @@ Only return the places to visit for each day in the itinerary.`;
     setSelectedTrip(updated);
   };
 
-  const handleStartManualPlanning = () => {
+  const handleStartManualPlanning = async () => {
     if (wizardTrip) {
-      setSelectedTrip(wizardTrip);
+      const existingNotes = typeof wizardTrip.notes === 'string' ? JSON.parse(wizardTrip.notes) : wizardTrip.notes || {};
+      const updatedNotes = {
+        ...existingNotes,
+        locationIds: selectedLocationsForAi,
+        collectionIds: selectedCollectionsForAi
+      };
+      const updatedTrip = {
+        ...wizardTrip,
+        notes: JSON.stringify(updatedNotes)
+      };
+      await queueSyncAction('trips', 'update', updatedTrip);
+      setSelectedTrip(updatedTrip);
     }
+
+    let locIdsToSet = [...selectedLocationsForAi];
+    if (selectedCollectionsForAi.length > 0) {
+      const colPlaces = places.filter(p => 
+        collections.some(col => 
+          selectedCollectionsForAi.includes(col.id) && 
+          (typeof col.place_ids === 'string' ? JSON.parse(col.place_ids) : col.place_ids || []).includes(p.id)
+        )
+      );
+      const colLocIds = colPlaces.map(p => p.location_id);
+      locIdsToSet = [...new Set([...locIdsToSet, ...colLocIds])];
+    }
+    setStopFilterLocationIds(locIdsToSet);
+
     setShowAddForm(false);
     setWizardStep(1);
     setTripBudget('');
@@ -757,6 +933,18 @@ Only return the places to visit for each day in the itinerary.`;
 
     setIsGeneratingTrip(true);
     try {
+      const existingNotes = typeof wizardTrip.notes === 'string' ? JSON.parse(wizardTrip.notes) : wizardTrip.notes || {};
+      const updatedNotes = {
+        ...existingNotes,
+        locationIds: selectedLocationsForAi,
+        collectionIds: selectedCollectionsForAi
+      };
+      const updatedTrip = {
+        ...wizardTrip,
+        notes: JSON.stringify(updatedNotes)
+      };
+      await queueSyncAction('trips', 'update', updatedTrip);
+
       const locNames = locations.filter(l => selectedLocationsForAi.includes(l.id)).map(l => l.name);
       const colNames = collections.filter(c => selectedCollectionsForAi.includes(c.id)).map(c => c.name);
 
@@ -803,17 +991,22 @@ Only return the places to visit for each day in the itinerary.`;
         if (wizardTrip.start_date) {
           const d = new Date(wizardTrip.start_date);
           d.setDate(d.getDate() + (day.day - 1));
-          dayDateStr = d.toISOString().split('T')[0];
+        dayDateStr = d.toISOString().split('T')[0];
         }
 
         for (let idx = 0; idx < (day.activities || []).length; idx++) {
           const activityText = day.activities[idx];
           
-          let matchedPlace = places.find(p => 
-            p.name.toLowerCase() === activityText.toLowerCase() ||
-            activityText.toLowerCase().includes(p.name.toLowerCase()) ||
-            p.name.toLowerCase().includes(activityText.toLowerCase())
-          );
+          let matchedPlace = places.find(p => {
+            const nameMatch = p.name.toLowerCase() === activityText.toLowerCase() ||
+              activityText.toLowerCase().includes(p.name.toLowerCase()) ||
+              p.name.toLowerCase().includes(activityText.toLowerCase());
+            if (!nameMatch) return false;
+            
+            const cat = p.category?.toLowerCase() || '';
+            const isExcluded = cat.includes('hotel') || cat.includes('resort') || cat.includes('cafe') || cat.includes('stay');
+            return !isExcluded;
+          });
           let placeId = matchedPlace ? matchedPlace.id : null;
 
           if (!placeId) {
@@ -827,14 +1020,28 @@ Only return the places to visit for each day in the itinerary.`;
               trip_id: wizardTrip.id,
               date: dayDateStr,
               place_id: placeId,
-              sequence_order: idx + 1
+              sequence_order: idx + 1,
+              distance_from_prev: null,
+              duration_from_prev: null
             };
             await queueSyncAction('itinerary_items', 'insert', newItem);
           }
         }
       }
       setUnmappedRecommendations(unmappedList);
-      setStopFilterLocationIds(selectedLocationsForAi);
+      
+      let locIdsToSet = [...selectedLocationsForAi];
+      if (selectedCollectionsForAi.length > 0) {
+        const colPlaces = places.filter(p => 
+          collections.some(col => 
+            selectedCollectionsForAi.includes(col.id) && 
+            (typeof col.place_ids === 'string' ? JSON.parse(col.place_ids) : col.place_ids || []).includes(p.id)
+          )
+        );
+        const colLocIds = colPlaces.map(p => p.location_id);
+        locIdsToSet = [...new Set([...locIdsToSet, ...colLocIds])];
+      }
+      setStopFilterLocationIds(locIdsToSet);
 
       setTripName('');
       setTripStartDate('');
@@ -847,7 +1054,7 @@ Only return the places to visit for each day in the itinerary.`;
       setShowAddForm(false);
       setWizardStep(1);
       setTripBudget('');
-      setSelectedTrip(wizardTrip);
+      setSelectedTrip(updatedTrip);
       setWizardTrip(null);
       setShow3ColumnWorkspace(true);
     } catch (err) {
@@ -897,7 +1104,9 @@ Only return the places to visit for each day in the itinerary.`;
       trip_id: selectedTrip.id,
       date: dayDateStr,
       place_id: placeId,
-      sequence_order: dayItems.length + 1
+      sequence_order: dayItems.length + 1,
+      distance_from_prev: null,
+      duration_from_prev: null
     };
     await queueSyncAction('itinerary_items', 'insert', newItem);
 
@@ -1066,43 +1275,100 @@ Only return the places to visit for each day in the itinerary.`;
       }
     }
 
-    const newRes = {
-      id: generateUUID(),
-      trip_id: selectedTrip.id,
-      type: mainResType.toLowerCase(),
-      title: mainResTitle,
-      details: JSON.stringify({ notes: mainResDetails, isMainTripStart: true }),
-      file_path: fileUrl,
-      local_file_data: localFileData
-    };
+    if (editingReservationId) {
+      const existingRes = reservations.find(r => r.id === editingReservationId);
+      if (existingRes) {
+        const updatedRes = {
+          ...existingRes,
+          type: mainResType.toLowerCase(),
+          title: mainResTitle,
+          details: JSON.stringify({ notes: mainResDetails, isMainTripStart: true }),
+          file_path: fileUrl || existingRes.file_path,
+          local_file_data: localFileData || existingRes.local_file_data
+        };
+        await queueSyncAction('reservations', 'update', updatedRes);
 
-    await queueSyncAction('reservations', 'insert', newRes);
+        const parsedCost = parseFloat(mainResCost);
+        const existingExp = expenses.find(exp => exp.reservation_id === editingReservationId);
+        
+        let expCategoryVal = 'Other';
+        const rType = (mainResType || '').toLowerCase();
+        if (rType === 'stay' || rType === 'hotel' || rType === 'airbnb' || rType === 'lodging') {
+          expCategoryVal = 'Lodging';
+        } else if (['flight', 'air', 'train', 'bus', 'car', 'rental', 'transport', 'ferry', 'taxi'].includes(rType)) {
+          expCategoryVal = 'Transportation';
+        } else if (['activity', 'attraction', 'ticket', 'event', 'entertainment'].includes(rType)) {
+          expCategoryVal = 'Entertainment';
+        }
 
-    const parsedCost = parseFloat(mainResCost);
-    if (!isNaN(parsedCost) && parsedCost > 0) {
-      let expCategoryVal = 'Other';
-      const rType = (mainResType || '').toLowerCase();
-      if (rType === 'stay' || rType === 'hotel' || rType === 'airbnb' || rType === 'lodging') {
-        expCategoryVal = 'Lodging';
-      } else if (['flight', 'air', 'train', 'bus', 'car', 'rental', 'transport', 'ferry', 'taxi'].includes(rType)) {
-        expCategoryVal = 'Transportation';
-      } else if (['activity', 'attraction', 'ticket', 'event', 'entertainment'].includes(rType)) {
-        expCategoryVal = 'Entertainment';
+        if (existingExp) {
+          if (!isNaN(parsedCost) && parsedCost > 0) {
+            const updatedExp = {
+              ...existingExp,
+              amount: parsedCost,
+              category: expCategoryVal,
+              notes: `Cost for departure/arrival: ${mainResTitle}`,
+              date: document.getElementById('main-res-date-select')?.value || selectedTrip.start_date || new Date().toISOString().split('T')[0]
+            };
+            await queueSyncAction('expenses', 'update', updatedExp);
+          } else {
+            await queueSyncAction('expenses', 'delete', { id: existingExp.id });
+          }
+        } else if (!isNaN(parsedCost) && parsedCost > 0) {
+          const newExp = {
+            id: generateUUID(),
+            trip_id: selectedTrip.id,
+            date: document.getElementById('main-res-date-select')?.value || selectedTrip.start_date || new Date().toISOString().split('T')[0],
+            amount: parsedCost,
+            currency: baseCurrency,
+            category: expCategoryVal,
+            notes: `Cost for departure/arrival: ${mainResTitle}`,
+            receipt_path: null,
+            is_planned: 0,
+            reservation_id: editingReservationId
+          };
+          await queueSyncAction('expenses', 'insert', newExp);
+        }
       }
-
-      const newExp = {
+    } else {
+      const newRes = {
         id: generateUUID(),
         trip_id: selectedTrip.id,
-        date: document.getElementById('main-res-date-select')?.value || selectedTrip.start_date || new Date().toISOString().split('T')[0],
-        amount: parsedCost,
-        currency: baseCurrency,
-        category: expCategoryVal,
-        notes: `Cost for departure/arrival: ${mainResTitle}`,
-        receipt_path: null,
-        is_planned: 0,
-        reservation_id: newRes.id
+        type: mainResType.toLowerCase(),
+        title: mainResTitle,
+        details: JSON.stringify({ notes: mainResDetails, isMainTripStart: true }),
+        file_path: fileUrl,
+        local_file_data: localFileData
       };
-      await queueSyncAction('expenses', 'insert', newExp);
+
+      await queueSyncAction('reservations', 'insert', newRes);
+
+      const parsedCost = parseFloat(mainResCost);
+      if (!isNaN(parsedCost) && parsedCost > 0) {
+        let expCategoryVal = 'Other';
+        const rType = (mainResType || '').toLowerCase();
+        if (rType === 'stay' || rType === 'hotel' || rType === 'airbnb' || rType === 'lodging') {
+          expCategoryVal = 'Lodging';
+        } else if (['flight', 'air', 'train', 'bus', 'car', 'rental', 'transport', 'ferry', 'taxi'].includes(rType)) {
+          expCategoryVal = 'Transportation';
+        } else if (['activity', 'attraction', 'ticket', 'event', 'entertainment'].includes(rType)) {
+          expCategoryVal = 'Entertainment';
+        }
+
+        const newExp = {
+          id: generateUUID(),
+          trip_id: selectedTrip.id,
+          date: document.getElementById('main-res-date-select')?.value || selectedTrip.start_date || new Date().toISOString().split('T')[0],
+          amount: parsedCost,
+          currency: baseCurrency,
+          category: expCategoryVal,
+          notes: `Cost for departure/arrival: ${mainResTitle}`,
+          receipt_path: null,
+          is_planned: 0,
+          reservation_id: newRes.id
+        };
+        await queueSyncAction('expenses', 'insert', newExp);
+      }
     }
 
     // Reset Form
@@ -1110,30 +1376,78 @@ Only return the places to visit for each day in the itinerary.`;
     setMainResDetails('');
     setMainResCost('');
     setMainResFile(null);
+    setEditingReservationId(null);
     setShowMainTravelForm(false);
   };
 
   // Add Itinerary Item
   const handleAddItineraryItem = async (date, placeId) => {
-    if (!selectedTrip) return;
+    if (!currentTrip) return;
     
     // Calculate sequence order
-    const dayItems = itineraries.filter(i => i.trip_id === selectedTrip.id && i.date === date);
+    const dayItems = itineraries.filter(i => i.trip_id === currentTrip.id && i.date === date);
     const maxOrder = dayItems.reduce((max, item) => item.sequence_order > max ? item.sequence_order : max, 0);
 
     const newItem = {
       id: generateUUID(),
-      trip_id: selectedTrip.id,
+      trip_id: currentTrip.id,
       date,
       place_id: placeId,
-      sequence_order: maxOrder + 1
+      sequence_order: maxOrder + 1,
+      distance_from_prev: null,
+      duration_from_prev: null
     };
 
     await queueSyncAction('itinerary_items', 'insert', newItem);
   };
 
+  const handleMobileAddStop = async (place) => {
+    if (!currentTrip || !itineraryDays || itineraryDays.length === 0) return;
+    const firstDayDate = itineraryDays[0].date;
+    await handleAddItineraryItem(firstDayDate, place.id);
+  };
+
+  const handleViewAttachment = (res) => {
+    if (res.file_path) {
+      setActivePdfUrl(res.file_path);
+    }
+  };
+
+  const handleToggleActiveTrip = async (tripId) => {
+    for (const t of trips) {
+      let notesObj = {};
+      try {
+        notesObj = typeof t.notes === 'string' ? JSON.parse(t.notes) : t.notes || {};
+      } catch (e) {}
+
+      const shouldBeActive = t.id.toString() === tripId.toString() && !notesObj.isActive;
+      if (notesObj.isActive !== shouldBeActive) {
+        const updatedNotes = { ...notesObj, isActive: shouldBeActive };
+        const updatedTrip = {
+          ...t,
+          notes: JSON.stringify(updatedNotes)
+        };
+        await queueSyncAction('trips', 'update', updatedTrip);
+      }
+    }
+  };
+
   // Delete Itinerary Item
   const handleDeleteItineraryItem = async (itemId) => {
+    const itemToDelete = itineraries.find(i => i.id === itemId);
+    if (itemToDelete) {
+      const dayItems = itineraries
+        .filter(i => i.trip_id === itemToDelete.trip_id && i.date === itemToDelete.date && i.id !== itemId)
+        .sort((a, b) => a.sequence_order - b.sequence_order);
+      const subsequentItem = dayItems.find(i => i.sequence_order > itemToDelete.sequence_order);
+      if (subsequentItem) {
+        await queueSyncAction('itinerary_items', 'update', {
+          ...subsequentItem,
+          distance_from_prev: null,
+          duration_from_prev: null
+        });
+      }
+    }
     await queueSyncAction('itinerary_items', 'delete', { id: itemId });
   };
 
@@ -1146,6 +1460,24 @@ Only return the places to visit for each day in the itinerary.`;
         await queueSyncAction('expenses', 'delete', { id: exp.id });
       }
     }
+  };
+
+  const handleStartEditReservation = (res) => {
+    setEditingReservationId(res.id);
+    setMainResType(res.type.charAt(0).toUpperCase() + res.type.slice(1));
+    setMainResTitle(res.title);
+    
+    let notes = '';
+    try {
+      const details = typeof res.details === 'string' ? JSON.parse(res.details) : res.details || {};
+      notes = details.notes || '';
+    } catch (e) {}
+    setMainResDetails(notes);
+
+    const associatedExp = expenses.find(e => e.reservation_id === res.id);
+    setMainResCost(associatedExp ? associatedExp.amount.toString() : '');
+    setMainResFile(null); // original file kept unless replaced
+    setShowMainTravelForm(true);
   };
 
   // Add Custom Exchange Rate
@@ -1255,124 +1587,6 @@ Only return the places to visit for each day in the itinerary.`;
     }
   };
 
-  // Trigger Road Distance Calculation triggers on mount/render
-  const ItineraryDay = ({ date, items }) => {
-    const distancesList = useMemo(() => {
-      if (items.length < 2) return [];
-      const computed = [];
-      for (let i = 1; i < items.length; i++) {
-        const p1 = places.find(p => p.id === items[i - 1].place_id);
-        const p2 = places.find(p => p.id === items[i].place_id);
-        if (p1 && p2) {
-          const key = `${p1.id}-${p2.id}`;
-          if (distances[key] !== undefined) {
-            computed.push(distances[key]);
-          } else {
-            fetchOSRMDistance(p1, p2);
-            computed.push(getHaversine(p1, p2));
-          }
-        } else {
-          computed.push(0);
-        }
-      }
-      return computed;
-    }, [items, distances, places]);
-
-    const dayReservations = reservations.filter(r => {
-      if (r.trip_id !== selectedTrip?.id) return false;
-      try {
-        const details = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
-        return details && details.date === date;
-      } catch (e) {
-        return false;
-      }
-    });
-
-    const stayRes = dayReservations.find(r => r.type === 'stay' || r.type === 'hotel');
-    const stayLocation = stayRes ? stayRes.title : '';
-
-    return (
-      <div style={{ marginBottom: '24px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '6px', marginBottom: '8px' }}>
-          <h4 style={{ margin: 0, color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            🗓️ {date} 
-            {stayLocation && (
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'normal' }}>
-                🏡 Stay: {stayLocation}
-              </span>
-            )}
-          </h4>
-        </div>
-
-        {/* Display reservations directly below the date */}
-        {dayReservations.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '10px 0' }}>
-            {dayReservations.map(res => (
-              <div key={res.id} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--accent-secondary)', fontWeight: 'bold', marginRight: '6px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '2px' }}>
-                    {res.type}
-                  </span>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{res.title}</span>
-                  {res.details && (typeof res.details === 'string' ? JSON.parse(res.details).notes : res.details.notes) && (
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
-                      {typeof res.details === 'string' ? JSON.parse(res.details).notes : res.details.notes}
-                    </p>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {res.file_path && (
-                    <button className="photo-action-btn" onClick={() => handleViewAttachment(res)}>
-                      <FileText size={12} />
-                    </button>
-                  )}
-                  {!tripModeActive && (
-                    <button className="photo-action-btn" onClick={() => handleDeleteReservation(res)}>
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        
-        {items.length === 0 ? (
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '8px 0' }}>No stops planned for this day.</p>
-        ) : (
-          <div className="timeline">
-            {items.map((item, idx) => {
-              const place = places.find(p => p.id === item.place_id);
-              const dist = distancesList[idx - 1];
-
-              return (
-                <div key={item.id} className="timeline-item">
-                  {idx > 0 && dist !== undefined && (
-                    <div className="timeline-distance">
-                      🚗 {dist && typeof dist === 'object' ? `${dist.distance} km (${dist.duration} mins)` : `${dist} km`} to next stop
-                    </div>
-                  )}
-                  <div className="timeline-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <b style={{ color: 'var(--text-primary)' }}>{place ? place.name : 'Unknown Stop'}</b>
-                      {!tripModeActive && (
-                        <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(item.id)}>
-                          <X size={12} />
-                        </button>
-                      )}
-                    </div>
-                    {place && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{place.category}</span>}
-                    {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{place.notes}</p>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   // List of Dates
   const getDatesBetween = (start, end) => {
     const list = [];
@@ -1437,6 +1651,33 @@ Only return the places to visit for each day in the itinerary.`;
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <h2 style={{ margin: 0 }}>Trip Planner</h2>
+          {(() => {
+            const isUsingGmaps = typeof window !== 'undefined' && 
+              window.google && 
+              window.google.maps && 
+              localStorage.getItem('google_maps_api_key') && 
+              localStorage.getItem('google_maps_enabled') !== 'false';
+            return (
+              <div 
+                title={isUsingGmaps ? "Using Google Maps Distance Matrix API for travel routes" : "Using OpenStreetMap (OSRM) API for travel routes"}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  padding: '4px', 
+                  borderRadius: '50%', 
+                  border: '1px solid var(--border-glass)',
+                  background: isUsingGmaps ? 'rgba(34, 197, 94, 0.15)' : 'rgba(249, 115, 22, 0.15)',
+                  cursor: 'help'
+                }}
+              >
+                <img 
+                  src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
+                  style={{ width: 18, height: 18, objectFit: 'contain' }} 
+                  alt={isUsingGmaps ? "GMaps" : "OSM"} 
+                />
+              </div>
+            );
+          })()}
         </div>
         <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto', padding: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Compass size={18} style={{ margin: 0 }} />
@@ -1668,44 +1909,62 @@ Only return the places to visit for each day in the itinerary.`;
                       Select locations and collections to populate the places bank for this trip:
                     </p>
 
+                    <div className="form-group" style={{ marginBottom: '16px' }}>
+                      <input 
+                        type="text"
+                        className="form-control"
+                        placeholder="Search locations or collections..."
+                        value={wizardSearchQuery}
+                        onChange={(e) => setWizardSearchQuery(e.target.value)}
+                        style={{ fontSize: '0.85rem' }}
+                      />
+                    </div>
+
                     <div className="form-group" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                       <div style={{ flex: 1, minWidth: '180px' }}>
                         <label>Select Locations</label>
                         <div style={{ border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '8px', maxHeight: '150px', overflowY: 'auto', background: 'var(--bg-app)' }}>
-                          {locations.filter(l => l.is_folder !== 1).map(loc => (
-                            <div key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                              <input 
-                                type="checkbox" 
-                                id={`loc-ai-${loc.id}`}
-                                checked={selectedLocationsForAi.includes(loc.id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) setSelectedLocationsForAi(prev => [...prev, loc.id]);
-                                  else setSelectedLocationsForAi(prev => prev.filter(id => id !== loc.id));
-                                }}
-                              />
-                              <label htmlFor={`loc-ai-${loc.id}`} style={{ margin: 0, fontSize: '0.8rem', cursor: 'pointer' }}>{loc.name}</label>
-                            </div>
-                          ))}
+                          {locations
+                            .filter(l => l.is_folder !== 1)
+                            .filter(l => !wizardSearchQuery.trim() || l.name?.toLowerCase().includes(wizardSearchQuery.toLowerCase()))
+                            .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                            .map(loc => (
+                              <div key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <input 
+                                  type="checkbox" 
+                                  id={`loc-ai-${loc.id}`}
+                                  checked={selectedLocationsForAi.includes(loc.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) setSelectedLocationsForAi(prev => [...prev, loc.id]);
+                                    else setSelectedLocationsForAi(prev => prev.filter(id => id !== loc.id));
+                                  }}
+                                />
+                                <label htmlFor={`loc-ai-${loc.id}`} style={{ margin: 0, fontSize: '0.8rem', cursor: 'pointer' }}>{loc.name}</label>
+                              </div>
+                            ))}
                         </div>
                       </div>
 
                       <div style={{ flex: 1, minWidth: '180px' }}>
                         <label>Select Collections</label>
                         <div style={{ border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '8px', maxHeight: '150px', overflowY: 'auto', background: 'var(--bg-app)' }}>
-                          {collections.map(col => (
-                            <div key={col.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                              <input 
-                                type="checkbox" 
-                                id={`col-ai-${col.id}`}
-                                checked={selectedCollectionsForAi.includes(col.id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) setSelectedCollectionsForAi(prev => [...prev, col.id]);
-                                  else setSelectedCollectionsForAi(prev => prev.filter(id => id !== col.id));
-                                }}
-                              />
-                              <label htmlFor={`col-ai-${col.id}`} style={{ margin: 0, fontSize: '0.8rem', cursor: 'pointer' }}>{col.name}</label>
-                            </div>
-                          ))}
+                          {collections
+                            .filter(c => !wizardSearchQuery.trim() || c.name?.toLowerCase().includes(wizardSearchQuery.toLowerCase()))
+                            .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                            .map(col => (
+                              <div key={col.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <input 
+                                  type="checkbox" 
+                                  id={`col-ai-${col.id}`}
+                                  checked={selectedCollectionsForAi.includes(col.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) setSelectedCollectionsForAi(prev => [...prev, col.id]);
+                                    else setSelectedCollectionsForAi(prev => prev.filter(id => id !== col.id));
+                                  }}
+                                />
+                                <label htmlFor={`col-ai-${col.id}`} style={{ margin: 0, fontSize: '0.8rem', cursor: 'pointer' }}>{col.name}</label>
+                              </div>
+                            ))}
                         </div>
                       </div>
                     </div>
@@ -1780,13 +2039,7 @@ Only return the places to visit for each day in the itinerary.`;
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (activeTripId.toString() === trip.id.toString()) {
-                    setActiveTripId('');
-                    localStorage.removeItem('active_trip_id');
-                  } else {
-                    setActiveTripId(trip.id.toString());
-                    localStorage.setItem('active_trip_id', trip.id.toString());
-                  }
+                  handleToggleActiveTrip(trip.id);
                 }}
                 className="btn btn-secondary"
                 style={{ 
@@ -1889,7 +2142,7 @@ Only return the places to visit for each day in the itinerary.`;
                 ) : (
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <h2 style={{ margin: 0 }}>{selectedTrip.name}</h2>
+                      <h2 style={{ margin: 0 }}>{currentTrip.name}</h2>
                       <button 
                         className="btn btn-secondary"
                         style={{ width: 'auto', padding: '2px 8px', fontSize: '0.7rem', height: '24px', display: 'inline-flex', alignItems: 'center', gap: '4px', textTransform: 'none' }}
@@ -1899,7 +2152,7 @@ Only return the places to visit for each day in the itinerary.`;
                       </button>
                     </div>
                     <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                      📅 {formatStartDate(selectedTrip.start_date)} ({selectedTrip.length || 1} {selectedTrip.length === 1 ? 'day' : 'days'})
+                      📅 {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})
                     </p>
                   </div>
                 )}
@@ -1914,33 +2167,22 @@ Only return the places to visit for each day in the itinerary.`;
                   </button>
                   <button 
                     className="photo-action-btn" 
-                    onClick={() => {
-                      const isCurrent = localStorage.getItem('active_trip_id') === selectedTrip.id.toString();
-                      if (isCurrent) {
-                        localStorage.removeItem('active_trip_id');
-                        setActiveTripId('');
-                        setForceUpdateActiveTrip(prev => prev + 1);
-                      } else {
-                        localStorage.setItem('active_trip_id', selectedTrip.id.toString());
-                        setActiveTripId(selectedTrip.id.toString());
-                        setForceUpdateActiveTrip(prev => prev + 1);
-                      }
-                    }}
+                    onClick={() => handleToggleActiveTrip(currentTrip.id)}
                     style={{ 
-                      color: localStorage.getItem('active_trip_id') === selectedTrip.id.toString() ? 'var(--accent-primary-hover)' : 'var(--text-secondary)'
+                      color: activeTripId === currentTrip.id.toString() ? 'var(--accent-primary-hover)' : 'var(--text-secondary)'
                     }}
-                    title={localStorage.getItem('active_trip_id') === selectedTrip.id.toString() ? "Active Trip (Pinned)" : "Set as Active Trip"}
+                    title={activeTripId === currentTrip.id.toString() ? "Active Trip (Pinned)" : "Set as Active Trip"}
                   >
-                    <Star size={16} fill={localStorage.getItem('active_trip_id') === selectedTrip.id.toString() ? 'var(--accent-primary-hover)' : 'none'} />
+                    <Star size={16} fill={activeTripId === currentTrip.id.toString() ? 'var(--accent-primary-hover)' : 'none'} />
                   </button>
                   <button 
                     className="photo-action-btn" 
-                    onClick={() => handleToggleTripVisited(selectedTrip)}
-                    style={{ color: selectedTrip.visited === 1 ? 'var(--success)' : 'var(--text-secondary)' }}
+                    onClick={() => handleToggleTripVisited(currentTrip)}
+                    style={{ color: currentTrip.visited === 1 ? 'var(--success)' : 'var(--text-secondary)' }}
                   >
                     <CheckSquare size={16} />
                   </button>
-                  <button className="photo-action-btn" onClick={() => handleDeleteTrip(selectedTrip.id)}>
+                  <button className="photo-action-btn" onClick={() => handleDeleteTrip(currentTrip.id)}>
                     <Trash2 size={16} />
                   </button>
                   <button className="photo-action-btn" onClick={() => setSelectedTrip(null)}>
@@ -1952,8 +2194,8 @@ Only return the places to visit for each day in the itinerary.`;
 
             {/* Print Header (Visible only when printing) */}
             <div className="print-only" style={{ display: 'none', padding: '24px', borderBottom: '2px solid #000' }}>
-              <h1 style={{ color: '#000' }}>{selectedTrip.name}</h1>
-              <p>Trip Duration: {formatStartDate(selectedTrip.start_date)} ({selectedTrip.length || 1} {selectedTrip.length === 1 ? 'day' : 'days'})</p>
+              <h1 style={{ color: '#000' }}>{currentTrip.name}</h1>
+              <p>Trip Duration: {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})</p>
               <hr style={{ margin: '12px 0' }} />
             </div>
 
@@ -2210,10 +2452,25 @@ Only return the places to visit for each day in the itinerary.`;
               <div className={!printOptItinerary ? 'no-print' : ''} style={{ background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
                 <h3 style={{ marginBottom: '16px', marginTop: 0 }}>Chronological Daily Itinerary</h3>
                 {itineraryDays.map(day => {
-                  const dayItems = itineraries.filter(i => i.trip_id === selectedTrip.id && i.date === day.date)
+                  const dayItems = itineraries.filter(i => currentTrip && i.trip_id === currentTrip.id && i.date === day.date)
                                               .sort((a,b) => a.sequence_order - b.sequence_order);
                   return (
-                    <ItineraryDay key={day.date} date={day.date} label={day.label} items={dayItems} />
+                    <ItineraryDay 
+                      key={day.date} 
+                      date={day.date} 
+                      label={day.label} 
+                      items={dayItems} 
+                      places={places}
+                      distances={distances}
+                      reservations={reservations}
+                      selectedTrip={currentTrip}
+                      tripModeActive={tripModeActive}
+                      handleViewAttachment={handleViewAttachment}
+                      handleDeleteReservation={handleDeleteReservation}
+                      handleDeleteItineraryItem={handleDeleteItineraryItem}
+                      fetchOSRMDistance={fetchOSRMDistance}
+                      getHaversine={getHaversine}
+                    />
                   );
                 })}
               </div>
@@ -2230,11 +2487,12 @@ Only return the places to visit for each day in the itinerary.`;
                         setMainResDetails('');
                         setMainResCost('');
                         setMainResFile(null);
+                        setEditingReservationId(null);
                       }}
                       className="btn btn-secondary"
                       style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}
                     >
-                      {showMainTravelForm ? 'Cancel' : '+ Add Reservation'}
+                      {editingReservationId ? 'Cancel Edit' : (showMainTravelForm ? 'Cancel' : '+ Add Reservation')}
                     </button>
                   )}
                 </div>
@@ -2310,8 +2568,10 @@ Only return the places to visit for each day in the itinerary.`;
                       />
                     </div>
                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                      <button type="button" onClick={() => setShowMainTravelForm(false)} className="btn btn-secondary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}>Cancel</button>
-                      <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}>Save Reservation</button>
+                      <button type="button" onClick={() => { setShowMainTravelForm(false); setEditingReservationId(null); }} className="btn btn-secondary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}>Cancel</button>
+                      <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}>
+                        {editingReservationId ? 'Update Reservation' : 'Save Reservation'}
+                      </button>
                     </div>
                   </form>
                 )}
@@ -2359,8 +2619,11 @@ Only return the places to visit for each day in the itinerary.`;
                             />
                           </td>
                           {!tripModeActive && (
-                            <td style={{ padding: '8px' }}>
-                              <button className="photo-action-btn" onClick={() => handleDeleteReservation(res)}>
+                            <td style={{ padding: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <button className="photo-action-btn" onClick={() => handleStartEditReservation(res)} title="Edit Reservation">
+                                <Edit size={12} />
+                              </button>
+                              <button className="photo-action-btn" onClick={() => handleDeleteReservation(res)} title="Delete Reservation">
                                 <Trash2 size={12} />
                               </button>
                             </td>
@@ -2668,7 +2931,7 @@ Only return the places to visit for each day in the itinerary.`;
           <div style={{ flex: '1 1 70%', position: 'relative', height: '100%' }}>
             <MapView 
               points={mapPoints} 
-              drawLine={true} 
+              drawLine={showNavigationLines} 
             />
             <button 
               className="photo-action-btn" 
@@ -2731,7 +2994,9 @@ Only return the places to visit for each day in the itinerary.`;
                                     const updated = {
                                       ...item,
                                       date: newDate,
-                                      sequence_order: targetDayItems.length + 1
+                                      sequence_order: targetDayItems.length + 1,
+                                      distance_from_prev: null,
+                                      duration_from_prev: null
                                     };
                                     await queueSyncAction('itinerary_items', 'update', updated);
                                   }}
@@ -2741,13 +3006,12 @@ Only return the places to visit for each day in the itinerary.`;
                                     <option key={d.date} value={d.date}>{d.label.split(' (')[0]}</option>
                                   ))}
                                 </select>
-
                                 <button
                                   disabled={idx === 0}
                                   onClick={async () => {
                                     const prevItem = dayItems[idx - 1];
-                                    const updCurrent = { ...item, sequence_order: prevItem.sequence_order };
-                                    const updPrev = { ...prevItem, sequence_order: item.sequence_order };
+                                    const updCurrent = { ...item, sequence_order: prevItem.sequence_order, distance_from_prev: null, duration_from_prev: null };
+                                    const updPrev = { ...prevItem, sequence_order: item.sequence_order, distance_from_prev: null, duration_from_prev: null };
                                     await queueSyncAction('itinerary_items', 'update', updCurrent);
                                     await queueSyncAction('itinerary_items', 'update', updPrev);
                                   }}
@@ -2759,8 +3023,8 @@ Only return the places to visit for each day in the itinerary.`;
                                   disabled={idx === dayItems.length - 1}
                                   onClick={async () => {
                                     const nextItem = dayItems[idx + 1];
-                                    const updCurrent = { ...item, sequence_order: nextItem.sequence_order };
-                                    const updNext = { ...nextItem, sequence_order: item.sequence_order };
+                                    const updCurrent = { ...item, sequence_order: nextItem.sequence_order, distance_from_prev: null, duration_from_prev: null };
+                                    const updNext = { ...nextItem, sequence_order: item.sequence_order, distance_from_prev: null, duration_from_prev: null };
                                     await queueSyncAction('itinerary_items', 'update', updCurrent);
                                     await queueSyncAction('itinerary_items', 'update', updNext);
                                   }}
@@ -2811,23 +3075,100 @@ Only return the places to visit for each day in the itinerary.`;
             </button>
           </div>
 
+          {isMobile && (
+            <div style={{
+              display: 'flex',
+              background: 'var(--bg-surface-elevated)',
+              borderBottom: '1px solid var(--border-glass)',
+              padding: '8px 12px',
+              gap: '8px',
+              justifyContent: 'space-between'
+            }}>
+              <button
+                onClick={() => setActiveMobilePane('map')}
+                className="btn"
+                style={{
+                  flex: 1,
+                  margin: 0,
+                  fontSize: '0.8rem',
+                  padding: '6px',
+                  background: activeMobilePane === 'map' ? 'var(--accent-primary)' : 'transparent',
+                  color: activeMobilePane === 'map' ? '#fff' : 'var(--text-secondary)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: '4px'
+                }}
+              >
+                🗺️ Map
+              </button>
+              <button
+                onClick={() => setActiveMobilePane('itinerary')}
+                className="btn"
+                style={{
+                  flex: 1,
+                  margin: 0,
+                  fontSize: '0.8rem',
+                  padding: '6px',
+                  background: activeMobilePane === 'itinerary' ? 'var(--accent-primary)' : 'transparent',
+                  color: activeMobilePane === 'itinerary' ? '#fff' : 'var(--text-secondary)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: '4px'
+                }}
+              >
+                📅 Itinerary
+              </button>
+              <button
+                onClick={() => setActiveMobilePane('bank')}
+                className="btn"
+                style={{
+                  flex: 1,
+                  margin: 0,
+                  fontSize: '0.8rem',
+                  padding: '6px',
+                  background: activeMobilePane === 'bank' ? 'var(--accent-primary)' : 'transparent',
+                  color: activeMobilePane === 'bank' ? '#fff' : 'var(--text-secondary)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: '4px'
+                }}
+              >
+                📍 Places Bank
+              </button>
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexGrow: 1, overflow: 'hidden' }}>
             
-            <div style={{ flex: '0 0 35%', borderRight: '1px solid var(--border-glass)', display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-              <div style={{ padding: '16px', borderBottom: '1px solid var(--border-glass)', background: 'var(--bg-surface)' }}>
+            <div style={{
+              flex: isMobile ? '1 1 100%' : '0 0 35%',
+              borderRight: isMobile ? 'none' : '1px solid var(--border-glass)',
+              display: isMobile && activeMobilePane !== 'map' ? 'none' : 'flex',
+              flexDirection: 'column',
+              height: '100%',
+              position: 'relative'
+            }}>
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-glass)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>Trip Map</h3>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowNavigationLines(prev => !prev)}
+                  style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0 }}
+                >
+                  {showNavigationLines ? '🗺️ Hide Routes' : '🚗 Generate Navigation'}
+                </button>
               </div>
               <div style={{ flexGrow: 1, position: 'relative' }}>
                 <MapView 
                   points={mapPoints} 
-                  drawLine={true} 
+                  drawLine={showNavigationLines} 
                 />
               </div>
             </div>
 
             <div style={{
-              flex: '0 0 35%', borderRight: '1px solid var(--border-glass)',
-              display: 'flex', flexDirection: 'column', height: '100%',
+              flex: isMobile ? '1 1 100%' : '0 0 35%',
+              borderRight: isMobile ? 'none' : '1px solid var(--border-glass)',
+              display: isMobile && activeMobilePane !== 'itinerary' ? 'none' : 'flex',
+              flexDirection: 'column',
+              height: '100%',
               background: 'var(--bg-surface)'
             }}>
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border-glass)' }}>
@@ -2913,6 +3254,11 @@ Only return the places to visit for each day in the itinerary.`;
                           const data = JSON.parse(rawData);
                           const scheduledPlaceIds = itineraries.filter(i => i.trip_id === selectedTrip.id).map(i => i.place_id);
                           if (data.type === 'place') {
+                            const p = places.find(x => x.id === data.id);
+                            const cat = p?.category?.toLowerCase() || '';
+                            const isExcluded = cat.includes('hotel') || cat.includes('resort') || cat.includes('cafe') || cat.includes('stay');
+                            if (isExcluded) return;
+
                             if (data.sourceDay) {
                               if (data.sourceDay === day.date) return;
                               const sourceItem = itineraries.find(i => i.trip_id === selectedTrip.id && i.date === data.sourceDay && i.place_id === data.id);
@@ -2920,7 +3266,9 @@ Only return the places to visit for each day in the itinerary.`;
                                 const updated = {
                                   ...sourceItem,
                                   date: day.date,
-                                  sequence_order: dayItems.length + 1
+                                  sequence_order: dayItems.length + 1,
+                                  distance_from_prev: null,
+                                  duration_from_prev: null
                                 };
                                 await queueSyncAction('itinerary_items', 'update', updated);
                               }
@@ -2931,12 +3279,20 @@ Only return the places to visit for each day in the itinerary.`;
                                 trip_id: selectedTrip.id,
                                 date: day.date,
                                 place_id: data.id,
-                                sequence_order: dayItems.length + 1
+                                sequence_order: dayItems.length + 1,
+                                distance_from_prev: null,
+                                duration_from_prev: null
                               };
                               await queueSyncAction('itinerary_items', 'insert', newItem);
                             }
                           } else if (data.type === 'folder') {
-                            const folderPlaces = places.filter(p => p.location_id === data.id && !scheduledPlaceIds.includes(p.id));
+                            const folderPlaces = places.filter(p => {
+                              if (p.location_id !== data.id) return false;
+                              if (scheduledPlaceIds.includes(p.id)) return false;
+                              const cat = p.category?.toLowerCase() || '';
+                              const isExcluded = cat.includes('hotel') || cat.includes('resort') || cat.includes('cafe') || cat.includes('stay');
+                              return !isExcluded;
+                            });
                             let addedCount = 0;
                             for (const fp of folderPlaces) {
                               if (dayItems.some(i => i.place_id === fp.id)) continue;
@@ -2945,7 +3301,9 @@ Only return the places to visit for each day in the itinerary.`;
                                 trip_id: selectedTrip.id,
                                 date: day.date,
                                 place_id: fp.id,
-                                sequence_order: dayItems.length + addedCount + 1
+                                sequence_order: dayItems.length + addedCount + 1,
+                                distance_from_prev: null,
+                                duration_from_prev: null
                               };
                               await queueSyncAction('itinerary_items', 'insert', newItem);
                               addedCount++;
@@ -2986,12 +3344,37 @@ Only return the places to visit for each day in the itinerary.`;
                           style={{ flexGrow: 1, height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0 }}
                         >
                           <option value="" style={{ background: 'var(--bg-surface)' }}>-- Unassigned --</option>
-                          {places.filter(p => {
-                            const cat = p.category?.toLowerCase() || '';
-                            return cat.includes('hotel') || cat.includes('stay') || cat.includes('resort');
-                          }).map(p => (
-                            <option key={p.id} value={p.id} style={{ background: 'var(--bg-surface)' }}>{p.name} ({p.category})</option>
-                          ))}
+                          {(() => {
+                            const dayPlaces = dayItems.map(item => places.find(p => p.id === item.place_id)).filter(Boolean);
+                            let dayLocIds = [...new Set(dayPlaces.map(p => p.location_id))];
+                            
+                            if (dayLocIds.length === 0 && selectedTrip) {
+                              const sortedDays = [...itineraryDays].sort((a, b) => a.date.localeCompare(b.date));
+                              const currentDayIdx = sortedDays.findIndex(d => d.date === day.date);
+                              if (currentDayIdx > 0) {
+                                for (let i = currentDayIdx - 1; i >= 0; i--) {
+                                  const prevDayDate = sortedDays[i].date;
+                                  const prevDayItems = itineraries.filter(item => item.trip_id === selectedTrip.id && item.date === prevDayDate);
+                                  const prevPlaces = prevDayItems.map(item => places.find(p => p.id === item.place_id)).filter(Boolean);
+                                  if (prevPlaces.length > 0) {
+                                    dayLocIds = [prevPlaces[prevPlaces.length - 1].location_id];
+                                    break;
+                                  }
+                                }
+                              }
+                            }
+                            
+                            const targetLocIds = dayLocIds.length > 0 ? dayLocIds : stopFilterLocationIds;
+
+                            return places.filter(p => {
+                              const cat = p.category?.toLowerCase() || '';
+                              const isHotel = cat.includes('hotel') || cat.includes('stay') || cat.includes('resort');
+                              if (!isHotel) return false;
+                              return targetLocIds.length === 0 || targetLocIds.includes(p.location_id);
+                            }).map(p => (
+                              <option key={p.id} value={p.id} style={{ background: 'var(--bg-surface)' }}>{p.name} ({p.category})</option>
+                            ));
+                          })()}
                         </select>
                       </div>
 
@@ -3067,7 +3450,7 @@ Only return the places to visit for each day in the itinerary.`;
                                     </button>
                                     <button
                                       onClick={async () => {
-                                        await queueSyncAction('itinerary_items', 'delete', { id: el.itemObj.id });
+                                        await handleDeleteItineraryItem(el.itemObj.id);
                                       }}
                                       style={{ padding: '2px 4px', fontSize: '0.7rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}
                                     >
@@ -3088,9 +3471,29 @@ Only return the places to visit for each day in the itinerary.`;
                                   borderRadius: '4px',
                                   padding: '4px 8px',
                                   margin: '4px 16px',
-                                  borderLeft: `2px solid ${color}`
+                                  borderLeft: `2px solid ${color}`,
+                                  gap: '6px'
                                 }}>
-                                  ⬇️ {dayDistancesList[idx] && typeof dayDistancesList[idx] === 'object' ? `${dayDistancesList[idx].distance} km (${dayDistancesList[idx].duration} mins)` : `${dayDistancesList[idx] || 0} km`} to next stop
+                                  {(() => {
+                                    const isUsingGmaps = typeof window !== 'undefined' && 
+                                      window.google && 
+                                      window.google.maps && 
+                                      localStorage.getItem('google_maps_api_key') && 
+                                      localStorage.getItem('google_maps_enabled') !== 'false';
+                                    return (
+                                      <>
+                                        <img 
+                                          src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
+                                          style={{ width: 12, height: 12, objectFit: 'contain' }} 
+                                          alt={isUsingGmaps ? "GMaps" : "OSM"}
+                                          title={isUsingGmaps ? "Route calculated via Google Maps" : "Route calculated via OpenStreetMap (OSRM)"}
+                                        />
+                                        <span>
+                                          {dayDistancesList[idx] && typeof dayDistancesList[idx] === 'object' ? `${dayDistancesList[idx].distance} km (${dayDistancesList[idx].duration} mins)` : `${dayDistancesList[idx] || 0} km`} to next stop
+                                        </span>
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               )}
                             </React.Fragment>
@@ -3109,8 +3512,12 @@ Only return the places to visit for each day in the itinerary.`;
             </div>
 
             <div style={{
-              flex: '0 0 30%', display: 'flex', flexDirection: 'column', height: '100%',
-              background: 'var(--bg-surface)', position: 'relative'
+              flex: isMobile ? '1 1 100%' : '0 0 30%',
+              display: isMobile && activeMobilePane !== 'bank' ? 'none' : 'flex',
+              flexDirection: 'column',
+              height: '100%',
+              background: 'var(--bg-surface)',
+              position: 'relative'
             }}>
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border-glass)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -3132,20 +3539,32 @@ Only return the places to visit for each day in the itinerary.`;
                   }}>
                     <h5 style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--text-primary)' }}>Select folders to add:</h5>
                     <div style={{ maxHeight: '150px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {locations.filter(l => l.is_folder !== 1 && !selectedLocationsForAi.includes(l.id)).map(loc => (
+                      {locations.filter(l => l.is_folder !== 1 && !stopFilterLocationIds.includes(l.id)).map(loc => (
                         <label key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', margin: 0, color: 'var(--text-primary)' }}>
                           <input 
                             type="checkbox"
-                            onChange={(e) => {
+                            onChange={async (e) => {
                               if (e.target.checked) {
-                                setSelectedLocationsForAi(prev => [...prev, loc.id]);
+                                const updatedLocIds = [...stopFilterLocationIds, loc.id];
+                                setStopFilterLocationIds(updatedLocIds);
+                                
+                                if (selectedTrip) {
+                                  const existingNotes = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
+                                  const savedLocIds = existingNotes.locationIds || [];
+                                  if (!savedLocIds.includes(loc.id)) {
+                                    existingNotes.locationIds = [...savedLocIds, loc.id];
+                                    const updatedTrip = { ...selectedTrip, notes: JSON.stringify(existingNotes) };
+                                    await queueSyncAction('trips', 'update', updatedTrip);
+                                    setSelectedTrip(updatedTrip);
+                                  }
+                                }
                               }
                             }}
                           />
                           {loc.name}
                         </label>
                       ))}
-                      {locations.filter(l => l.is_folder !== 1 && !selectedLocationsForAi.includes(l.id)).length === 0 && (
+                      {locations.filter(l => l.is_folder !== 1 && !stopFilterLocationIds.includes(l.id)).length === 0 && (
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No other folders available.</span>
                       )}
                     </div>
@@ -3171,12 +3590,15 @@ Only return the places to visit for each day in the itinerary.`;
 
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {locations
-                  .filter(l => l.is_folder !== 1 && selectedLocationsForAi.includes(l.id))
+                  .filter(l => l.is_folder !== 1 && stopFilterLocationIds.includes(l.id))
                   .map(loc => {
                     const scheduledPlaceIds = itineraries
                       .filter(i => i.trip_id === selectedTrip.id)
                       .map(i => i.place_id);
                     const folderPlaces = places.filter(p => p.location_id === loc.id && !scheduledPlaceIds.includes(p.id) && (!stopPlaceSearch || p.name.toLowerCase().includes(stopPlaceSearch.toLowerCase())));
+
+                    const activePlacesInLoc = places.filter(pl => pl.is_folder !== 1 && stopFilterLocationIds.includes(pl.location_id));
+                    const sortedActivePlacesInLoc = [...activePlacesInLoc].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
                     return (
                       <div key={loc.id} style={{ border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '10px', background: 'var(--bg-surface-elevated)' }}>
@@ -3192,23 +3614,48 @@ Only return the places to visit for each day in the itinerary.`;
                           📁 <span>{loc.name}</span>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '14px' }}>
-                          {folderPlaces.map(p => (
-                            <div 
-                              key={p.id}
-                              draggable={true}
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'place', id: p.id }));
-                              }}
-                              style={{
-                                background: 'var(--bg-app)', border: '1px solid var(--border-glass)',
-                                padding: '6px 10px', borderRadius: '4px', cursor: 'grab', fontSize: '0.75rem',
-                                display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-primary)'
-                              }}
-                            >
-                              <span>📍 {p.name}</span>
-                              <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>({p.category})</span>
-                            </div>
-                          ))}
+                          {folderPlaces.map(p => {
+                            const placeIdx = sortedActivePlacesInLoc.findIndex(x => x.id === p.id);
+                            const placeNum = placeIdx !== -1 ? placeIdx + 1 : '';
+                            return (
+                              <div 
+                                key={p.id}
+                                draggable={true}
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'place', id: p.id }));
+                                }}
+                                style={{
+                                  background: 'var(--bg-app)', border: '1px solid var(--border-glass)',
+                                  padding: '6px 10px', borderRadius: '4px', cursor: 'grab', fontSize: '0.75rem',
+                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-primary)'
+                                }}
+                              >
+                                <span>📍 {placeNum ? `#${placeNum} ` : ''}{p.name}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>({p.category})</span>
+                                  {isMobile && (
+                                    <button
+                                      onClick={() => handleMobileAddStop(p)}
+                                      className="btn btn-primary"
+                                      style={{
+                                        width: '20px',
+                                        height: '20px',
+                                        padding: 0,
+                                        margin: 0,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '0.8rem',
+                                        borderRadius: '4px'
+                                      }}
+                                    >
+                                      +
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                           {folderPlaces.length === 0 && (
                             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>No unscheduled places</span>
                           )}
@@ -3222,6 +3669,192 @@ Only return the places to visit for each day in the itinerary.`;
           </div>
         </div>
       )}
+
+      {activePdfUrl && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'var(--bg-app)', zIndex: 2000
+        }}>
+          <button 
+            onClick={() => setActivePdfUrl(null)} 
+            style={{ 
+              position: 'absolute', 
+              top: '16px', 
+              right: '16px', 
+              width: '36px', 
+              height: '36px', 
+              borderRadius: '50%', 
+              background: 'rgba(0, 0, 0, 0.5)', 
+              color: '#fff', 
+              border: '1px solid rgba(255, 255, 255, 0.2)', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              cursor: 'pointer',
+              zIndex: 2010,
+              fontSize: '18px',
+              fontWeight: 'bold',
+              backdropFilter: 'blur(4px)'
+            }}
+            title="Close"
+          >
+            ✕
+          </button>
+          <iframe 
+            src={activePdfUrl} 
+            style={{ width: '100%', height: '100%', border: 'none' }} 
+            title="PDF Document Viewer"
+          />
+        </div>
+      )}
     </div>
   );
 }
+
+const ItineraryDay = ({ 
+  date, 
+  label, 
+  items, 
+  places, 
+  distances, 
+  reservations, 
+  selectedTrip, 
+  tripModeActive, 
+  handleViewAttachment, 
+  handleDeleteReservation, 
+  handleDeleteItineraryItem, 
+  fetchOSRMDistance, 
+  getHaversine 
+}) => {
+  const distancesList = useMemo(() => {
+    if (items.length < 2) return [];
+    const computed = [];
+    for (let i = 1; i < items.length; i++) {
+      const p1 = places.find(p => p.id === items[i - 1].place_id);
+      const p2 = places.find(p => p.id === items[i].place_id);
+      if (p1 && p2) {
+        const key = `${p1.id}-${p2.id}`;
+        if (distances[key] !== undefined) {
+          computed.push(distances[key]);
+        } else {
+          fetchOSRMDistance(p1, p2);
+          computed.push(getHaversine(p1, p2));
+        }
+      } else {
+        computed.push(0);
+      }
+    }
+    return computed;
+  }, [items, distances, places]);
+
+  const dayReservations = reservations.filter(r => {
+    if (r.trip_id !== selectedTrip?.id) return false;
+    try {
+      const details = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
+      return details && details.date === date;
+    } catch (e) {
+      return false;
+    }
+  });
+
+  const stayRes = dayReservations.find(r => r.type === 'stay' || r.type === 'hotel');
+  const stayLocation = stayRes ? stayRes.title : '';
+
+  return (
+    <div style={{ marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '6px', marginBottom: '8px' }}>
+        <h4 style={{ margin: 0, color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          🗓️ {date} 
+          {stayLocation && (
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'normal' }}>
+              🏡 Stay: {stayLocation}
+            </span>
+          )}
+        </h4>
+      </div>
+
+      {/* Display reservations directly below the date */}
+      {dayReservations.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '10px 0' }}>
+          {dayReservations.map(res => (
+            <div key={res.id} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--accent-secondary)', fontWeight: 'bold', marginRight: '6px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '2px' }}>
+                  {res.type}
+                </span>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{res.title}</span>
+                {res.details && (typeof res.details === 'string' ? JSON.parse(res.details).notes : res.details.notes) && (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
+                    {typeof res.details === 'string' ? JSON.parse(res.details).notes : res.details.notes}
+                  </p>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {res.file_path && (
+                  <button className="photo-action-btn" onClick={() => handleViewAttachment(res)}>
+                    <FileText size={12} />
+                  </button>
+                )}
+                {!tripModeActive && (
+                  <button className="photo-action-btn" onClick={() => handleDeleteReservation(res)}>
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {items.length === 0 ? (
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '8px 0' }}>No stops planned for this day.</p>
+      ) : (
+        <div className="timeline">
+          {items.map((item, idx) => {
+            const place = places.find(p => p.id === item.place_id);
+            const dist = distancesList[idx - 1];
+            const dbDist = item.distance_from_prev || 0;
+            const dbDur = item.duration_from_prev || 0;
+
+            return (
+              <div key={item.id} className="timeline-item">
+                {idx > 0 && (dbDist > 0 || dist !== undefined) && (() => {
+                  const isUsingGmaps = typeof window !== 'undefined' && 
+                    localStorage.getItem('google_maps_api_key') && 
+                    localStorage.getItem('google_maps_enabled') !== 'false';
+                  return (
+                    <div className="timeline-distance" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      <img 
+                        src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
+                        style={{ width: 12, height: 12, objectFit: 'contain' }} 
+                        alt={isUsingGmaps ? "GMaps" : "OSM"}
+                        title={isUsingGmaps ? "Route calculated via Google Maps" : "Route calculated via OpenStreetMap (OSRM)"}
+                      />
+                      <span>
+                        {dbDist > 0 
+                          ? `${dbDist} km${dbDur > 0 ? ` (${dbDur} mins)` : ''}` 
+                          : (dist && typeof dist === 'object' ? `${dist.distance} km (${dist.duration} mins)` : `${dist} km`)} to next stop
+                      </span>
+                    </div>
+                  );
+                })()}
+                <div className="timeline-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <b style={{ color: 'var(--text-primary)' }}>{place ? place.name : 'Unknown Stop'}</b>
+                    {!tripModeActive && (
+                      <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(item.id)}>
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                  {place && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{place.category}</span>}
+                  {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{place.notes}</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};

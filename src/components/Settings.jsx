@@ -35,6 +35,7 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
   const [googleMapsEnabled, setGoogleMapsEnabled] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [navigationProvider, setNavigationProvider] = useState(localStorage.getItem('navigation_provider') || 'google');
   
   const [renamingId, setRenamingId] = useState(null);
   const [activeMenuId, setActiveMenuId] = useState(null);
@@ -830,6 +831,27 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                 <option value="JPY">JPY (¥)</option>
               </select>
             </div>
+
+            {typeof window !== 'undefined' && 
+              (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) || 
+               (navigator.userAgent.includes('Mac') && 'ontouchend' in document)) && (
+              <div className="form-group" style={{ marginTop: '16px' }}>
+                <label>Default Navigation Map App</label>
+                <select 
+                  className="form-control" 
+                  value={navigationProvider} 
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setNavigationProvider(val);
+                    localStorage.setItem('navigation_provider', val);
+                    setStatus('general', 'Saved');
+                  }}
+                >
+                  <option value="google">Google Maps</option>
+                  <option value="apple">Apple Maps</option>
+                </select>
+              </div>
+            )}
           </div>
 
           {/* SECTION 5: OWNTRACKS INTEGRATION */}

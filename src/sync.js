@@ -101,7 +101,8 @@ export async function performSync(token) {
       console.log(`[PWA Sync] Successfully synchronized ${queue.length} offline actions.`);
     } else {
       syncStatusCallback('error');
-      console.error('[PWA Sync] Sync failed with status code:', response.status);
+      const errText = await response.text().catch(() => '');
+      console.error('[PWA Sync] Sync failed with status code:', response.status, 'Details:', errText);
     }
   } catch (err) {
     syncStatusCallback('error');
