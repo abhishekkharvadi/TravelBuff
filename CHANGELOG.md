@@ -2,6 +2,15 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v1.2.7] - 2026-08-08
+
+### 🚀 Features & Bug Fixes
+- **Bulk Location Controls Redesign**: Relocated the Bulk Location selector to a dedicated row with an increased, independent 320px dropdown width. Separated the Apply button into a standalone button element next to the selector to eliminate flex layout shrinking and button stretching.
+- **AI Bulk Category Extraction & Normalization**: Resolved an issue where AI-extracted categories were blocked from updating table rows during bulk AI extraction. Added an automatic `normalizeCategory` parser (mapping variations like "food" or "restaurants" to standard categories like `Dining`, `"sightseeing"` to `Attraction`, `"hotels"` to `Lodging`, etc.) and case-insensitive dropdown option matching.
+- **Comprehensive Documentation**: Updated `documentation.md` with detailed user guidance explaining all toolbar buttons, bulk location options, category normalizations, and AI customization controls in the AI Import & Review Data modal.
+
+---
+
 ## [v1.2.6] - 2026-08-08
 
 ### 🚀 Features & Improvements

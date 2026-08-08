@@ -144,38 +144,61 @@ Redirection to Google Maps requires an API key:
 
 ## 7. Importing Travel Guides via URL & AI Curation
 
-TravelBuff allows you to bootstrap your travel planning by scraping and importing structured data from external travel articles, blogs, and list websites.
+TravelBuff allows you to bootstrap your travel planning by scraping and importing structured data from external travel articles, blogs, and list websites or uploading travel documents (`.md`, `.pdf`, `.docx`, `.html`, `.txt`).
 
-### Step 1: Fetching the Guide (Import URL)
-1. Click the **Import URL** button at the top header of the application.
-2. In the modal, paste the full HTTP/HTTPS link of the travel guide or article.
-3. Select one of the **4 Markdown Import Options** (tailored parsers/scrapers) to fetch and convert the web page content into a clean markdown document.
-4. Click **Fetch** to retrieve the page content. The parsed content is forwarded directly to the staging queue.
+### Step 1: Fetching or Uploading Content
+1. Click the **Import Content** button at the top header of the application.
+2. Choose between **🌐 Import Trip** (URL scraping) or **📄 Import Document** (file upload).
+3. **URL Scraper Engine Options**:
+   - **Jina Reader**: Converts full web pages to structured Markdown.
+   - **Cheerio Parser**: Fast HTML parser for lightweight pages.
+   - **Playwright**: Headless JavaScript browser engine for dynamic, client-rendered web pages.
+   - **Firecrawl**: Advanced cloud scraper API.
+4. **Document Parser Engine Options**:
+   - **⚡ Fast Local Parser**: Uses local `pdf2md`, `mammoth`, or `turndown` engines.
+   - **🤖 AI Document Vision Parser**: Passes document pages directly to AI for visual layout extraction.
+
+---
 
 ### Step 2: Staging & Curation (Review Data Tab)
-Once the article is converted, the system redirects you to the **Review Data** (Curation Queue) interface:
-1. Review the parsed lists of sights, restaurants, and spots.
-2. Curate the list by selecting which parent folder/location, custom tags, and categories (e.g. `temple`, `restaurant`, `stay`) should be associated with each sight.
-3. **Searchable Parent Location Filter**: When *Place of Visit* is selected in the Type column, use the searchable `<FilterableSelect>` dropdown (`Type to filter...`) to quickly locate and assign parent locations from large location lists.
-4. You can edit sight titles and delete irrelevant entries before importing.
 
-### Step 3: Autocomplete Addresses & Detail Autofills
-Before committing the sights to your active locations database, you can automatically fill in their coordinates, address details, and notes:
+Once the content is converted, you are presented with the **Review Data** (Curation Queue) workspace.
 
-> [!IMPORTANT]
-> **Use City, State, and Country Context Fields!**
-> There are three text boxes at the top of the Review Data page: **City**, **State**, and **Country**.
-> **Always fill in these boxes before executing automated details parsing.** Adding this regional filter focuses the search engine and guarantees highly accurate address and location mapping the first time.
+#### 1. Context & Regional Filter Bar
+At the top of the Curation Queue:
+- **City**, **State**, **Country**: Enter target destination details to scope geocoding and AI place resolution.
+- **Home Address**: Select a saved home location or type a custom starting address. AI will use this origin point when generating day-wise itinerary sequences.
 
-With the regional text boxes filled:
-* **Option A: "Get All Maps"**
-  - Sends the sight names and regional constraints to the geocoding engine.
-  - If Google Maps is enabled in Settings, the app queries the **Google Maps Places API** to retrieve exact addresses and geocodes.
-  - If Google Maps is disabled, the app queries **OpenStreetMap (Nominatim)** for free location geocodes.
-* **Option B: "Send All to AI"**
-  - Passes the sight names, context fields, and description text to Gemini/selected LLM to draft descriptions, identify categories, and suggest coordinates.
+#### 2. Bulk Location Assignment Controls
+- **Bulk Location Dropdown**: Filter and select a parent location from your database. The dropdown supports instant text filtering (`Type to filter...`).
+- **Apply Button**: Click **Apply** to assign the selected parent location to all pending places in the queue at once.
 
-Once geocodes are populated, review the locations on the side-by-side preview map and click **Save/Approve** to add them to your locations list.
+#### 3. Action Toolbar Buttons (Top Right)
+- ➕ **Create New Location**: Opens an inline modal to search regions via Google Maps or OpenStreetMap and create a new parent location immediately without leaving the import workflow.
+- 📍 **Query OpenStreetMap (Batch OSM)**: Geocodes all unresolved rows across OpenStreetMap (Nominatim).
+- ✨ **Analyze Unresolved Rows with AI**: Sends all pending/unresolved rows to the AI engine (Gemini / OpenAI / Claude / Ollama) to extract exact addresses, categories, descriptions, and day numbers based on proximity to your Home Address.
+- 📝 **Custom AI Prompt Console**: Toggle the prompt console to review or customize the system instructions passed to the AI engine.
+- 💾 **Save All Resolved Locations & Places**: Batch saves all resolved items into your active IndexedDB database and server sync queue.
+
+#### 4. Review Queue Table & Controls
+- **Image Thumbnail**: Automatically fetches and displays cover photos from Wikipedia or Google Maps.
+- **Place Name**: Editable text input to refine landmark titles.
+- **Day Number**: Assign integer day numbers (Day 1, Day 2, etc.) for itinerary scheduling.
+- **Type Selector**: Toggle between **Place of Visit** (sights, restaurants, hotels) and **Location** (parent region).
+- **Parent Location Selector**: Mandatory location linkage for places. Features text-searchable filtering.
+- **Category Selector**: Assign or select categories (`Attraction`, `Dining`, `Lodging`, `Transit`, `Shopping`, or custom user categories).
+  - *Automatic Category Normalization*: AI-extracted terms (e.g. "food", "restaurants", "sightseeing", "hotel") are automatically normalized into standard system categories upon extraction.
+- **Description**: Editable text box summarizing place details.
+- **Resolved Status**: Shows `✓` (Resolved) or `X` (Unresolved). Clicking the status badge manually toggles resolution state.
+- **Row Action Buttons**:
+  - `✓` **Accept & Save**: Save single row to database.
+  - `📍` **Search OSM**: Geocode single row via OpenStreetMap.
+  - `✨` **Analyze Row with AI**: Run AI extraction on single row.
+  - `🗑️` **Delete**: Remove row from queue.
+
+#### 5. Saved Places & Day-Wise Itinerary Generation (`Places from this Guide` Tab)
+- Switch to the **Places from this Guide** tab to view saved places grouped neatly by **Day 1**, **Day 2**, etc.
+- Click **➕ Add Itinerary** at the top right to automatically create a new **Trip**, assign all saved places into daily itinerary stops, and launch your trip planner ready for travel!
 
 ---
 
@@ -190,7 +213,22 @@ TravelBuff is optimized for mobile browsers and Progressive Web App (PWA) usage:
 
 ## 9. Release Notes & Version History
 
-### Version 1.2.0 (Current Release)
+### Version 1.2.7 (Current Release)
+* **Bulk Location Controls Layout**: Relocated Bulk Location controls to a dedicated row with a 320px dropdown selector and standalone Apply button.
+* **AI Bulk Category Extraction & Normalization**: Fixed category updates during AI bulk processing, added automatic category normalization (`Dining`, `Attraction`, `Lodging`, `Transit`, `Shopping`), and improved case-insensitive dropdown option matching.
+* **Comprehensive Curation Documentation**: Fully documented all options, buttons, and AI curation workflows in `documentation.md`.
+
+---
+
+### Version 1.2.6
+* **2-Tier Photo Resolution Pipeline**: Implemented a 2-tier fallback strategy for cover photos—searching Wikipedia / Wikimedia Commons first, and falling back to Google Maps Places API if no Wikipedia image exists.
+* **Contextual Query Resolution**: Enhanced sub-place photo searches to automatically combine place name and parent location name for higher match accuracy.
+* **UI Button Standardization**: Renamed all "Fetch Cover" buttons to "Fetch Cover Image" across Location and Place views with updated tooltips.
+* **Graceful Error Handling**: Replaced HTTP 404 error responses on photo searches with clean HTTP 200 payloads to eliminate browser console XHR errors.
+
+---
+
+### Version 1.2.0
 * **Browser Back (`←`) / Forward (`→`) Navigation & Hash Routing**:
   - Implemented lightweight hash-based URL routing (`src/router.js`) synchronized with browser history states (`pushState`, `popstate`, `hashchange`).
   - Pressing the browser Back button now seamlessly steps back through nested location folders (`/#/locations/:folderId`), collections, trip planners, and settings pages instead of exiting the app.

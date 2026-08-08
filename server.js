@@ -912,6 +912,10 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
           data.user_id = userId; 
         }
 
+        if (table === 'itinerary_items' && (data.sequence_order === undefined || data.sequence_order === null)) {
+          data.sequence_order = 0;
+        }
+
         if (action === 'insert') {
           const columns = Object.keys(data).filter(col => data[col] !== undefined);
           if (columns.length === 0) continue;
@@ -1314,7 +1318,7 @@ app.get('/api/import/geocode', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
-  const { places, city, state, country, prompt } = req.body;
+  const { places, city, state, country, prompt, homeCoords } = req.body;
   if (!places || !Array.isArray(places)) {
     return res.status(400).json({ error: 'Places array is required' });
   }
@@ -1335,20 +1339,36 @@ app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: `API Key is missing for provider ${provider}.` });
     }
 
-    const systemPrompt = `You are a geocoding extraction assistant. Extract details for the list of places.
+    const homeLat = homeCoords?.lat;
+    const homeLng = homeCoords?.lng || homeCoords?.lon;
+    const homeContext = (homeLat && homeLng) 
+      ? `Starting and Ending Home Waypoint Coordinates: Latitude = ${homeLat}, Longitude = ${homeLng}. Use this home coordinate as the starting and ending point when planning the day-wise itinerary starting in the morning.`
+      : '';
+
+    const systemPrompt = `You are a travel geocoding, landmark cleaning, and itinerary extraction assistant. Refine the input list of places and create an optimized day-wise itinerary.
 Context: City = "${city || ''}", State = "${state || ''}", Country = "${country || ''}".
-Expected Output Format: JSON array of objects, containing:
+${homeContext}
+
+Instructions:
+1. Filter out non-place text items (such as general tips, section headers, intro/outro advice, or transport tips). Set "isRelevant": false for non-places, or omit them.
+2. Clean and normalize place names (e.g. convert conversational or action phrases like "Get a bird's eye view from Golconda Fort" or "Enjoy sunset at Chowmahalla Palace" to clean landmark titles like "Golconda Fort" or "Chowmahalla Palace").
+3. Extract geocoding details (latitude, longitude, formatted address, category, short 1-2 sentence description) for each place.
+4. Create a day-wise itinerary by assigning day numbers (1, 2, 3, etc.) to each location based on geographical proximity between places and reasonable daily travel distance, assuming a morning start and returning to the home starting location coordinates if provided.
+
+Expected Output Format: JSON array of objects (or JSON object containing a "places" array), where each place object contains:
 - id: match the place's input id exactly
-- name: place name
+- name: clean landmark place name
 - address: full formatted address
-- latitude: number (e.g. 48.8584)
-- longitude: number (e.g. 2.2945)
+- latitude: number (e.g. 17.3850)
+- longitude: number (e.g. 78.4867)
 - category: one of 'Attraction', 'Dining', 'Lodging', 'Transit', 'Shopping', 'Other'
-- description: a short 1-2 sentence description summarizing what this place is (retaining or enhancing any input description provided)
+- description: a short 1-2 sentence description summarizing what this place is
+- day: integer number representing the day of visit (1, 2, 3, etc.)
+- isRelevant: boolean (true if valid visitable place, false if header or general advice)
 
 Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`\`\`json).`;
 
-    const userMessage = `${prompt || 'Extract details for these places.'}\n\nPlaces Input:\n${JSON.stringify(places.map(p => ({ id: p.id, name: p.name, description: p.description || '' })), null, 2)}`;
+    const userMessage = `${prompt || 'Extract geocoding details and create a day-wise itinerary for these places.'}\n\nPlaces Input:\n${JSON.stringify(places.map(p => ({ id: p.id, name: p.name, description: p.description || '', day: p.day || null })), null, 2)}`;
 
     let responseText = '';
 
@@ -2175,12 +2195,12 @@ app.get('/api/itineraries/:tripId', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/itineraries', authenticateToken, async (req, res) => {
-  const { id, trip_id, date, place_id, sequence_order } = req.body;
+  const { id, trip_id, date, place_id, location_id, notes, sequence_order } = req.body;
   const itemId = id || crypto.randomUUID();
   try {
     await db.run(
-      'INSERT INTO itinerary_items (id, trip_id, date, place_id, sequence_order) VALUES (?, ?, ?, ?, ?)',
-      [itemId, trip_id, date, place_id, sequence_order]
+      'INSERT INTO itinerary_items (id, trip_id, date, place_id, location_id, notes, sequence_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [itemId, trip_id, date, place_id || null, location_id || null, notes || null, sequence_order || 0]
     );
     const result = await db.get('SELECT * FROM itinerary_items WHERE id = ?', [itemId]);
     res.json(result);

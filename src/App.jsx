@@ -715,7 +715,7 @@ export default function App() {
                   onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-app)'}
                   onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
                 >
-                  🌐 Import URL
+                  🌐 Import Trip
                 </button>
                 <button
                   type="button"

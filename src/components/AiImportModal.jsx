@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Sparkles, X, Loader, Search, Check, Trash2, Plus, MapPin, RotateCcw, Clock, MoreVertical, Save } from 'lucide-react';
+import { Sparkles, X, Loader, Search, Check, Trash2, Plus, MapPin, RotateCcw, Clock, MoreVertical, Save, Calendar, Code, CheckCircle, Home } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
 import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
@@ -40,8 +40,8 @@ const FilterableSelect = ({ value, onChange, options, placeholder, isMulti = fal
         }}
         onClick={() => setIsOpen(!isOpen)}
       >
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
-          {isMulti ? (activeValues.length > 0 ? `${activeValues.length} selected` : placeholder) : (options.find(o => o.id === value || o.name === value)?.name || placeholder)}
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', flex: 1, marginRight: '4px' }}>
+          {isMulti ? (activeValues.length > 0 ? `${activeValues.length} selected` : placeholder) : (options.find(o => o.id === value || o.name === value || (typeof o.id === 'string' && typeof value === 'string' && o.id.toLowerCase() === value.toLowerCase()))?.name || value || placeholder)}
         </span>
         <span>▾</span>
       </div>
@@ -87,7 +87,7 @@ const FilterableSelect = ({ value, onChange, options, placeholder, isMulti = fal
                     </label>
                   );
                 } else {
-                  const isOptSelected = value === opt.id || value === opt.name;
+                  const isOptSelected = value === opt.id || value === opt.name || (typeof opt.id === 'string' && typeof value === 'string' && opt.id.toLowerCase() === value.toLowerCase());
                   return (
                     <div 
                       key={opt.id}
@@ -305,13 +305,50 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
     return db.places.where('id').anyOf([...combinedIds]).toArray();
   }, [savedItemIds, savedLocations]) || [];
   
+  // Live query saved user addresses from Settings
+  const userAddresses = useLiveQuery(() => db.user_addresses ? db.user_addresses.toArray() : Promise.resolve([])) || [];
+
   // Curation tab states
   const [city, setCity] = useState('');
   const [stateName, setStateName] = useState('');
   const [country, setCountry] = useState('');
+  const [homeAddress, setHomeAddress] = useState('');
+  const [homeCoords, setHomeCoords] = useState(null);
+
+  // Auto-prefill home address from Settings default address
+  useEffect(() => {
+    if (userAddresses.length > 0 && !homeAddress) {
+      const defaultAddr = userAddresses.find(a => a.is_default === 1) || userAddresses[0];
+      if (defaultAddr && defaultAddr.address) {
+        setHomeAddress(defaultAddr.address);
+        if (defaultAddr.latitude && defaultAddr.longitude) {
+          setHomeCoords({ lat: defaultAddr.latitude, lon: defaultAddr.longitude });
+        }
+      }
+    }
+  }, [userAddresses]);
+
   const [customPrompt, setCustomPrompt] = useState(
-    'Extract geocoding details (address, latitude, longitude) and classify category for the list of places provided.'
+    'Refine place list: remove non-place text, clean place names, extract geocoding details (address, latitude, longitude), create a day-wise itinerary by assigning day numbers to each location based on geographical proximity, and fill in category, address, coordinates, and concise 1-2 sentence descriptions for each place. Assume start in the morning from home coordinates.'
   );
+  const [bulkLocationId, setBulkLocationId] = useState('');
+
+  const handleApplyBulkLocation = () => {
+    if (!bulkLocationId) {
+      alert("Please select a location from the dropdown first.");
+      return;
+    }
+    const selectedLoc = locationsList.find(l => l.id === bulkLocationId);
+    const locName = selectedLoc?.name || 'selected location';
+
+    setPlaces(prev => prev.map(p => {
+      if (p.type === 'place' || !p.type) {
+        return { ...p, parentLocationId: bulkLocationId };
+      }
+      return p;
+    }));
+  };
+
   const [osmError, setOsmError] = useState(null);
   // Inline location creation state
   const [showCreateLocModal, setShowCreateLocModal] = useState(false);
@@ -1102,7 +1139,8 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
           city,
           state: stateName,
           country,
-          prompt: customPrompt
+          prompt: customPrompt,
+          homeCoords
         })
       });
 
@@ -1111,28 +1149,56 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
         throw new Error(data.error || 'AI Extraction failed');
       }
 
-      if (Array.isArray(data)) {
-        setPlaces(prev => prev.map(item => {
-          const match = data.find(m => m.id === item.id);
-          if (match) {
-            // Trigger photo fetching asynchronously!
-            fetchPhotoForPlace(item.id, match.name || item.name, match.latitude || null, match.longitude || null);
+      const resultsArray = Array.isArray(data) ? data : (data.places || []);
 
-            return {
-              ...item,
-              name: match.name || item.name,
-              address: match.address || item.address || '',
-              latitude: match.latitude || item.latitude || '',
-              longitude: match.longitude || item.longitude || '',
-              category: (item.category && item.category !== 'Attraction') ? item.category : (match.category || item.category || 'Attraction'),
-              selectedTags: (item.selectedTags && item.selectedTags.length > 0) ? item.selectedTags : (match.selectedTags || []),
-              description: match.description || item.description || '',
-              status: 'completed',
-              geocodeSuccess: true
-            };
-          }
-          return item;
-        }));
+      if (resultsArray.length > 0) {
+        setPlaces(prev => {
+          return prev
+            .filter(item => {
+              const match = resultsArray.find(m => m.id === item.id);
+              // If AI explicitly marked item as non-visitable text (header/intro), filter it out
+              if (match && match.isRelevant === false) {
+                return false;
+              }
+              return true;
+            })
+            .map(item => {
+              const match = resultsArray.find(m => m.id === item.id);
+              if (match) {
+                // Trigger photo fetching asynchronously!
+                fetchPhotoForPlace(item.id, match.name || item.name, match.latitude || null, match.longitude || null);
+
+                const normalizeCategory = (cat) => {
+                  if (!cat) return null;
+                  const str = String(cat).trim();
+                  const lower = str.toLowerCase();
+                  if (lower === 'attractions' || lower === 'attraction' || lower.includes('sight') || lower.includes('monument') || lower.includes('museum') || lower.includes('park')) return 'Attraction';
+                  if (lower === 'dining' || lower === 'food' || lower.includes('restaur') || lower.includes('eat') || lower.includes('cafe')) return 'Dining';
+                  if (lower === 'lodging' || lower.includes('hotel') || lower.includes('resort') || lower.includes('stay')) return 'Lodging';
+                  if (lower === 'transit' || lower.includes('transport') || lower.includes('station') || lower.includes('airport')) return 'Transit';
+                  if (lower === 'shopping' || lower.includes('store') || lower.includes('market') || lower.includes('mall')) return 'Shopping';
+                  return str.charAt(0).toUpperCase() + str.slice(1);
+                };
+
+                const matchCategory = match.category ? normalizeCategory(match.category) : null;
+
+                return {
+                  ...item,
+                  name: match.name || item.name,
+                  address: match.address || item.address || '',
+                  latitude: match.latitude || item.latitude || '',
+                  longitude: match.longitude || item.longitude || '',
+                  category: matchCategory || item.category || 'Attraction',
+                  selectedTags: (item.selectedTags && item.selectedTags.length > 0) ? item.selectedTags : (match.selectedTags || []),
+                  description: match.description || item.description || '',
+                  day: match.day || item.day || null,
+                  status: 'completed',
+                  geocodeSuccess: true
+                };
+              }
+              return item;
+            });
+        });
       }
     } catch (err) {
       console.error('AI Extraction failed', err);
@@ -1543,6 +1609,71 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
     }
   };
 
+  const handleAddItinerary = async () => {
+    if (savedLocations.length === 0 && savedPlaces.length === 0) {
+      alert("No saved locations or places found in this guide. Please save items first.");
+      return;
+    }
+
+    const defaultTitle = guideName || city || country || (url ? new URL(url).hostname : 'Imported Trip Guide');
+    const userEnteredName = window.prompt("Enter a name for this new Trip / Itinerary:", defaultTitle);
+    if (userEnteredName === null) return; // User cancelled
+    const tripTitle = userEnteredName.trim() || defaultTitle;
+
+    try {
+      setLoading(true);
+      const tripId = generateUUID();
+      const today = new Date().toISOString().split('T')[0];
+
+      // Calculate max day
+      const maxDay = Math.max(1, ...savedPlaces.map(p => p.day || 1), ...savedLocations.map(l => l.day || 1));
+
+      // 1. Insert Trip
+      const newTrip = {
+        id: tripId,
+        name: tripTitle,
+        start_date: today,
+        length: maxDay,
+        visited: 0,
+        notes: `Imported from guide: ${url || guideName || 'AI Import'}`,
+        created_at: new Date().toISOString()
+      };
+      await queueSyncAction('trips', 'insert', newTrip);
+
+      // 2. Insert Itinerary Items
+      const allEntities = [
+        ...savedPlaces.map(p => ({ ...p, entityType: 'place' })),
+        ...savedLocations.map(l => ({ ...l, entityType: 'location' }))
+      ];
+
+      let seq = 1;
+      for (const item of allEntities) {
+        const itemDay = item.day || 1;
+        const startDateObj = new Date(today);
+        startDateObj.setDate(startDateObj.getDate() + (itemDay - 1));
+        const itemDateStr = startDateObj.toISOString().split('T')[0];
+
+        await queueSyncAction('itinerary_items', 'insert', {
+          id: generateUUID(),
+          trip_id: tripId,
+          date: itemDateStr,
+          place_id: item.entityType === 'place' ? item.id : null,
+          location_id: item.entityType === 'location' ? item.id : null,
+          notes: item.notes || item.description || '',
+          sequence_order: seq++
+        });
+      }
+
+      setToastMessage(`Successfully created Trip "${tripTitle}" with ${allEntities.length} itinerary items!`);
+      setTimeout(() => setToastMessage(''), 3500);
+    } catch (err) {
+      console.error('Failed to create trip itinerary:', err);
+      alert(`Error creating trip itinerary: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleImportAll = async () => {
     // Validate first
     const missingParent = places.some(p => p.type === 'place' && !p.parentLocationId);
@@ -1557,6 +1688,10 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
     for (const place of pendingItems) {
       try {
         await handleSaveItem(place);
+        // Auto photo fetch if missing
+        if (!place.localImagePath) {
+          fetchPhotoForPlace(place.id, place.name, place.latitude || null, place.longitude || null);
+        }
         successCount++;
       } catch (err) {
         console.error('Failed to import', place.name, err);
@@ -1575,8 +1710,10 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
         console.error('Failed to update guide status to completed:', err);
       }
     }
+
     setLoading(false);
-    alert(`Successfully imported ${successCount} items.`);
+    setToastMessage(`Saved ${successCount} items successfully!`);
+    setTimeout(() => setToastMessage(''), 2500);
   };
 
   const handleFieldChange = (id, field, value) => {
@@ -1627,7 +1764,7 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
               style={{ flex: 1, padding: '8px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
               onClick={() => setImportType('url')}
             >
-              🌐 Import URL
+              🌐 Import Trip
             </button>
             <button
               type="button"
@@ -1694,7 +1831,7 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                   {loading ? (
                     <><Loader size={16} className="sync-spinner" /> Fetching...</>
                   ) : (
-                    'Import URL'
+                    'Import Trip'
                   )}
                 </button>
               </div>
@@ -1915,9 +2052,10 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                 )}
 
                 {/* Top Location Filter Context & Bulk Actions */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end', backgroundColor: 'var(--bg-surface-elevated)', padding: '16px', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
-                  <div style={{ display: 'flex', gap: '12px', flexGrow: 1, minWidth: '300px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: 'var(--bg-surface-elevated)', padding: '16px', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
+                  {/* Row 1: City, State, Country, Home Address */}
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: '110px' }}>
                       <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>City</label>
                       <input 
                         type="text" 
@@ -1928,7 +2066,7 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                         onChange={(e) => setCity(e.target.value)} 
                       />
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: '110px' }}>
                       <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>State</label>
                       <input 
                         type="text" 
@@ -1939,7 +2077,7 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                         onChange={(e) => setStateName(e.target.value)} 
                       />
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: '110px' }}>
                       <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Country</label>
                       <input 
                         type="text" 
@@ -1950,40 +2088,127 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                         onChange={(e) => setCountry(e.target.value)} 
                       />
                     </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: '180px' }}>
+                      <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Home size={12} /> Home Address
+                      </label>
+                      {userAddresses.length > 0 ? (
+                        <select 
+                          className="form-control" 
+                          style={{ padding: '6px 10px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)' }} 
+                          value={homeAddress} 
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setHomeAddress(val);
+                            const selectedObj = userAddresses.find(a => (a.address || a.label) === val || a.id === val);
+                            if (selectedObj && selectedObj.latitude && selectedObj.longitude) {
+                              setHomeCoords({ lat: selectedObj.latitude, lon: selectedObj.longitude });
+                            }
+                          }}
+                        >
+                          <option value="">-- Select Saved Home --</option>
+                          {userAddresses.map(addr => (
+                            <option key={addr.id} value={addr.address || addr.label}>
+                              {addr.label}{addr.address ? `: ${addr.address}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input 
+                          type="text" 
+                          className="form-control" 
+                          style={{ padding: '6px 10px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)' }} 
+                          placeholder="Set saved address in Settings"
+                          value={homeAddress} 
+                          onChange={(e) => setHomeAddress(e.target.value)} 
+                        />
+                      )}
+                    </div>
                   </div>
-                  
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button 
-                      type="button"
-                      className="btn btn-secondary" 
-                      style={{ height: '34px', padding: '0 14px', fontSize: '0.78rem', backgroundColor: 'var(--accent-primary)', color: '#000', border: 'none', borderRadius: '4px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                      onClick={() => setShowCreateLocModal(true)}
-                    >
-                      <Plus size={14} /> Create Location
-                    </button>
-                    <button 
-                      className="btn" 
-                      style={{ height: '34px', padding: '0 14px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', color: '#60a5fa', border: '1px solid rgba(96, 165, 250, 0.4)', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                      onClick={handleGeocodeAllUnresolved}
-                      title="Query OSM for all unresolved rows"
-                    >
-                      Get All Maps
-                    </button>
-                    <button 
-                      className="btn" 
-                      style={{ height: '34px', padding: '0 14px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', color: '#c084fc', border: '1px solid rgba(192, 132, 252, 0.4)', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                      onClick={() => handleExtractAI(null)}
-                      title="Analyze unresolved rows using AI"
-                    >
-                      Send All to AI
-                    </button>
-                    <button 
-                      className="btn btn-secondary" 
-                      style={{ height: '34px', padding: '0 12px', fontSize: '0.78rem', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                      onClick={() => setShowPromptConsole(!showPromptConsole)}
-                    >
-                      {showPromptConsole ? 'Hide Prompt' : 'Edit Prompt'}
-                    </button>
+
+                  {/* Row 2: Bulk Location & Action Toolbar */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '320px', maxWidth: '100%' }}>
+                        <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Bulk Location</label>
+                        <FilterableSelect
+                          value={bulkLocationId}
+                          placeholder="-- Select Parent Location --"
+                          options={locationsList.map(l => ({ id: l.id, name: l.name }))}
+                          onChange={(val) => setBulkLocationId(val)}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ 
+                          padding: '6px 14px', 
+                          fontSize: '0.75rem', 
+                          height: '28px', 
+                          width: 'auto',
+                          flexShrink: 0,
+                          whiteSpace: 'nowrap', 
+                          backgroundColor: 'var(--accent-primary)', 
+                          color: '#000', 
+                          border: 'none', 
+                          fontWeight: 600, 
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                        onClick={handleApplyBulkLocation}
+                        title="Apply selected parent location to all places below"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                    
+                    {/* Icon-Only Toolbar Buttons */}
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <button 
+                        type="button"
+                        className="btn btn-secondary" 
+                        style={{ width: '36px', height: '36px', padding: 0, backgroundColor: 'var(--accent-primary)', color: '#000', border: 'none', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                        onClick={() => setShowCreateLocModal(true)}
+                        title="Create New Location"
+                      >
+                        <Plus size={16} />
+                      </button>
+                      <button 
+                        className="btn" 
+                        style={{ width: '36px', height: '36px', padding: 0, backgroundColor: 'var(--bg-app)', color: '#60a5fa', border: '1px solid rgba(96, 165, 250, 0.4)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                        onClick={handleGeocodeAllUnresolved}
+                        title="Query OpenStreetMap for all unresolved rows"
+                      >
+                        <MapPin size={16} />
+                      </button>
+                      <button 
+                        className="btn" 
+                        style={{ width: '36px', height: '36px', padding: 0, backgroundColor: 'var(--bg-app)', color: '#c084fc', border: '1px solid rgba(192, 132, 252, 0.4)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                        onClick={() => handleExtractAI(null)}
+                        title="Analyze unresolved rows using AI"
+                      >
+                        <Sparkles size={16} />
+                      </button>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ width: '36px', height: '36px', padding: 0, borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                        onClick={() => setShowPromptConsole(!showPromptConsole)}
+                        title={showPromptConsole ? 'Hide Custom AI Prompt Console' : 'Edit Custom AI Prompt Console'}
+                      >
+                        <Code size={16} />
+                      </button>
+                      <button 
+                        className="btn btn-primary" 
+                        style={{ width: '36px', height: '36px', padding: 0, backgroundColor: '#4ade80', color: '#000', border: 'none', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                        onClick={handleImportAll}
+                        title="Save All Resolved Locations & Places"
+                      >
+                        <CheckCircle size={16} />
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    💡 <strong>Tip:</strong> Provide City, State, Country, and Home Address to narrow down geocoding & AI location resolution searches.
                   </div>
                 </div>
 
@@ -2010,6 +2235,7 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                         <tr style={{ borderBottom: '1px solid var(--border-glass)', backgroundColor: 'var(--bg-surface-elevated)' }}>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>Image</th>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', minWidth: '150px' }}>Place</th>
+                          <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', width: '70px', textAlign: 'center' }}>Day</th>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', width: '130px' }}>Type</th>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', minWidth: '150px' }}>Tags/Category</th>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', minWidth: '200px' }}>Description</th>
@@ -2045,6 +2271,22 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                                   style={{ padding: '6px 10px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', width: '100%', border: '1px solid var(--border-glass)' }}
                                   value={place.name} 
                                   onChange={(e) => setPlaces(prev => prev.map(p => p.id === place.id ? { ...p, name: e.target.value } : p))}
+                                />
+                              </td>
+
+                              {/* Day number column */}
+                              <td style={{ padding: '10px', textAlign: 'center' }}>
+                                <input 
+                                  type="number" 
+                                  min="1"
+                                  className="form-control" 
+                                  style={{ padding: '6px 4px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', width: '55px', textAlign: 'center', border: '1px solid var(--border-glass)' }}
+                                  value={place.day || ''} 
+                                  placeholder="Day"
+                                  onChange={(e) => {
+                                    const val = e.target.value ? parseInt(e.target.value, 10) : null;
+                                    setPlaces(prev => prev.map(p => p.id === place.id ? { ...p, day: val } : p));
+                                  }}
                                 />
                               </td>
 
@@ -2237,141 +2479,215 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
               </div>
             )}
 
-            {/* Tab 3: Review Queue Card Grid (Repurposed for Saved Items View) */}
-            {activeTab === 'places' && (
-              <div style={{ width: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '1rem', fontWeight: 'bold' }}>Places from this Guide</span>
+            {/* Tab 3: Review Queue Card Grid (Repurposed for Saved Items View with Day-wise Grouping) */}
+            {activeTab === 'places' && (() => {
+              const getDayForSavedItem = (item) => {
+                if (item.day) return item.day;
+                const match = places.find(p => p.name.toLowerCase() === item.name.toLowerCase() || (item.id && p.id === item.id));
+                return match?.day || null;
+              };
+
+              const combinedSavedItems = [
+                ...savedLocations.map(l => ({ ...l, itemType: 'location', day: getDayForSavedItem(l) })),
+                ...savedPlaces.map(p => ({ ...p, itemType: 'place', day: getDayForSavedItem(p) }))
+              ];
+
+              const itemsByDay = {};
+              combinedSavedItems.forEach(item => {
+                const dKey = item.day ? `Day ${item.day}` : 'General / Unassigned';
+                if (!itemsByDay[dKey]) itemsByDay[dKey] = [];
+                itemsByDay[dKey].push(item);
+              });
+
+              const sortedDayKeys = Object.keys(itemsByDay).sort((a, b) => {
+                if (a.startsWith('Day ') && b.startsWith('Day ')) {
+                  const numA = parseInt(a.replace('Day ', ''), 10);
+                  const numB = parseInt(b.replace('Day ', ''), 10);
+                  return numA - numB;
+                }
+                if (a.startsWith('Day ')) return -1;
+                if (b.startsWith('Day ')) return 1;
+                return a.localeCompare(b);
+              });
+
+              return (
+                <div style={{ width: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '1rem', fontWeight: 'bold' }}>Places from this Guide ({combinedSavedItems.length})</span>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ 
+                        height: '24px', 
+                        minHeight: 'unset',
+                        padding: '0 8px', 
+                        fontSize: '0.7rem', 
+                        backgroundColor: 'var(--accent-primary)', 
+                        color: '#000', 
+                        border: 'none', 
+                        borderRadius: '4px', 
+                        fontWeight: 600, 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '4px', 
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                      onClick={handleAddItinerary}
+                      title="Create a new Trip and populate Day-wise Itinerary"
+                    >
+                      <Calendar size={12} /> Add Itinerary
+                    </button>
+                  </div>
+
+                  {combinedSavedItems.length === 0 ? (
+                    <p style={{ color: 'var(--text-secondary)' }}>No items saved yet. Use the Save button in the "Review Data" tab to import places/locations.</p>
+                  ) : (
+                    sortedDayKeys.map(dayKey => (
+                      <div key={dayKey} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '8px', 
+                          padding: '8px 12px', 
+                          backgroundColor: 'var(--bg-surface-elevated)', 
+                          borderLeft: '4px solid var(--accent-primary)', 
+                          borderRadius: '4px' 
+                        }}>
+                          <Calendar size={14} style={{ color: 'var(--accent-primary)' }} />
+                          <span style={{ fontWeight: 'bold', fontSize: '0.88rem', color: 'var(--text-primary)' }}>{dayKey}</span>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '2px 8px', borderRadius: '12px', fontWeight: '500' }}>
+                            {itemsByDay[dayKey].length} {itemsByDay[dayKey].length === 1 ? 'item' : 'items'}
+                          </span>
+                        </div>
+
+                        <div style={{ 
+                          display: 'grid', 
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', 
+                          gap: '16px' 
+                        }}>
+                          {itemsByDay[dayKey].map((item) => {
+                            if (item.itemType === 'location') {
+                              return (
+                                <div 
+                                  key={item.id} 
+                                  style={{ 
+                                    display: 'flex', 
+                                    backgroundColor: 'var(--bg-surface-elevated)', 
+                                    border: '1px solid var(--border-glass)', 
+                                    borderRadius: '8px', 
+                                    overflow: 'hidden',
+                                    fontSize: '0.78rem',
+                                    minHeight: '200px'
+                                  }}
+                                >
+                                  {/* Left Column: Image Thumbnail */}
+                                  <div style={{ width: '120px', flexShrink: 0, backgroundColor: 'var(--bg-app)', position: 'relative' }}>
+                                    {item.local_file_data ? (
+                                      <img 
+                                        src={item.local_file_data} 
+                                        alt={item.name} 
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        onError={(e) => e.target.style.display = 'none'}
+                                      />
+                                    ) : (
+                                      <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', padding: '6px', color: 'var(--text-muted)', fontSize: '0.65rem' }}>No Image</div>
+                                    )}
+                                  </div>
+
+                                  {/* Right Column: Read-only details */}
+                                  <div style={{ flexGrow: 1, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontWeight: '600', textTransform: 'uppercase' }}>Location</span>
+                                      <span style={{ fontSize: '0.92rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{item.name}</span>
+                                    </div>
+
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Coordinates</span>
+                                      <span style={{ color: 'var(--text-muted)' }}>Lat: {item.latitude || 'N/A'}, Lon: {item.longitude || 'N/A'}</span>
+                                    </div>
+
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Notes / Description</span>
+                                      <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>{item.notes || 'No notes'}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            // Render Place item
+                            const parentName = locationsList.find(l => l.id === item.location_id)?.name || 'Unknown Location';
+                            return (
+                              <div 
+                                key={item.id} 
+                                style={{ 
+                                  display: 'flex', 
+                                  backgroundColor: 'var(--bg-surface-elevated)', 
+                                  border: '1px solid var(--border-glass)', 
+                                  borderRadius: '8px', 
+                                  overflow: 'hidden',
+                                  fontSize: '0.78rem',
+                                  minHeight: '200px'
+                                }}
+                              >
+                                {/* Left Column: Image Thumbnail */}
+                                <div style={{ width: '120px', flexShrink: 0, backgroundColor: 'var(--bg-app)', position: 'relative' }}>
+                                  {item.local_file_data ? (
+                                    <img 
+                                      src={item.local_file_data} 
+                                      alt={item.name} 
+                                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                      onError={(e) => e.target.style.display = 'none'}
+                                    />
+                                  ) : (
+                                    <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', padding: '6px', color: 'var(--text-muted)', fontSize: '0.65rem' }}>No Image</div>
+                                  )}
+                                </div>
+
+                                {/* Right Column: Read-only details */}
+                                <div style={{ flexGrow: 1, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <span style={{ fontSize: '0.68rem', color: 'var(--accent-secondary)', fontWeight: '600', textTransform: 'uppercase' }}>Place of Visit</span>
+                                    <span style={{ fontSize: '0.92rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{item.name}</span>
+                                  </div>
+
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Parent Location</span>
+                                      <span style={{ color: 'var(--text-primary)' }}>{parentName}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Category</span>
+                                      <span style={{ color: 'var(--text-primary)' }}>{item.category || 'Attraction'}</span>
+                                    </div>
+                                  </div>
+
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Coordinates</span>
+                                    <span style={{ color: 'var(--text-muted)' }}>Lat: {item.latitude || 'N/A'}, Lon: {item.longitude || 'N/A'}</span>
+                                  </div>
+
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Address</span>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>{item.address || 'No address details'}</span>
+                                  </div>
+
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Notes / Description</span>
+                                    <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>{item.notes || item.description || 'No description'}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
-
-                {savedLocations.length === 0 && savedPlaces.length === 0 ? (
-                  <p style={{ color: 'var(--text-secondary)' }}>No items saved yet. Use the Save button in the "Review Data" tab to import places/locations.</p>
-                ) : (
-                  <div style={{ 
-                     display: 'grid', 
-                     gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', 
-                     gap: '24px' 
-                   }}>
-                     {/* Saved Locations */}
-                     {savedLocations.map((loc) => {
-                       return (
-                          <div 
-                            key={loc.id} 
-                            style={{ 
-                              display: 'flex', 
-                              backgroundColor: 'var(--bg-surface-elevated)', 
-                              border: '1px solid var(--border-glass)', 
-                              borderRadius: '8px', 
-                              overflow: 'hidden',
-                              fontSize: '0.78rem',
-                              minHeight: '220px'
-                            }}
-                          >
-                            {/* Left Column: Image Thumbnail */}
-                            <div style={{ width: '130px', flexShrink: 0, backgroundColor: 'var(--bg-app)', position: 'relative' }}>
-                              {loc.local_file_data ? (
-                                <img 
-                                  src={loc.local_file_data} 
-                                  alt={loc.name} 
-                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                  onError={(e) => e.target.style.display = 'none'}
-                                />
-                              ) : (
-                                <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', padding: '6px', color: 'var(--text-muted)', fontSize: '0.65rem' }}>No Image</div>
-                              )}
-                            </div>
-
-                            {/* Right Column: Read-only details */}
-                            <div style={{ flexGrow: 1, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <span style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontWeight: '600', textTransform: 'uppercase' }}>Location</span>
-                                <span style={{ fontSize: '0.92rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{loc.name}</span>
-                              </div>
-
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Coordinates</span>
-                                <span style={{ color: 'var(--text-muted)' }}>Lat: {loc.latitude || 'N/A'}, Lon: {loc.longitude || 'N/A'}</span>
-                              </div>
-
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Notes / Description</span>
-                                <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>{loc.notes || 'No notes'}</span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                     })}
-
-                     {/* Saved Places */}
-                      {savedPlaces.map((pl) => {
-                        const parentName = locationsList.find(l => l.id === pl.location_id)?.name || 'Unknown Location';
-                        return (
-                          <div 
-                            key={pl.id} 
-                            style={{ 
-                              display: 'flex', 
-                              backgroundColor: 'var(--bg-surface-elevated)', 
-                              border: '1px solid var(--border-glass)', 
-                              borderRadius: '8px', 
-                              overflow: 'hidden',
-                              fontSize: '0.78rem',
-                              minHeight: '220px'
-                            }}
-                          >
-                            {/* Left Column: Image Thumbnail */}
-                            <div style={{ width: '130px', flexShrink: 0, backgroundColor: 'var(--bg-app)', position: 'relative' }}>
-                              {pl.local_file_data ? (
-                                <img 
-                                  src={pl.local_file_data} 
-                                  alt={pl.name} 
-                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                  onError={(e) => e.target.style.display = 'none'}
-                                />
-                              ) : (
-                                <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', padding: '6px', color: 'var(--text-muted)', fontSize: '0.65rem' }}>No Image</div>
-                              )}
-                            </div>
-
-                            {/* Right Column: Read-only details */}
-                            <div style={{ flexGrow: 1, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <span style={{ fontSize: '0.68rem', color: 'var(--accent-secondary)', fontWeight: '600', textTransform: 'uppercase' }}>Place of Visit</span>
-                                <span style={{ fontSize: '0.92rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{pl.name}</span>
-                              </div>
-
-                              <div style={{ display: 'flex', gap: '8px' }}>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                                  <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Parent Location</span>
-                                  <span style={{ color: 'var(--text-primary)' }}>{parentName}</span>
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                                  <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Category</span>
-                                  <span style={{ color: 'var(--text-primary)' }}>{pl.category || 'Attraction'}</span>
-                                </div>
-                              </div>
-
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Coordinates</span>
-                                <span style={{ color: 'var(--text-muted)' }}>Lat: {pl.latitude || 'N/A'}, Lon: {pl.longitude || 'N/A'}</span>
-                              </div>
-
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Address</span>
-                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>{pl.address || 'No address details'}</span>
-                              </div>
-
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Notes / Description</span>
-                                <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>{pl.notes || pl.description || 'No description'}</span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                   </div>
-                )}
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       </div>

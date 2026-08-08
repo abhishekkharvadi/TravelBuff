@@ -179,6 +179,9 @@ function cleanPlaceName(rawName) {
   name = name.replace(/^[\*\_\~\`\s"':\-\,\.\/\\\|]+/g, '');
   name = name.replace(/[\*\_\~\`\s"':\-\,\.\/\\\|]+$/g, '');
 
+  // Remove Day prefixes e.g. "Day 1: Place", "Day 01 - Place", "Day 2 Place"
+  name = name.replace(/^(?:Day|Date)\s*[-:]?\s*\d+[\s:–—\-]*\s*/i, '').trim();
+
   // Remove numbers and separators at the start
   // e.g. "1. Place", "10 - Place", "3) Place", "Step 1: Place"
   name = name.replace(/^(\d+[\.\-\s)]+\s*|\bStep\s+\d+[\.\-\s:]+\s*)/i, '').trim();
@@ -235,43 +238,92 @@ export async function processMarkdownImport(urlStr, scraperType = 'jina', firecr
     markdown = await fetchMarkdownJina(urlStr);
   }
 
-  // 2. Parse Markdown for headings, descriptions, and images
+  // 2. Parse Markdown for headings, descriptions, day headings, and images
   const lines = markdown.split('\n');
   const headings = [];
   const images = []; // Array of { url: '', lineNumber: 0 }
-  
+  let currentDay = null;
+
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Check for heading (e.g. "# Heading", "## Heading")
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
-      const currentHeading = {
-        name: headingMatch[2].trim(),
-        level: headingMatch[1].length,
-        description: '',
-        images: [],
-        lineNumber: i
-      };
-      headings.push(currentHeading);
-      
-      // Look ahead for description (first non-empty, non-heading, non-image line)
-      for (let j = i + 1; j < lines.length; j++) {
-        const descLine = lines[j].trim();
-        if (descLine === '') continue;
-        if (descLine.startsWith('#')) break; // Next heading
-        if (descLine.match(/!\[.*\]\(.*\)/)) continue; // Image line
-        
-        currentHeading.description = descLine;
-        break; // Found the first paragraph
-      }
-    }
+    const rawLine = lines[i];
+    const line = rawLine.trim();
+    if (!line) continue;
 
     // Check for images
     const imageRegex = /!\[.*?\]\((https?:\/\/[^\)]+\.(?:jpg|jpeg|png|webp|gif).*?)\)/gi;
     let match;
     while ((match = imageRegex.exec(line)) !== null) {
       images.push({ url: match[1], lineNumber: i });
+    }
+
+    // 1. Detect Day lines (e.g. "### **Day 1 in Hyderabad**", "**Day 3 in Hyderabad**", "Day 1", "Date: 2026-08-10")
+    const unformattedLine = line.replace(/^#{1,6}\s*/, '').replace(/^[\*\_\`]+|[\*\_\`]+$/g, '').trim();
+    const dayMatch = unformattedLine.match(/(?:Day|Date)\s*[-:]?\s*0*(\d+)/i);
+    if (dayMatch && dayMatch[1]) {
+      currentDay = parseInt(dayMatch[1], 10);
+    }
+
+    // 2. Determine if line is a Heading / Place item:
+    // - Markdown heading: "# Heading" / "### **Day 1 in Hyderabad**"
+    // - Bold line: "**Purani Haveli**" / "**Admire the grandeur of Chowmallah Palace**"
+    // - Bulleted or numbered bold line: "- **Charminar**" / "1. **Purani Haveli**"
+    let headingText = null;
+    let headingLevel = 3;
+
+    const markdownHeadingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    const boldLineMatch = line.match(/^(?:[\*\-\+\d\.\)]+\s*)?\*\*(.+?)\*\*:?\s*(.*)$/);
+    const underlineMatch = line.match(/^(?:[\*\-\+\d\.\)]+\s*)?__(.+?)__:?\s*(.*)$/);
+
+    if (markdownHeadingMatch) {
+      headingLevel = markdownHeadingMatch[1].length;
+      headingText = markdownHeadingMatch[2].trim();
+    } else if (boldLineMatch && boldLineMatch[1].trim().length >= 2) {
+      headingLevel = 3;
+      headingText = boldLineMatch[1].trim();
+    } else if (underlineMatch && underlineMatch[1].trim().length >= 2) {
+      headingLevel = 3;
+      headingText = underlineMatch[1].trim();
+    }
+
+    if (headingText) {
+      // Strip outer/inner bold/italic/backtick formatting
+      const cleanHeadingText = headingText.replace(/[\*\_\`]/g, '').trim();
+
+      // Filter out pure Day headers so "Day 1 in Hyderabad" sets currentDay without creating a fake place
+      const isPureDayHeader = /^Day\s*\d+\b(?:\s+in\s+[\w\s]+)?$/i.test(cleanHeadingText) || 
+                              /^Date:\s*[\d-]+$/i.test(cleanHeadingText);
+
+      if (!isPureDayHeader && cleanHeadingText.length >= 2) {
+        const currentHeading = {
+          name: cleanHeadingText,
+          level: headingLevel,
+          description: '',
+          images: [],
+          lineNumber: i,
+          day: currentDay
+        };
+
+        // If bold match had inline description after colon (e.g. **Charminar**: Beautiful monument)
+        if (boldLineMatch && boldLineMatch[2] && boldLineMatch[2].trim()) {
+          currentHeading.description = boldLineMatch[2].trim().replace(/[\*\_\`]/g, '');
+        }
+
+        headings.push(currentHeading);
+
+        // Look ahead for description (first non-empty, non-heading line)
+        if (!currentHeading.description) {
+          for (let j = i + 1; j < lines.length; j++) {
+            const descLine = lines[j].trim();
+            if (descLine === '') continue;
+            if (descLine.startsWith('#')) break;
+            if (descLine.startsWith('**') || descLine.startsWith('__')) break;
+            if (descLine.match(/!\[.*\]\(.*\)/)) continue;
+
+            currentHeading.description = descLine.replace(/[\*\_\`]/g, '').trim();
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -313,7 +365,7 @@ export async function processMarkdownImport(urlStr, scraperType = 'jina', firecr
   const places = [];
   
   for (const h of headings) {
-    if (h.name.length < 3 || h.name.length > 50) continue;
+    if (h.name.length < 2 || h.name.length > 120) continue;
 
     const cleaned = cleanPlaceName(h.name);
 
@@ -327,7 +379,8 @@ export async function processMarkdownImport(urlStr, scraperType = 'jina', firecr
       longitude: null,
       target_location: '', // Will hold City, Country
       geocodeSuccess: false,
-      originalHeading: h.name
+      originalHeading: h.name,
+      day: h.day || null
     };
 
     // Download first image if available
