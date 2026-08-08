@@ -465,30 +465,41 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
   // Memoized featured photo map for O(1) lookups to avoid main page flickering/lag
   const featuredPhotoMap = React.useMemo(() => {
     const map = {};
-    // Pre-populate with locations
-    locations.forEach(loc => {
-      if (loc.local_file_data) map[loc.id] = loc.local_file_data;
-    });
-    // Pre-populate with places
-    places.forEach(place => {
-      if (place.local_file_data) map[place.id] = place.local_file_data;
-    });
+    
     // Group photos by entity
     const photoGroups = {};
     photos.forEach(p => {
       if (!photoGroups[p.entity_id]) photoGroups[p.entity_id] = [];
       photoGroups[p.entity_id].push(p);
     });
-    // Find featured or first photo
+
+    // 1. Highest priority: Check entity_photos for explicitly starred photo (is_featured === 1)
     Object.keys(photoGroups).forEach(entId => {
-      if (map[entId]) return; // already set by location/place local_file_data
       const pList = photoGroups[entId];
       const featured = pList.find(p => p.is_featured === 1);
-      if (featured && featured.file_path) map[entId] = featured.file_path;
-      else if (pList[0] && pList[0].file_path) map[entId] = pList[0].file_path;
+      if (featured && featured.file_path) {
+        map[entId] = featured.file_path;
+      }
     });
 
-    // Fallback: If a location has no photo, check if any of its sub-places has a photo!
+    // 2. Pre-populate with locations local_file_data if not set by starred photo
+    locations.forEach(loc => {
+      if (!map[loc.id] && loc.local_file_data) map[loc.id] = loc.local_file_data;
+    });
+
+    // 3. Pre-populate with places local_file_data if not set by starred photo
+    places.forEach(place => {
+      if (!map[place.id] && place.local_file_data) map[place.id] = place.local_file_data;
+    });
+
+    // 4. First photo in entity_photos if entity still has no cover
+    Object.keys(photoGroups).forEach(entId => {
+      if (map[entId]) return;
+      const pList = photoGroups[entId];
+      if (pList[0] && pList[0].file_path) map[entId] = pList[0].file_path;
+    });
+
+    // 5. Fallback: If a location has no photo, check if any of its sub-places has a photo!
     locations.forEach(loc => {
       if (!map[loc.id]) {
         const childPlace = places.find(p => p.location_id === loc.id && map[p.id]);
@@ -867,14 +878,19 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
     await queueSyncAction('places', 'insert', newPlace);
 
     // Fire background photo fetching without holding up the UI
-    trackApiCall('Wikipedia');
+    trackApiCall('Wikipedia / Google Maps');
     fetch('/api/import/search-photo', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify({ query: cleanSearchQuery, latitude: latitudeVal, longitude: longitudeVal })
+      body: JSON.stringify({ 
+        query: cleanSearchQuery, 
+        latitude: latitudeVal, 
+        longitude: longitudeVal,
+        googleMapsApiKey: localStorage.getItem('google_maps_api_key')
+      })
     })
       .then(res => res.ok ? res.json() : null)
       .then(async (data) => {
@@ -998,21 +1014,59 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
   };
 
   const handleSetFeaturedPhoto = async (photo) => {
+    if (!photo || !photo.entity_id) return;
+
+    // 1. Update IndexedDB and queue sync for entity_photos
     const list = photos.filter(p => p.entity_id === photo.entity_id);
     for (const p of list) {
-      await queueSyncAction('entity_photos', 'update', { ...p, is_featured: p.id === photo.id ? 1 : 0 });
+      const isCurrent = p.id === photo.id;
+      await db.entity_photos.update(p.id, { is_featured: isCurrent ? 1 : 0 });
+      await queueSyncAction('entity_photos', 'update', { ...p, is_featured: isCurrent ? 1 : 0 });
+    }
+
+    // 2. Update shortcut local_file_data column on locations or places table
+    const isLoc = locations.some(l => l.id === photo.entity_id);
+    const table = isLoc ? 'locations' : 'places';
+    const entity = isLoc ? locations.find(l => l.id === photo.entity_id) : places.find(p => p.id === photo.entity_id);
+
+    if (entity) {
+      await db[table].update(photo.entity_id, { local_file_data: photo.file_path });
+      await queueSyncAction(table, 'update', { ...entity, local_file_data: photo.file_path });
     }
   };
 
   const handleDeletePhoto = async (photoId) => {
+    const photoToDelete = photos.find(p => p.id === photoId);
+    if (!photoToDelete) return;
+
     if (window.confirm('Delete this photo?')) {
       await queueSyncAction('entity_photos', 'delete', { id: photoId });
+
+      // If the deleted photo was the featured cover photo, pick next photo or clear local_file_data
+      const entityId = photoToDelete.entity_id;
+      const remainingPhotos = photos.filter(p => p.entity_id === entityId && p.id !== photoId);
+      const isLoc = locations.some(l => l.id === entityId);
+      const table = isLoc ? 'locations' : 'places';
+      const entity = isLoc ? locations.find(l => l.id === entityId) : places.find(p => p.id === entityId);
+
+      if (entity && entity.local_file_data === photoToDelete.file_path) {
+        const nextPhoto = remainingPhotos.find(p => p.is_featured === 1) || remainingPhotos[0];
+        const newUrl = nextPhoto ? nextPhoto.file_path : null;
+        await db[table].update(entityId, { local_file_data: newUrl });
+        await queueSyncAction(table, 'update', { ...entity, local_file_data: newUrl });
+      }
     }
   };
 
   const handleFetchPhotoForEntity = async (entity, isPlace = false) => {
     if (!entity || !entity.name) return;
-    trackApiCall('Wikipedia');
+    trackApiCall('Wikipedia / Google Maps');
+    
+    let searchQuery = entity.name;
+    if (isPlace && selectedLocation && selectedLocation.name) {
+      searchQuery = `${entity.name.trim()} ${selectedLocation.name.trim()}`.trim();
+    }
+
     try {
       const res = await fetch('/api/import/search-photo', {
         method: 'POST',
@@ -1021,9 +1075,10 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          query: entity.name,
+          query: searchQuery,
           latitude: entity.latitude,
-          longitude: entity.longitude
+          longitude: entity.longitude,
+          googleMapsApiKey: localStorage.getItem('google_maps_api_key')
         })
       });
       if (res.ok) {
@@ -1041,6 +1096,8 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
             is_featured: 1,
             created_at: new Date().toISOString()
           });
+        } else if (data.message) {
+          console.log(`[Photo Fetch] ${data.message} for ${searchQuery}`);
         }
       }
     } catch (e) {
@@ -1688,9 +1745,9 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                   className="btn btn-secondary" 
                   onClick={() => handleFetchPhotoForEntity(selectedLocation, false)}
                   style={{ width: 'auto', padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                  title="Fetch cover image from Wikipedia"
+                  title="Fetch cover image from Wikipedia / Google Maps"
                 >
-                  <RefreshCw size={12} /> Fetch Cover
+                  <RefreshCw size={12} /> Fetch Cover Image
                 </button>
                 <input
                   type="file"
@@ -1710,10 +1767,14 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                     />
                     {photo.is_featured === 1 && <span className="featured-badge">Featured</span>}
                     <div className="photo-actions">
-                      <button className={`photo-action-btn ${photo.is_featured === 1 ? 'featured-btn' : ''}`} onClick={() => handleSetFeaturedPhoto(photo)}>
+                      <button 
+                        className={`photo-action-btn ${photo.is_featured === 1 ? 'featured-btn' : ''}`} 
+                        onClick={() => handleSetFeaturedPhoto(photo)}
+                        title={photo.is_featured === 1 ? 'Current cover image' : 'Set as cover image'}
+                      >
                         <Star size={12} fill={photo.is_featured === 1 ? '#f59e0b' : 'none'} />
                       </button>
-                      <button className="photo-action-btn" onClick={() => handleDeletePhoto(photo.id)}>
+                      <button className="photo-action-btn" onClick={() => handleDeletePhoto(photo.id)} title="Delete photo">
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -1948,9 +2009,9 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                               className="btn btn-secondary" 
                               onClick={() => handleFetchPhotoForEntity(place, true)}
                               style={{ width: 'auto', padding: '2px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                              title="Fetch cover image from Wikipedia"
+                              title="Fetch cover image from Wikipedia / Google Maps"
                             >
-                              <RefreshCw size={12} /> Fetch Cover
+                              <RefreshCw size={12} /> Fetch Cover Image
                             </button>
                           </div>
                           <div 
@@ -1974,10 +2035,14 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                                 <img src={photo.file_path} alt="Place visual" />
                                 {photo.is_featured === 1 && <span className="featured-badge">Featured</span>}
                                 <div className="photo-actions">
-                                  <button className={`photo-action-btn ${photo.is_featured === 1 ? 'featured-btn' : ''}`} onClick={() => handleSetFeaturedPhoto(photo)}>
+                                  <button 
+                                    className={`photo-action-btn ${photo.is_featured === 1 ? 'featured-btn' : ''}`} 
+                                    onClick={() => handleSetFeaturedPhoto(photo)}
+                                    title={photo.is_featured === 1 ? 'Current cover image' : 'Set as cover image'}
+                                  >
                                     <Star size={12} fill={photo.is_featured === 1 ? '#f59e0b' : 'none'} />
                                   </button>
-                                  <button className="photo-action-btn" onClick={() => handleDeletePhoto(photo.id)}>
+                                  <button className="photo-action-btn" onClick={() => handleDeletePhoto(photo.id)} title="Delete photo">
                                     <Trash2 size={12} />
                                   </button>
                                 </div>

@@ -1,6 +1,6 @@
 {
   "name": "travelbuff",
-  "version": "1.2.1",
+  "version": "1.2.6",
   "description": "Self-hosted travel log, planning and trip app",
   "main": "server.js",
   "type": "module",

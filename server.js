@@ -718,7 +718,7 @@ app.post('/api/import/download-url', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
-  const { query, latitude, longitude } = req.body;
+  const { query, latitude, longitude, googleMapsApiKey } = req.body;
   if (!query) {
     return res.status(400).json({ error: 'Query is required' });
   }
@@ -726,6 +726,7 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
     const headers = { 'User-Agent': 'TravelBuffPersonalApp/1.2 (contact-abhishek@example.com; Developer Test Instance)' };
     let imageUrl = null;
     let description = null;
+    let source = 'wikimedia';
 
     // 1. Geosearch (Coordinates-Based)
     if (latitude && longitude) {
@@ -786,47 +787,68 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
 
     // 3. Fallback: Wikimedia Commons Text Search
     if (!imageUrl) {
-      const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srnamespace=6&format=json&origin=*`;
-      const searchRes = await fetch(searchUrl, { headers });
-      if (!searchRes.ok) {
-        throw new Error(`Wikimedia Search failed: ${searchRes.statusText}`);
-      }
-      const searchData = await searchRes.json();
-      const searchItems = searchData?.query?.search || [];
-      
-      const validImage = searchItems.find(item => {
-        const title = (item.title || '').toLowerCase();
-        return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
-      });
+      try {
+        const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srnamespace=6&format=json&origin=*`;
+        const searchRes = await fetch(searchUrl, { headers });
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          const searchItems = searchData?.query?.search || [];
+          
+          const validImage = searchItems.find(item => {
+            const title = (item.title || '').toLowerCase();
+            return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
+          });
 
-      if (!validImage) {
-        return res.status(404).json({ error: 'No image found' });
+          if (validImage) {
+            const fileTitle = validImage.title;
+            const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(fileTitle)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
+            const infoRes = await fetch(infoUrl, { headers });
+            if (infoRes.ok) {
+              const infoData = await infoRes.json();
+              const pages = infoData?.query?.pages || {};
+              const pageId = Object.keys(pages)[0];
+              imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Wikimedia Text Search failed:', err);
       }
-      
-      const fileTitle = validImage.title;
-      const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(fileTitle)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
-      const infoRes = await fetch(infoUrl, { headers });
-      if (!infoRes.ok) {
-        throw new Error(`Wikimedia Info failed: ${infoRes.statusText}`);
-      }
-      const infoData = await infoRes.json();
-      const pages = infoData?.query?.pages || {};
-      const pageId = Object.keys(pages)[0];
-      imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
     }
 
+    // 4. Tier 2 Fallback: Google Maps / Places API Search
+    const apiKeyToUse = googleMapsApiKey || process.env.GOOGLE_MAPS_API_KEY;
+    if (!imageUrl && apiKeyToUse) {
+      try {
+        const gUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${apiKeyToUse}`;
+        const gRes = await fetch(gUrl);
+        if (gRes.ok) {
+          const gData = await gRes.json();
+          const candidate = gData?.results?.[0];
+          if (candidate && candidate.photos && candidate.photos.length > 0) {
+            const photoRef = candidate.photos[0].photo_reference;
+            imageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photoRef}&key=${apiKeyToUse}`;
+            source = 'google_maps';
+          }
+        }
+      } catch (gErr) {
+        console.error('Google Places photo search failed:', gErr);
+      }
+    }
+
+    // If still no image found on both Wikipedia and Google Maps, return graceful 200 payload
     if (!imageUrl) {
-      return res.status(404).json({ error: 'No image URL resolved' });
+      return res.json({ fileUrl: null, description, message: 'No public cover image found on Wikipedia or Google Maps' });
     }
 
-    // Now download it locally
+    // Now download the image locally
     const response = await fetch(imageUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       }
     });
     if (!response.ok) {
-      throw new Error(`Failed to download Wikimedia image: ${response.statusText}`);
+      return res.json({ fileUrl: null, description, message: 'Failed to download external image' });
     }
     const contentType = response.headers.get('content-type') || '';
     let ext = '.jpg';
@@ -834,7 +856,8 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
     else if (contentType.includes('image/webp')) ext = '.webp';
     else if (contentType.includes('image/gif')) ext = '.gif';
     
-    const filename = `wiki-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`;
+    const prefix = source === 'google_maps' ? 'gmap' : 'wiki';
+    const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`;
     if (!fs.existsSync(UPLOADS_DIR)) {
       fs.mkdirSync(UPLOADS_DIR, { recursive: true });
     }
@@ -842,17 +865,9 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
     
     const arrayBuffer = await response.arrayBuffer();
     fs.writeFileSync(filePath, Buffer.from(arrayBuffer));
-    res.json({ fileUrl: `/uploads/${filename}`, description });
+    res.json({ fileUrl: `/uploads/${filename}`, description, source });
   } catch (err) {
     console.error('Failed to search or download image:', err);
-    try {
-      const dataDir = process.env.DATABASE_DIR || join(__dirname, 'data');
-      const logPath = join(dataDir, 'server_error.log');
-      const logMessage = `[${new Date().toISOString()}] Failed to search photo for query "${query}": ${err.message}\nStack: ${err.stack}\n\n`;
-      fs.appendFileSync(logPath, logMessage);
-    } catch (logErr) {
-      console.error('Failed to write to error log:', logErr);
-    }
     res.json({ fileUrl: null, description: null, error: err.message });
   }
 });
