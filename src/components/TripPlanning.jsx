@@ -21,6 +21,24 @@ const safeParseArray = (val) => {
   }
 };
 
+const safeParseNotes = (val) => {
+  if (!val) return {};
+  if (typeof val === 'object' && val !== null) return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch (e) {
+        // Fallback to description
+      }
+    }
+    return { description: val };
+  }
+  return {};
+};
+
 const safeIncludes = (arr, val) => Array.isArray(arr) && arr.includes(val);
 
 const formatDuration = (mins) => {
@@ -578,13 +596,9 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     if (stopFilterLocationIds && stopFilterLocationIds.length > 0) {
       activeLocIds = stopFilterLocationIds;
     } else if (activeTripObj && activeTripObj.notes) {
-      try {
-        const parsedNotes = typeof activeTripObj.notes === 'string' ? JSON.parse(activeTripObj.notes) : activeTripObj.notes;
-        if (parsedNotes && Array.isArray(parsedNotes.locationIds)) {
-          activeLocIds = parsedNotes.locationIds;
-        }
-      } catch (e) {
-        activeLocIds = [];
+      const parsedNotes = safeParseNotes(activeTripObj.notes);
+      if (parsedNotes && Array.isArray(parsedNotes.locationIds)) {
+        activeLocIds = parsedNotes.locationIds;
       }
     }
     if (!Array.isArray(activeLocIds)) activeLocIds = [];
@@ -600,12 +614,10 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     if (stopFilterLocationIds && stopFilterLocationIds.length > 0) {
       filterLocIds = stopFilterLocationIds;
     } else if (selectedTrip && selectedTrip.notes) {
-      try {
-        const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes;
-        if (notesObj && Array.isArray(notesObj.locationIds)) {
-          filterLocIds = notesObj.locationIds;
-        }
-      } catch(e) {}
+      const notesObj = safeParseNotes(selectedTrip.notes);
+      if (notesObj && Array.isArray(notesObj.locationIds)) {
+        filterLocIds = notesObj.locationIds;
+      }
     }
     if (!Array.isArray(filterLocIds)) filterLocIds = [];
 
@@ -638,12 +650,8 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
   const [isInternational, setIsInternational] = useState(false);
 
   const activeTripObj = trips.find(t => {
-    try {
-      const notesObj = typeof t.notes === 'string' ? JSON.parse(t.notes) : t.notes || {};
-      return notesObj.isActive === true;
-    } catch (e) {
-      return false;
-    }
+    const notesObj = safeParseNotes(t.notes);
+    return notesObj.isActive === true;
   });
   const activeTripId = activeTripObj ? activeTripObj.id.toString() : '';
   const [tripModeActive, setTripModeActive] = useState(localStorage.getItem('tripModeActive') === 'true');
@@ -746,7 +754,7 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
       setItinTargetDate(selectedTrip.start_date || '');
       
       try {
-        const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes || '{}') : selectedTrip.notes || {};
+        const notesObj = safeParseNotes(selectedTrip.notes);
         const savedLocIds = safeParseArray(notesObj.locationIds);
         const savedColIds = safeParseArray(notesObj.collectionIds);
         
@@ -787,42 +795,26 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
 
   const getTripNotesDescription = (trip) => {
     if (!trip || !trip.notes) return '';
-    try {
-      const parsed = JSON.parse(trip.notes);
-      return parsed.description || '';
-    } catch (e) {
-      return trip.notes;
-    }
+    const parsed = safeParseNotes(trip.notes);
+    return parsed.description || (typeof trip.notes === 'string' && !trip.notes.trim().startsWith('{') ? trip.notes : '');
   };
 
   const getTripIsInternational = (trip) => {
     if (!trip || !trip.notes) return false;
-    try {
-      const parsed = JSON.parse(trip.notes);
-      return !!parsed.isInternational;
-    } catch (e) {
-      return false;
-    }
+    const parsed = safeParseNotes(trip.notes);
+    return !!parsed.isInternational;
   };
 
   const getTripCurrencies = (trip) => {
     if (!trip || !trip.notes) return [];
-    try {
-      const parsed = JSON.parse(trip.notes);
-      return parsed.currencies || [];
-    } catch (e) {
-      return [];
-    }
+    const parsed = safeParseNotes(trip.notes);
+    return parsed.currencies || [];
   };
 
   const getTripPlannedBudget = (trip) => {
     if (!trip || !trip.notes) return 0;
-    try {
-      const parsed = JSON.parse(trip.notes);
-      return parsed.plannedBudget || 0;
-    } catch (e) {
-      return 0;
-    }
+    const parsed = safeParseNotes(trip.notes);
+    return parsed.plannedBudget || 0;
   };
 
   useEffect(() => {
@@ -834,12 +826,7 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
 
   const handleUpdateTripConfig = async (updatedFields) => {
     if (!selectedTrip) return;
-    let existingNotes = {};
-    try {
-      existingNotes = JSON.parse(selectedTrip.notes || '{}');
-    } catch (e) {
-      existingNotes = { description: selectedTrip.notes };
-    }
+    const existingNotes = safeParseNotes(selectedTrip.notes);
 
     const updatedNotes = {
       ...existingNotes,
@@ -1030,12 +1017,7 @@ Only return the places to visit for each day in the itinerary.`;
 
   const handleSelectHotel = async (date, hotelPlaceId) => {
     if (!selectedTrip) return;
-    let notesObj = {};
-    try {
-      notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
-    } catch (e) {
-      notesObj = {};
-    }
+    const notesObj = safeParseNotes(selectedTrip.notes);
     notesObj.hotels = notesObj.hotels || {};
     if (hotelPlaceId) {
       notesObj.hotels[date] = hotelPlaceId;
@@ -1052,7 +1034,7 @@ Only return the places to visit for each day in the itinerary.`;
 
   const handleStartManualPlanning = async () => {
     if (wizardTrip) {
-      const existingNotes = typeof wizardTrip.notes === 'string' ? JSON.parse(wizardTrip.notes) : wizardTrip.notes || {};
+      const existingNotes = safeParseNotes(wizardTrip.notes);
       const updatedNotes = {
         ...existingNotes,
         locationIds: selectedLocationsForAi,
@@ -1092,7 +1074,7 @@ Only return the places to visit for each day in the itinerary.`;
 
     setIsGeneratingTrip(true);
     try {
-      const existingNotes = typeof wizardTrip.notes === 'string' ? JSON.parse(wizardTrip.notes) : wizardTrip.notes || {};
+      const existingNotes = safeParseNotes(wizardTrip.notes);
       const updatedNotes = {
         ...existingNotes,
         locationIds: selectedLocationsForAi,
@@ -1569,10 +1551,7 @@ Only return the places to visit for each day in the itinerary.`;
 
   const handleToggleActiveTrip = async (tripId) => {
     for (const t of trips) {
-      let notesObj = {};
-      try {
-        notesObj = typeof t.notes === 'string' ? JSON.parse(t.notes) : t.notes || {};
-      } catch (e) {}
+      const notesObj = safeParseNotes(t.notes);
 
       const shouldBeActive = t.id.toString() === tripId.toString() && !notesObj.isActive;
       if (notesObj.isActive !== shouldBeActive) {
@@ -3754,11 +3733,8 @@ Only return the places to visit for each day in the itinerary.`;
                   // Calculate active day itinerary stops & hotels in sequence
                   const dayElements = [];
                   
-                  let hotelsObj = {};
-                  try {
-                    const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
-                    hotelsObj = notesObj.hotels || {};
-                  } catch(e) {}
+                  const notesObj = safeParseNotes(selectedTrip?.notes);
+                  const hotelsObj = notesObj.hotels || {};
 
                   dayItems.forEach(item => {
                     const stopPlace = combinedPlaces.find(p => p.id === item.place_id);
@@ -3883,10 +3859,8 @@ Only return the places to visit for each day in the itinerary.`;
                         <select
                           className="form-control"
                           value={(() => {
-                            try {
-                              const notesObj = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
-                              return notesObj.hotels ? notesObj.hotels[day.date] || '' : '';
-                            } catch(e) { return ''; }
+                            const notesObj = safeParseNotes(selectedTrip?.notes);
+                            return notesObj.hotels ? notesObj.hotels[day.date] || '' : '';
                           })()}
                           onChange={(e) => handleSelectHotel(day.date, e.target.value)}
                           style={{ flexGrow: 1, height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0 }}
@@ -4120,7 +4094,7 @@ Only return the places to visit for each day in the itinerary.`;
                                 setStopFilterLocationIds(updatedLocIds);
                                 
                                 if (selectedTrip) {
-                                  const existingNotes = typeof selectedTrip.notes === 'string' ? JSON.parse(selectedTrip.notes) : selectedTrip.notes || {};
+                                  const existingNotes = safeParseNotes(selectedTrip.notes);
                                   const savedLocIds = existingNotes.locationIds || [];
                                   if (!savedLocIds.includes(loc.id)) {
                                     existingNotes.locationIds = [...savedLocIds, loc.id];

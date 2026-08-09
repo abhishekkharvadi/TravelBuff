@@ -1318,7 +1318,7 @@ app.get('/api/import/geocode', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
-  const { places, city, state, country, prompt, homeCoords } = req.body;
+  const { places, markdown, city, state, country, prompt, homeCoords } = req.body;
   if (!places || !Array.isArray(places)) {
     return res.status(400).json({ error: 'Places array is required' });
   }
@@ -1345,15 +1345,18 @@ app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
       ? `Starting and Ending Home Waypoint Coordinates: Latitude = ${homeLat}, Longitude = ${homeLng}. Use this home coordinate as the starting and ending point when planning the day-wise itinerary starting in the morning.`
       : '';
 
-    const systemPrompt = `You are a travel geocoding, landmark cleaning, and itinerary extraction assistant. Refine the input list of places and create an optimized day-wise itinerary.
+    const markdownContext = markdown ? `\n\nFull Travel Guide Document Context:\n\"\"\"\n${markdown.slice(0, 12000)}\n\"\"\"` : '';
+
+    const systemPrompt = `You are a travel geocoding, landmark cleaning, and itinerary extraction assistant. Refine the input list of places and create an optimized day-wise itinerary using both the place list and full guide document context.
 Context: City = "${city || ''}", State = "${state || ''}", Country = "${country || ''}".
 ${homeContext}
 
 Instructions:
-1. Filter out non-place text items (such as general tips, section headers, intro/outro advice, or transport tips). Set "isRelevant": false for non-places, or omit them.
-2. Clean and normalize place names (e.g. convert conversational or action phrases like "Get a bird's eye view from Golconda Fort" or "Enjoy sunset at Chowmahalla Palace" to clean landmark titles like "Golconda Fort" or "Chowmahalla Palace").
+1. Parse the full guide document context (if provided) to extract exact Day assignments (e.g. Day 1, Day 2 from headings like "# Day 1: Old City") and appropriate categories for each place.
+2. Clean and normalize place names (e.g. convert conversational or action phrases like "Get a bird's eye view from Golconda Fort" to clean landmark titles like "Golconda Fort").
 3. Extract geocoding details (latitude, longitude, formatted address, category, short 1-2 sentence description) for each place.
-4. Create a day-wise itinerary by assigning day numbers (1, 2, 3, etc.) to each location based on geographical proximity between places and reasonable daily travel distance, assuming a morning start and returning to the home starting location coordinates if provided.
+4. Assign day numbers (1, 2, 3, etc.) based on markdown Day headings if present, or geographical proximity.
+5. Classify the item type: set "type": "place" for places of visit, or "type": "location" if the item represents a top-level city/region folder.
 
 Expected Output Format: JSON array of objects (or JSON object containing a "places" array), where each place object contains:
 - id: match the place's input id exactly
@@ -1364,11 +1367,12 @@ Expected Output Format: JSON array of objects (or JSON object containing a "plac
 - category: one of 'Attraction', 'Dining', 'Lodging', 'Transit', 'Shopping', 'Other'
 - description: a short 1-2 sentence description summarizing what this place is
 - day: integer number representing the day of visit (1, 2, 3, etc.)
+- type: 'place' or 'location'
 - isRelevant: boolean (true if valid visitable place, false if header or general advice)
 
 Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`\`\`json).`;
 
-    const userMessage = `${prompt || 'Extract geocoding details and create a day-wise itinerary for these places.'}\n\nPlaces Input:\n${JSON.stringify(places.map(p => ({ id: p.id, name: p.name, description: p.description || '', day: p.day || null })), null, 2)}`;
+    const userMessage = `${prompt || 'Extract geocoding details, categories, and day-wise itinerary for these places.'}${markdownContext}\n\nPlaces Input:\n${JSON.stringify(places.map(p => ({ id: p.id, name: p.name, description: p.description || '', day: p.day || null, type: p.type || 'place' })), null, 2)}`;
 
     let responseText = '';
 

@@ -112,6 +112,73 @@ const FilterableSelect = ({ value, onChange, options, placeholder, isMulti = fal
   );
 };
 
+const InlineEditablePlaceName = ({ name, onChange }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [val, setVal] = useState(name);
+
+  useEffect(() => {
+    setVal(name);
+  }, [name]);
+
+  const handleSave = () => {
+    setIsEditing(false);
+    if (val.trim() && val !== name) {
+      onChange(val.trim());
+    } else {
+      setVal(name);
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <input
+        autoFocus
+        type="text"
+        className="form-control"
+        style={{ padding: '6px 10px', fontSize: '0.85rem', fontWeight: 600, backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', width: '100%', border: '1px solid var(--accent-primary)', borderRadius: '4px' }}
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleSave();
+          if (e.key === 'Escape') { setVal(name); setIsEditing(false); }
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      onClick={() => setIsEditing(true)}
+      title="Click to edit place name"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justify: 'space-between',
+        gap: '8px',
+        padding: '6px 8px',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        border: '1px solid transparent',
+        transition: 'all 0.15s ease'
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.backgroundColor = 'var(--bg-surface-elevated)';
+        e.currentTarget.style.borderColor = 'var(--border-glass)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.backgroundColor = 'transparent';
+        e.currentTarget.style.borderColor = 'transparent';
+      }}
+    >
+      <span style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--text-primary)', wordBreak: 'break-word', lineHeight: '1.4' }}>
+        {name || <span style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>Unnamed Place</span>}
+      </span>
+      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', opacity: 0.6, flexShrink: 0 }}>✎</span>
+    </div>
+  );
+};
+
 const MarkdownLineViewer = React.memo(({ 
   line, 
   idx, 
@@ -329,7 +396,7 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
   }, [userAddresses]);
 
   const [customPrompt, setCustomPrompt] = useState(
-    'Refine place list: remove non-place text, clean place names, extract geocoding details (address, latitude, longitude), create a day-wise itinerary by assigning day numbers to each location based on geographical proximity, and fill in category, address, coordinates, and concise 1-2 sentence descriptions for each place. Assume start in the morning from home coordinates.'
+    'Refine place list: remove non-place text, clean place names, extract geocoding details (address, latitude, longitude), create a day-wise itinerary by assigning day numbers to each location based on geographical proximity, and fill in category, address, coordinates, and concise 1-2 sentence descriptions for each place. Do not resolve items which are not specific locations; only specific locations or places of visit are to be resolved. Skip resolving duplicate items. Resolve top-level locations first so places of visit are tagged to the correct parent location. Assume start in the morning from home coordinates.'
   );
   const [bulkLocationId, setBulkLocationId] = useState('');
 
@@ -731,46 +798,40 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
       
       if (imgDir === 'above') {
         let startLine = 0;
-        for (let k = hIdx - 1; k >= 0; k--) {
-          if (headings[k].level <= h.level) {
-            startLine = headings[k].lineNumber;
+        for (let prevIdx = hIdx - 1; prevIdx >= 0; prevIdx--) {
+          if (headings[prevIdx].level <= h.level) {
+            startLine = headings[prevIdx].lineNumber;
             break;
           }
         }
-        h.images = images
-          .filter(img => img.lineNumber > startLine && img.lineNumber < h.lineNumber)
-          .map(img => img.url);
+        h.images = images.filter(img => img.lineNumber > startLine && img.lineNumber < h.lineNumber).map(img => img.url);
       } else {
-        // Below
         let endLine = lines.length;
-        for (let k = hIdx + 1; k < headings.length; k++) {
-          if (headings[k].level <= h.level) {
-            endLine = headings[k].lineNumber;
+        for (let nextIdx = hIdx + 1; nextIdx < headings.length; nextIdx++) {
+          if (headings[nextIdx].level <= h.level) {
+            endLine = headings[nextIdx].lineNumber;
             break;
           }
         }
-        h.images = images
-          .filter(img => img.lineNumber > h.lineNumber && img.lineNumber < endLine)
-          .map(img => img.url);
+        h.images = images.filter(img => img.lineNumber > h.lineNumber && img.lineNumber < endLine).map(img => img.url);
       }
     }
 
     return headings.map(h => {
-      // Clean name
-      let name = h.name.replace(/^(\d+[\.\-\s)]+\s*|\bStep\s+\d+[\.\-\s:]+\s*)/i, '').trim();
-      const bracketRegex = /\((.*?)\)|\[(.*?)\]/g;
-      let m;
-      const discarded = [];
-      while ((m = bracketRegex.exec(name)) !== null) {
-        const text = (m[1] || m[2] || '').trim();
-        if (text) discarded.push(text);
+      let cleanName = h.name.replace(/^(\d+[\.\-\s)]+\s*|\bStep\s+\d+[\.\-\s:]+\s*)/i, '').trim();
+      const parentheticalRegex = /\((.*?)\)|\[(.*?)\]/g;
+      let pMatch;
+      const extractedNotes = [];
+      while ((pMatch = parentheticalRegex.exec(cleanName)) !== null) {
+        const note = (pMatch[1] || pMatch[2] || '').trim();
+        if (note) extractedNotes.push(note);
       }
-      name = name.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim();
+      cleanName = cleanName.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim();
 
       return {
         id: generateUUID(),
-        name: toSentenceTitleCase(name),
-        discarded: discarded.join(', '),
+        name: toSentenceTitleCase(cleanName),
+        discarded: extractedNotes.join(', '),
         description: h.description,
         localImagePath: h.images.length > 0 ? h.images[0] : null,
         latitude: '',
@@ -784,17 +845,14 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
     });
   };
 
-  // Run automatically on load when resuming a guide
+  // Restore or initialize curation review items when step changes to 1
   useEffect(() => {
-    const initResumedGuide = async () => {
+    (async () => {
       if (resumeMarkdown && places.length === 0) {
-        // First try to load from database
         if (resumeMarkdown.parsed_items_state) {
           try {
-            const storedPlaces = JSON.parse(resumeMarkdown.parsed_items_state);
-            setPlaces(storedPlaces);
-            
-            // Also load context
+            const savedState = JSON.parse(resumeMarkdown.parsed_items_state);
+            setPlaces(savedState);
             if (resumeMarkdown.import_context) {
               const ctx = JSON.parse(resumeMarkdown.import_context);
               setCity(ctx.city || '');
@@ -802,120 +860,86 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
               setCountry(ctx.country || '');
               if (ctx.customPrompt) setCustomPrompt(ctx.customPrompt);
             }
-            return; // Loaded successfully!
+            return;
           } catch (e) {
             console.error('Failed to parse guide state from DB, falling back to markdown parse', e);
           }
         }
-
-        // Fallback: Parse markdown
+        
         if (resumeMarkdown.content) {
           const parsed = extractPlacesFromMarkdown(resumeMarkdown.content, imageDirection);
-          
-          // Fetch existing entries from Dexie to filter out already imported ones
-          const existingLocs = await db.locations.toArray();
-          const existingPlaces = await db.places.toArray();
+          const allLocs = await db.locations.toArray();
+          const allPlaces = await db.places.toArray();
 
-          // Fetch rejected headings list from localStorage
-          let rejectedHeadings = [];
-          const storageKey = `rejected_headings_${resumeMarkdown.id}`;
+          let rejectedList = [];
+          const rejectedKey = `rejected_headings_${resumeMarkdown.id}`;
           try {
-            const stored = localStorage.getItem(storageKey);
-            if (stored) rejectedHeadings = JSON.parse(stored);
-          } catch (e) {
-            console.error(e);
+            const stored = localStorage.getItem(rejectedKey);
+            if (stored) rejectedList = JSON.parse(stored);
+          } catch (err) {
+            console.error(err);
           }
 
-          const filtered = parsed.filter(p => {
-            if (rejectedHeadings.includes(p.originalHeading)) {
-              return false;
-            }
-            const nameLower = p.name.toLowerCase();
-            const isLoc = existingLocs.some(l => l.name.toLowerCase() === nameLower);
-            const isPlace = existingPlaces.some(pl => pl.name.toLowerCase() === nameLower);
-            if (isLoc || isPlace) {
+          const filtered = parsed.filter(item => {
+            if (rejectedList.includes(item.originalHeading)) return false;
+
+            const nameLower = item.name.toLowerCase();
+            const existsLoc = allLocs.some(l => l.name.toLowerCase() === nameLower);
+            const existsPlace = allPlaces.some(p => p.name.toLowerCase() === nameLower);
+
+            if (existsLoc || existsPlace) {
               return false;
             }
             return true;
-          });
+          }).map(p => ({ ...p, status: 'pending' }));
 
-          // Set all initial parsed items to unresolved (status: 'pending')
-          const initialized = filtered.map(item => ({ ...item, status: 'pending' }));
-          setPlaces(initialized);
+          setPlaces(filtered);
         }
       }
-    };
-
-    initResumedGuide();
+    })();
   }, [resumeMarkdown, imageDirection]);
 
-  // Persist curation state debounced
+  // Persist curation review state on changes
   useEffect(() => {
     const targetGuideId = activeGuideId || resumeMarkdown?.id;
-    if (targetGuideId) {
-      const saveState = async () => {
-        try {
-          const serializedPlaces = JSON.stringify(places);
-          const serializedContext = JSON.stringify({ city, state: stateName, country, customPrompt });
-          
-          // If there are pending/unresolved rows (status !== 'completed'), status is 'pending'
-          const hasPending = places.length > 0 && places.some(p => p.status !== 'completed');
-          const computedStatus = hasPending ? 'pending' : 'completed';
+    if (!targetGuideId) return;
 
-          const guideRecord = await db.saved_markdowns.get(targetGuideId);
-          if (guideRecord) {
-            const updated = {
-              ...guideRecord,
-              parsed_items_state: serializedPlaces,
-              import_context: serializedContext,
-              status: computedStatus
-            };
-            await db.saved_markdowns.put(updated);
-            await queueSyncAction('saved_markdowns', 'update', updated);
-          }
-        } catch (e) {
-          console.error('Failed to persist curation state', e);
+    const timer = setTimeout(async () => {
+      try {
+        const serializedState = JSON.stringify(places);
+        const serializedContext = JSON.stringify({ city, state: stateName, country, customPrompt });
+        const calcStatus = (places.length > 0 && places.some(p => p.status !== 'completed')) ? 'pending' : 'completed';
+
+        const existingRecord = await db.saved_markdowns.get(targetGuideId);
+        if (existingRecord) {
+          const updatedRecord = {
+            ...existingRecord,
+            parsed_items_state: serializedState,
+            import_context: serializedContext,
+            status: calcStatus
+          };
+          await db.saved_markdowns.put(updatedRecord);
+          await queueSyncAction('saved_markdowns', 'update', updatedRecord);
         }
-      };
+      } catch (e) {
+        console.error('Failed to persist curation state', e);
+      }
+    }, 800);
 
-      const timeout = setTimeout(saveState, 800);
-      return () => clearTimeout(timeout);
-    }
+    return () => clearTimeout(timer);
   }, [places, city, stateName, country, customPrompt, activeGuideId, resumeMarkdown]);
 
-  const fetchPhotoForPlace = async (rowId, placeName, lat = null, lon = null) => {
-    try {
-      const queryParts = [placeName, city, country].filter(Boolean).join(' ');
-      trackApiCall('Wikipedia');
-      const res = await fetch('/api/import/search-photo', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ query: queryParts, latitude: lat, longitude: lon })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.fileUrl) {
-          setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, localImagePath: data.fileUrl } : item));
-        }
-      }
-    } catch (err) {
-      console.error('Failed to search or download photo for manual row:', err);
-    }
-  };
+  // Single row geocoding
+  const handleGeocodeSingleRow = async (id, nameOverride = null, locationOverride = null) => {
+    const target = places.find(p => p.id === id);
+    if (!target) return;
 
-  // Geocode a single row
-  const handleGeocodeRow = async (rowId) => {
-    const p = places.find(item => item.id === rowId);
-    if (!p) return;
-    
-    setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, geocodeLoading: true } : item));
+    setPlaces(prev => prev.map(p => p.id === id ? { ...p, geocodeLoading: true } : p));
     setOsmError(null);
 
-    const queryParts = [p.name, city, stateName, country].filter(Boolean).join(', ');
-    
+    const targetName = nameOverride || target.name;
+    const queryParts = [targetName, locationOverride || city, stateName, country].filter(Boolean).join(', ');
+
     const apiKey = localStorage.getItem('google_maps_api_key');
     const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
 
@@ -925,41 +949,43 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
         const google = await loadGoogleMaps();
         const { Geocoder } = await google.maps.importLibrary("geocoding");
         const geocoder = new Geocoder();
+
         geocoder.geocode({ address: queryParts }, (results, status) => {
           if (status === 'OK' && results[0]) {
             const r = results[0];
             const lat = r.geometry.location.lat();
             const lon = r.geometry.location.lng();
             
-            let cityPart = '';
-            let countryPart = '';
+            let cityVal = '';
+            let countryVal = '';
             r.address_components.forEach(c => {
-              if (c.types.includes('locality')) cityPart = c.long_name;
-              if (c.types.includes('country')) countryPart = c.long_name;
+              if (c.types.includes('locality')) cityVal = c.long_name;
+              if (c.types.includes('country')) countryVal = c.long_name;
             });
-            const locationString = (cityPart && countryPart) ? `${cityPart}, ${countryPart}` : (cityPart || countryPart || '');
+            const locationStr = (cityVal && countryVal) ? `${cityVal}, ${countryVal}` : (cityVal || countryVal || '');
 
-            setPlaces(prev => prev.map(item => item.id === rowId ? {
-              ...item,
+            setPlaces(prev => prev.map(p => p.id === id ? {
+              ...p,
               latitude: lat || '',
               longitude: lon || '',
               address: r.formatted_address || '',
-              target_location: locationString,
+              target_location: locationStr,
               status: 'completed',
               geocodeSuccess: true,
               geocodeLoading: false
-            } : item));
+            } : p));
 
-            fetchPhotoForPlace(rowId, p.name, lat || null, lon || null);
+            // Fetch cover photo automatically
+            fetchPhotoForPlace(id, targetName, lat || null, lon || null);
           } else {
-            setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, geocodeLoading: false } : item));
-            alert(`No coordinates found for "${p.name}". Try modifying the name or adding location context.`);
+            setPlaces(prev => prev.map(p => p.id === id ? { ...p, geocodeLoading: false } : p));
+            alert(`No coordinates found for "${targetName}". Try modifying the name or adding location context.`);
           }
         });
       } catch (err) {
         console.error('Single row Google Maps geocoding failed', err);
         setOsmError(`Geocoding failed: ${err.message}`);
-        setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, geocodeLoading: false } : item));
+        setPlaces(prev => prev.map(p => p.id === id ? { ...p, geocodeLoading: false } : p));
       }
       return;
     }
@@ -968,204 +994,287 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(queryParts)}`, {
         headers: { 'User-Agent': 'TravelBuff-App/1.0' }
       });
-      
+
       if (res.status === 429) {
-        setOsmError("OpenStreetMap Bandwidth Limit Reached (Error 429). Please try again later.");
-        setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, geocodeLoading: false } : item));
+        setOsmError('OpenStreetMap Bandwidth Limit Reached (Error 429). Please try again later.');
+        setPlaces(prev => prev.map(p => p.id === id ? { ...p, geocodeLoading: false } : p));
         return;
       }
-      
+
       if (!res.ok) {
         throw new Error(`OSM Error ${res.status}: ${res.statusText}`);
       }
 
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        const result = data[0];
-        const addr = result.address || {};
-        const locationString = (addr.city && addr.country) ? `${addr.city}, ${addr.country}` : (addr.city || addr.country || '');
-        
-        setPlaces(prev => prev.map(item => item.id === rowId ? {
-          ...item,
-          latitude: parseFloat(result.lat) || '',
-          longitude: parseFloat(result.lon) || '',
-          address: result.display_name || '',
-          target_location: locationString,
+        const first = data[0];
+        const addr = first.address || {};
+        const locationStr = (addr.city && addr.country) ? `${addr.city}, ${addr.country}` : (addr.city || addr.country || '');
+
+        setPlaces(prev => prev.map(p => p.id === id ? {
+          ...p,
+          latitude: parseFloat(first.lat) || '',
+          longitude: parseFloat(first.lon) || '',
+          address: first.display_name || '',
+          target_location: locationStr,
           status: 'completed',
           geocodeSuccess: true,
           geocodeLoading: false
-        } : item));
+        } : p));
 
-        // Automatically fetch the photo
-        fetchPhotoForPlace(rowId, p.name, parseFloat(result.lat) || null, parseFloat(result.lon) || null);
+        fetchPhotoForPlace(id, targetName, parseFloat(first.lat) || null, parseFloat(first.lon) || null);
       } else {
-        setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, geocodeLoading: false } : item));
-        alert(`No coordinates found for "${p.name}". Try modifying the name or adding location context.`);
+        setPlaces(prev => prev.map(p => p.id === id ? { ...p, geocodeLoading: false } : p));
+        alert(`No coordinates found for "${targetName}". Try modifying the name or adding location context.`);
       }
     } catch (err) {
       console.error('Single row geocoding failed', err);
       setOsmError(`Geocoding failed: ${err.message}`);
-      setPlaces(prev => prev.map(item => item.id === rowId ? { ...item, geocodeLoading: false } : item));
+      setPlaces(prev => prev.map(p => p.id === id ? { ...p, geocodeLoading: false } : p));
     }
   };
 
-  // Geocode all unresolved rows
-  const handleGeocodeAllUnresolved = async () => {
+  // Helper to fetch photo asynchronously
+  const fetchPhotoForPlace = async (placeId, name, lat = null, lon = null) => {
+    try {
+      const query = [name, city, country].filter(Boolean).join(' ');
+      trackApiCall('Wikipedia');
+      const photoRes = await fetch('/api/import/search-photo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ query, latitude: lat, longitude: lon })
+      });
+      if (photoRes.ok) {
+        const photoData = await photoRes.json();
+        if (photoData.fileUrl) {
+          setPlaces(prev => prev.map(p => p.id === placeId ? { ...p, localImagePath: photoData.fileUrl } : p));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to search or download photo for manual row:', err);
+    }
+  };
+
+  // Batch geocoding for all unresolved rows
+  const handleBatchGeocode = async () => {
     const unresolved = places.filter(p => p.status !== 'completed');
     if (unresolved.length === 0) {
       alert("No unresolved places to fetch.");
       return;
     }
-    
+
     setOsmError(null);
     const apiKey = localStorage.getItem('google_maps_api_key');
     const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
 
-    for (const p of unresolved) {
-      setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: true } : item));
-      const queryParts = [p.name, city, stateName, country].filter(Boolean).join(', ');
-      
+    for (const item of unresolved) {
+      setPlaces(prev => prev.map(p => p.id === item.id ? { ...p, geocodeLoading: true } : p));
+      const queryParts = [item.name, city, stateName, country].filter(Boolean).join(', ');
+
       if (apiKey && googleMapsEnabled) {
         try {
           trackApiCall('Google Maps Geocoding');
           const google = await loadGoogleMaps();
           const { Geocoder } = await google.maps.importLibrary("geocoding");
           const geocoder = new Geocoder();
+
           await new Promise((resolve) => {
             geocoder.geocode({ address: queryParts }, (results, status) => {
               if (status === 'OK' && results[0]) {
                 const r = results[0];
                 const lat = r.geometry.location.lat();
                 const lon = r.geometry.location.lng();
-                
-                let cityPart = '';
-                let countryPart = '';
+                let cityVal = '';
+                let countryVal = '';
                 r.address_components.forEach(c => {
-                  if (c.types.includes('locality')) cityPart = c.long_name;
-                  if (c.types.includes('country')) countryPart = c.long_name;
+                  if (c.types.includes('locality')) cityVal = c.long_name;
+                  if (c.types.includes('country')) countryVal = c.long_name;
                 });
-                const locationString = (cityPart && countryPart) ? `${cityPart}, ${countryPart}` : (cityPart || countryPart || '');
+                const locationStr = (cityVal && countryVal) ? `${cityVal}, ${countryVal}` : (cityVal || countryVal || '');
 
-                setPlaces(prev => prev.map(item => item.id === p.id ? {
-                  ...item,
+                setPlaces(prev => prev.map(p => p.id === item.id ? {
+                  ...p,
                   latitude: lat || '',
                   longitude: lon || '',
                   address: r.formatted_address || '',
-                  target_location: locationString,
+                  target_location: locationStr,
                   status: 'completed',
                   geocodeSuccess: true,
                   geocodeLoading: false
-                } : item));
+                } : p));
 
-                fetchPhotoForPlace(p.id, p.name, lat || null, lon || null);
+                fetchPhotoForPlace(item.id, item.name, lat || null, lon || null);
               } else {
-                setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+                setPlaces(prev => prev.map(p => p.id === item.id ? { ...p, geocodeLoading: false } : p));
               }
               resolve();
             });
           });
         } catch (err) {
           console.error('Batch Google Maps geocoding failed', err);
-          setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+          setPlaces(prev => prev.map(p => p.id === item.id ? { ...p, geocodeLoading: false } : p));
         }
       } else {
         try {
           const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(queryParts)}`, {
             headers: { 'User-Agent': 'TravelBuff-App/1.0' }
           });
-          
+
           if (res.status === 429) {
-            setOsmError("OpenStreetMap Bandwidth Limit Reached (Error 429). Batch geocoding paused.");
-            setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+            setOsmError('OpenStreetMap Bandwidth Limit Reached (Error 429). Batch geocoding paused.');
+            setPlaces(prev => prev.map(p => p.id === item.id ? { ...p, geocodeLoading: false } : p));
             break;
           }
-          
+
           const data = await res.json();
           if (res.ok && Array.isArray(data) && data.length > 0) {
-            const result = data[0];
-            const addr = result.address || {};
-            const locationString = (addr.city && addr.country) ? `${addr.city}, ${addr.country}` : (addr.city || addr.country || '');
-            
-            setPlaces(prev => prev.map(item => item.id === p.id ? {
-              ...item,
-              latitude: parseFloat(result.lat) || '',
-              longitude: parseFloat(result.lon) || '',
-              address: result.display_name || '',
-              target_location: locationString,
+            const first = data[0];
+            const addr = first.address || {};
+            const locationStr = (addr.city && addr.country) ? `${addr.city}, ${addr.country}` : (addr.city || addr.country || '');
+
+            setPlaces(prev => prev.map(p => p.id === item.id ? {
+              ...p,
+              latitude: parseFloat(first.lat) || '',
+              longitude: parseFloat(first.lon) || '',
+              address: first.display_name || '',
+              target_location: locationStr,
               status: 'completed',
               geocodeSuccess: true,
               geocodeLoading: false
-            } : item));
+            } : p));
 
-            fetchPhotoForPlace(p.id, p.name, parseFloat(result.lat) || null, parseFloat(result.lon) || null);
+            fetchPhotoForPlace(item.id, item.name, parseFloat(first.lat) || null, parseFloat(first.lon) || null);
           } else {
-            setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+            setPlaces(prev => prev.map(p => p.id === item.id ? { ...p, geocodeLoading: false } : p));
           }
         } catch (err) {
           console.error('Batch item geocode failed', err);
-          setPlaces(prev => prev.map(item => item.id === p.id ? { ...item, geocodeLoading: false } : item));
+          setPlaces(prev => prev.map(p => p.id === item.id ? { ...p, geocodeLoading: false } : p));
         }
       }
-      
+
       await new Promise(r => setTimeout(r, 1000));
     }
   };
 
-  // AI extraction for unresolved rows
+  // AI extraction for unresolved rows with 2-Phase resolution (Locations first, then Places tagged to locations, and De-duplication)
   const handleExtractAI = async (singleRowId = null) => {
-    let targetItems = [];
+    let rawItems = [];
     if (singleRowId) {
       const item = places.find(p => p.id === singleRowId);
-      if (item) targetItems = [item];
+      if (item) rawItems = [item];
     } else {
-      targetItems = places.filter(p => p.status !== 'completed');
+      rawItems = places.filter(p => p.status !== 'completed');
     }
 
-    if (targetItems.length === 0) {
+    if (rawItems.length === 0) {
       alert("No unresolved places to send.");
       return;
     }
 
-    setLoading(true);
-    try {
-      const res = await fetch('/api/import/extract-ai', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          places: targetItems,
-          city,
-          state: stateName,
-          country,
-          prompt: customPrompt,
-          homeCoords
-        })
-      });
+    // De-duplication: Filter out items with duplicate names (case-insensitive)
+    const seenNames = new Set();
+    const targetItems = [];
+    for (const item of rawItems) {
+      const nameKey = (item.name || '').trim().toLowerCase();
+      if (nameKey && !seenNames.has(nameKey)) {
+        seenNames.add(nameKey);
+        targetItems.push(item);
+      }
+    }
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'AI Extraction failed');
+    if (singleRowId) {
+      setProcessingId(singleRowId);
+    }
+    setLoading(true);
+    trackApiCall('AI Assistant');
+    try {
+      // Helper function to call backend AI endpoint
+      const callAiEndpoint = async (itemsPayload, customInstructionPrompt) => {
+        const res = await fetch('/api/import/extract-ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            places: itemsPayload,
+            markdown,
+            city,
+            state: stateName,
+            country,
+            prompt: customInstructionPrompt || customPrompt,
+            homeCoords
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'AI Extraction failed');
+        }
+        return Array.isArray(data) ? data : (data.places || []);
+      };
+
+      // Split items into location items (cities/regions) and place of visit items
+      const locationCandidates = targetItems.filter(p => p.type === 'location');
+      const placeCandidates = targetItems.filter(p => p.type !== 'location');
+
+      let resolvedLocationsMap = new Map();
+
+      // Phase 1: Resolve Top-Level Locations first if present
+      if (locationCandidates.length > 0) {
+        const locationResults = await callAiEndpoint(
+          locationCandidates,
+          `${customPrompt}\nDirective: Focus strictly on resolving top-level locations (cities/regions). Set type to "location".`
+        );
+
+        if (locationResults.length > 0) {
+          setPlaces(prev => {
+            return prev.map(item => {
+              const match = locationResults.find(m => m.id === item.id);
+              if (match) {
+                resolvedLocationsMap.set(match.name.toLowerCase(), match);
+                return {
+                  ...item,
+                  name: match.name || item.name,
+                  address: match.address || item.address || '',
+                  latitude: (match.latitude != null && match.latitude !== '') ? match.latitude : (item.latitude || ''),
+                  longitude: (match.longitude != null && match.longitude !== '') ? match.longitude : (item.longitude || ''),
+                  category: match.category || item.category || 'Location',
+                  type: 'location',
+                  description: match.description || item.description || '',
+                  status: 'completed',
+                  geocodeSuccess: true
+                };
+              }
+              return item;
+            });
+          });
+        }
       }
 
-      const resultsArray = Array.isArray(data) ? data : (data.places || []);
+      // Phase 2: Resolve Places of Visit and tag them to available/resolved locations
+      const itemsToResolveForPlaces = placeCandidates.length > 0 ? placeCandidates : (locationCandidates.length === 0 ? targetItems : []);
 
-      if (resultsArray.length > 0) {
-        setPlaces(prev => {
-          return prev
-            .filter(item => {
-              const match = resultsArray.find(m => m.id === item.id);
-              // If AI explicitly marked item as non-visitable text (header/intro), filter it out
-              if (match && match.isRelevant === false) {
-                return false;
-              }
-              return true;
-            })
-            .map(item => {
-              const match = resultsArray.find(m => m.id === item.id);
+      if (itemsToResolveForPlaces.length > 0) {
+        const availableLocations = locationsList.map(l => ({ id: l.id, name: l.name }));
+        const knownLocationsContext = availableLocations.length > 0 
+          ? `Known parent locations available to link places: ${JSON.stringify(availableLocations)}.` 
+          : '';
+
+        const placeResults = await callAiEndpoint(
+          itemsToResolveForPlaces,
+          `${customPrompt}\nDirective: Only resolve specific places of visit or specific locations. Do not resolve non-location advice/text or duplicate items. ${knownLocationsContext}`
+        );
+
+        if (placeResults.length > 0) {
+          setPlaces(prev => {
+            return prev.map(item => {
+              const match = placeResults.find(m => m.id === item.id);
               if (match) {
-                // Trigger photo fetching asynchronously!
                 fetchPhotoForPlace(item.id, match.name || item.name, match.latitude || null, match.longitude || null);
 
                 const normalizeCategory = (cat) => {
@@ -1181,30 +1290,42 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                 };
 
                 const matchCategory = match.category ? normalizeCategory(match.category) : null;
+                const matchType = match.type || 'place';
+
+                let parentLocId = item.parentLocationId || null;
+                if (match.target_location || match.location_name) {
+                  const targetLocName = (match.target_location || match.location_name || '').toLowerCase();
+                  const matchedLoc = availableLocations.find(l => l.name.toLowerCase().includes(targetLocName) || targetLocName.includes(l.name.toLowerCase()));
+                  if (matchedLoc) parentLocId = matchedLoc.id;
+                }
 
                 return {
                   ...item,
                   name: match.name || item.name,
                   address: match.address || item.address || '',
-                  latitude: match.latitude || item.latitude || '',
-                  longitude: match.longitude || item.longitude || '',
+                  latitude: (match.latitude != null && match.latitude !== '') ? match.latitude : (item.latitude || ''),
+                  longitude: (match.longitude != null && match.longitude !== '') ? match.longitude : (item.longitude || ''),
                   category: matchCategory || item.category || 'Attraction',
+                  type: matchType,
+                  parentLocationId: parentLocId || item.parentLocationId || '',
                   selectedTags: (item.selectedTags && item.selectedTags.length > 0) ? item.selectedTags : (match.selectedTags || []),
                   description: match.description || item.description || '',
-                  day: match.day || item.day || null,
+                  day: (match.day != null && match.day !== '') ? parseInt(match.day, 10) : (item.day || null),
                   status: 'completed',
                   geocodeSuccess: true
                 };
               }
               return item;
             });
-        });
+          });
+        }
       }
     } catch (err) {
       console.error('AI Extraction failed', err);
       alert(`AI Extraction Error: ${err.message}`);
     } finally {
       setLoading(false);
+      setProcessingId(null);
     }
   };
 
@@ -2176,18 +2297,32 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                       <button 
                         className="btn" 
                         style={{ width: '36px', height: '36px', padding: 0, backgroundColor: 'var(--bg-app)', color: '#60a5fa', border: '1px solid rgba(96, 165, 250, 0.4)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                        onClick={handleGeocodeAllUnresolved}
+                        onClick={handleBatchGeocode}
                         title="Query OpenStreetMap for all unresolved rows"
                       >
                         <MapPin size={16} />
                       </button>
                       <button 
                         className="btn" 
-                        style={{ width: '36px', height: '36px', padding: 0, backgroundColor: 'var(--bg-app)', color: '#c084fc', border: '1px solid rgba(192, 132, 252, 0.4)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                        disabled={loading}
+                        style={{ 
+                          width: '36px', 
+                          height: '36px', 
+                          padding: 0, 
+                          backgroundColor: 'var(--bg-app)', 
+                          color: '#c084fc', 
+                          border: '1px solid rgba(192, 132, 252, 0.4)', 
+                          borderRadius: '6px', 
+                          display: 'inline-flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          opacity: loading ? 0.7 : 1,
+                          cursor: loading ? 'not-allowed' : 'pointer'
+                        }}
                         onClick={() => handleExtractAI(null)}
-                        title="Analyze unresolved rows using AI"
+                        title="Analyse by AI"
                       >
-                        <Sparkles size={16} />
+                        {loading && !processingId ? <Loader size={16} className="sync-spinner" /> : <Sparkles size={16} />}
                       </button>
                       <button 
                         className="btn btn-secondary" 
@@ -2234,7 +2369,7 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                       <thead>
                         <tr style={{ borderBottom: '1px solid var(--border-glass)', backgroundColor: 'var(--bg-surface-elevated)' }}>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>Image</th>
-                          <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', minWidth: '150px' }}>Place</th>
+                          <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', minWidth: '260px' }}>Place</th>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', width: '70px', textAlign: 'center' }}>Day</th>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', width: '130px' }}>Type</th>
                           <th style={{ padding: '12px', color: 'var(--text-secondary)', fontWeight: '600', minWidth: '150px' }}>Tags/Category</th>
@@ -2264,13 +2399,10 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                               </td>
 
                               {/* Place Name column */}
-                              <td style={{ padding: '10px' }}>
-                                <input 
-                                  type="text" 
-                                  className="form-control" 
-                                  style={{ padding: '6px 10px', fontSize: '0.78rem', backgroundColor: 'var(--bg-app)', width: '100%', border: '1px solid var(--border-glass)' }}
-                                  value={place.name} 
-                                  onChange={(e) => setPlaces(prev => prev.map(p => p.id === place.id ? { ...p, name: e.target.value } : p))}
+                              <td style={{ padding: '8px 10px', minWidth: '260px' }}>
+                                <InlineEditablePlaceName 
+                                  name={place.name} 
+                                  onChange={(newName) => setPlaces(prev => prev.map(p => p.id === place.id ? { ...p, name: newName } : p))}
                                 />
                               </td>
 
@@ -2428,28 +2560,30 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                                       display: 'flex',
                                       alignItems: 'center'
                                     }}
-                                    onClick={() => handleGeocodeRow(place.id)}
+                                    onClick={() => handleGeocodeSingleRow(place.id)}
                                     disabled={place.geocodeLoading}
                                     title="Search Location on OpenStreetMap"
                                   >
                                     {place.geocodeLoading ? <Loader size={12} className="sync-spinner" /> : <MapPin size={12} />}
                                   </button>
-                                  <button 
-                                    style={{
-                                      padding: '6px',
-                                      borderRadius: '4px',
-                                      backgroundColor: 'var(--bg-app)',
-                                      border: '1px solid rgba(192, 132, 252, 0.4)',
-                                      color: '#c084fc',
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center'
-                                    }}
-                                    onClick={() => handleExtractAI(place.id)}
-                                    title="Analyze details with AI"
-                                  >
-                                    <Sparkles size={12} />
-                                  </button>
+                                   <button 
+                                     disabled={loading && processingId === place.id}
+                                     style={{
+                                       padding: '6px',
+                                       borderRadius: '4px',
+                                       backgroundColor: 'var(--bg-app)',
+                                       border: '1px solid rgba(192, 132, 252, 0.4)',
+                                       color: '#c084fc',
+                                       cursor: (loading && processingId === place.id) ? 'not-allowed' : 'pointer',
+                                       display: 'flex',
+                                       alignItems: 'center',
+                                       opacity: (loading && processingId === place.id) ? 0.7 : 1
+                                     }}
+                                     onClick={() => handleExtractAI(place.id)}
+                                     title="Analyse by AI"
+                                   >
+                                     {(loading && processingId === place.id) ? <Loader size={12} className="sync-spinner" /> : <Sparkles size={12} />}
+                                   </button>
                                   <button 
                                     style={{
                                       padding: '6px',

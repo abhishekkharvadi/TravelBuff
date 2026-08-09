@@ -2,6 +2,15 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v1.3.0] - 2026-08-09
+
+### 🚀 Features & AI Import Improvements
+- **AI Location-First Extraction & Tagging**: Updated AI import extraction prompt in `AiImportModal.jsx` to resolve top-level locations first and automatically link places of visit to their corresponding parent locations.
+- **Duplicate Prevention & Non-Location Filtering**: Filtered duplicate entries and non-specific location text from AI geocoding and resolution.
+- **Version Bump**: Updated application version to `v1.3.0` across `package.json`, `src/version.js`, `src/router.js`, and `CHANGELOG.md`.
+
+---
+
 ## [v1.2.9] - 2026-08-09
 
 ### 🚀 Features & Documentation Updates

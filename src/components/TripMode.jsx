@@ -24,6 +24,24 @@ const STANDARD_CURRENCIES = [
   'USD', 'EUR', 'INR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'SGD', 'AED', 'THB', 'CNY', 'MXN', 'BRL', 'NZD'
 ];
 
+const safeParseNotes = (val) => {
+  if (!val) return {};
+  if (typeof val === 'object' && val !== null) return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch (e) {
+        // Fallback to description
+      }
+    }
+    return { description: val };
+  }
+  return {};
+};
+
 export default function TripMode({ token }) {
   // Consolidate live queries to eliminate PWA rendering flicker on sync updates
   const syncData = useLiveQuery(async () => {
@@ -209,12 +227,8 @@ export default function TripMode({ token }) {
       
       // 1. First priority: Check trips table for explicit active trip marked synced in DB
       const dbActiveTrip = trips.find(t => {
-        try {
-          const notesObj = typeof t.notes === 'string' ? JSON.parse(t.notes) : t.notes || {};
-          return notesObj.isActive === true;
-        } catch (e) {
-          return false;
-        }
+        const notesObj = safeParseNotes(t.notes);
+        return notesObj.isActive === true;
       });
       
       if (dbActiveTrip) {
@@ -305,10 +319,7 @@ export default function TripMode({ token }) {
 
   const handlePinActiveTrip = async (tripId) => {
     for (const t of trips) {
-      let notesObj = {};
-      try {
-        notesObj = typeof t.notes === 'string' ? JSON.parse(t.notes) : t.notes || {};
-      } catch (e) {}
+      const notesObj = safeParseNotes(t.notes);
 
       const shouldBeActive = t.id.toString() === tripId.toString();
       if (notesObj.isActive !== shouldBeActive) {
@@ -768,12 +779,8 @@ export default function TripMode({ token }) {
   const activeDayObj = itineraryDays.find(d => d.date === displayDayStr);
 
   const isCurrentlyActive = activeTrip && (() => {
-    try {
-      const notesObj = typeof activeTrip.notes === 'string' ? JSON.parse(activeTrip.notes) : activeTrip.notes || {};
-      return notesObj.isActive === true;
-    } catch(e) {
-      return false;
-    }
+    const notesObj = safeParseNotes(activeTrip.notes);
+    return notesObj.isActive === true;
   })();
 
   return (
@@ -872,12 +879,10 @@ export default function TripMode({ token }) {
               const tripExps = expenses.filter(e => e.trip_id === activeTrip.id);
               const tripRates = rates.filter(r => r.trip_id === activeTrip.id);
               let baseCur = userBaseCurrency || 'USD';
-              try {
-                if (activeTrip.notes) {
-                  const parsed = JSON.parse(activeTrip.notes);
-                  if (parsed.baseCurrency) baseCur = parsed.baseCurrency;
-                }
-              } catch (_) {}
+              if (activeTrip.notes) {
+                const parsed = safeParseNotes(activeTrip.notes);
+                if (parsed.baseCurrency) baseCur = parsed.baseCurrency;
+              }
 
               let totalSpent = 0;
               tripExps.forEach(e => {
@@ -892,12 +897,10 @@ export default function TripMode({ token }) {
               });
 
               let plannedBudget = 0;
-              try {
-                if (activeTrip.notes) {
-                  const parsed = JSON.parse(activeTrip.notes);
-                  if (parsed.plannedBudget) plannedBudget = parseFloat(parsed.plannedBudget) || 0;
-                }
-              } catch (_) {}
+              if (activeTrip.notes) {
+                const parsed = safeParseNotes(activeTrip.notes);
+                if (parsed.plannedBudget) plannedBudget = parseFloat(parsed.plannedBudget) || 0;
+              }
 
               const pct = plannedBudget > 0 ? (totalSpent / plannedBudget) * 100 : 0;
 
