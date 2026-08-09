@@ -2,6 +2,32 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v1.2.9] - 2026-08-09
+
+### 🚀 Features & Documentation Updates
+- **Docker & Docker Compose Deployment Guide**: Added official Docker container deployment instructions to `documentation.md` (Section 2: Setting Up TravelBuff):
+  - Documented official Docker image repository `abhishekkharvadi/travelbuff:latest`.
+  - Added single-line `docker run` CLI setup with volume persistence for `/app/data` and `/app/data/uploads`.
+  - Added production-ready `docker-compose.yml` sample template and Docker Compose lifecycle commands (`up`, `logs`, `down`).
+- **Version Bump**: Updated application version to `v1.2.9` across `package.json`, `src/version.js`, `src/router.js`, `documentation.md`, and `CHANGELOG.md`.
+
+---
+
+## [v1.2.8] - 2026-08-09
+
+### 🚀 Features & Documentation Overhaul
+- **Comprehensive Documentation Rewrite**: Completely updated `documentation.md` into 12 structured, non-technical sections to accurately reflect current source code implementations across all app modules:
+  - Added new **Collections** section covering Visited, Bucket List, and custom thematic grouping rules (AND/OR logic, keywords, location filters) with 5 concrete real-world examples (Wonders of the World, Restaurants in Delhi, Day Trips from Chennai, Paris Cultural Landmarks, Tokyo Coffee Trail).
+  - Relocated and expanded **Importing Travel Guides & Using AI** section with options for URL scraping, document file uploads, saved guide management, 3 workspace tabs, AI button guides, and 1-click itinerary creation.
+  - Rewrote **Creating Itinerary Plans & Travelers** covering the 2-step setup wizard (Manual vs AI Mode), 3-column workspace, sub-tabs (`Itinerary`, `Budget`, `Notes`), home origin distance calculations, and hotel/stay lodging anchors.
+  - Expanded **Expense Tracking & Home Addresses** detailing planned vs actual spending, multi-currency conversions, custom exchange rates, category breakdowns, and receipt attachments.
+  - Added new **Trip Mode (On-the-Road Companion)** section detailing today's schedule focus, 100% offline local sync, quick expense logging, nearby food finder with 1-click bookmarking, instant booking vouchers, OwnTracks GPS travel logs, and quick notes.
+  - Expanded **Settings** section covering Immich integration, AI provider setup (OpenAI, Claude, Gemini, Ollama, Local AI), Google Maps key options, OwnTracks webhook, chunked backup/restore, admin user management, saved home addresses, and companion profiles.
+  - Added new **Helpful Tips & Shortcuts** section covering automatic coordinate smart parsing (latitude/longitude paste auto-split trick), keyboard shortcuts, native browser history/bookmarking, and offline pre-loading.
+- **Version Bump**: Updated application version to `v1.2.8` across `package.json`, `src/version.js`, `src/router.js`, `documentation.md`, and `CHANGELOG.md`.
+
+---
+
 ## [v1.2.7] - 2026-08-08
 
 ### 🚀 Features & Bug Fixes

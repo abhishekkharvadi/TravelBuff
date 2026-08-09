@@ -134,11 +134,55 @@ Use this option if you want TravelBuff to keep running in the background even wh
   nohup npm start > app.log 2>&1 &
   ```
 
-* **Windows Native Background Option**:
-  Run the app in the background using PowerShell:
-  ```powershell
-  Start-Process -FilePath "npm" -ArgumentList "start" -WindowStyle Hidden
-  ```
+#### Option C: Deploying via Docker & Docker Compose (Recommended for Self-Hosting)
+
+If you prefer using Docker or self-hosting on home servers (Unraid, Synology, Portainer, or VPS), you can deploy TravelBuff using the official Docker image `abhishekkharvadi/travelbuff:latest`.
+
+##### 1. Quick Start via Docker CLI:
+Run this command in your terminal to start TravelBuff with persistent storage:
+
+```bash
+docker run -d \
+  --name travelbuff \
+  -p 5000:5000 \
+  -e PORT=5000 \
+  -e JWT_SECRET=your-secure-jwt-secret-here \
+  -v travelbuff_data:/app/data \
+  -v travelbuff_uploads:/app/data/uploads \
+  --restart unless-stopped \
+  abhishekkharvadi/travelbuff:latest
+```
+
+##### 2. Sample `docker-compose.yml` Configuration File:
+Create a file named `docker-compose.yml` in any folder on your server:
+
+```yaml
+version: '3.8'
+
+services:
+  travelbuff:
+    image: abhishekkharvadi/travelbuff:latest
+    container_name: travelbuff
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - JWT_SECRET=change-this-to-a-secure-secret-key
+      - UPLOADS_DIR=/app/data/uploads
+    volumes:
+      - travelbuff_data:/app/data
+      - travelbuff_uploads:/app/data/uploads
+
+volumes:
+  travelbuff_data:
+  travelbuff_uploads:
+```
+
+##### 3. Docker Compose Management Commands:
+* **Start Container**: `docker compose up -d`
+* **View Container Logs**: `docker compose logs -f`
+* **Stop Container**: `docker compose down`
 
 ---
 
@@ -658,7 +702,26 @@ TravelBuff is built for great mobile experiences:
 
 ## 12. Release Notes & Version History
 
-### Version 1.2.7 (Current Release)
+### Version 1.2.9 (Current Release)
+* **Docker & Docker Compose Deployment Guide**: Added comprehensive container setup instructions under Section 2 ("Setting Up TravelBuff").
+* **Official Docker Repository**: Documented official image `abhishekkharvadi/travelbuff:latest`.
+* **Production-Ready Compose Template**: Provided sample `docker-compose.yml` configuration file with persistent volume mounts (`/app/data` and `/app/data/uploads`) and lifecycle commands (`up`, `logs`, `down`).
+
+---
+
+### Version 1.2.8
+* **Comprehensive Documentation Overhaul**: Reorganized and expanded guide documentation into 12 comprehensive, non-technical sections reflecting exact code behavior.
+* **Collections Guide & Real-World Examples**: Detailed manual vs. auto-grouping rules with 5 concrete real-world usage examples ("Wonders of the World", "Excellent Restaurants in Delhi", "Places for a Day Trip from Chennai", "Paris Cultural Landmarks", "Tokyo Coffee Trail").
+* **Travel Guide & AI Importer**: Documented URL web scraping, file uploads, saved guides workspace, AI button toolbars, and 1-click itinerary generation.
+* **Trip Planner Workspace**: Detailed 2-step setup wizard (Manual vs AI Assisted), 3-column workspace, sub-tabs (`Itinerary`, `Budget`, `Notes`), home distance estimates, and hotel stay anchors.
+* **Expense Engine & Multi-Currency**: Documented planned vs. actual budget tracking, multi-currency conversions, custom exchange rates, category breakdown charts, and receipt attachments.
+* **Trip Mode & 100% Offline Sync**: Documented mobile-optimized single-screen companion view, 100% offline local sync, quick expense logging, 2km nearby food finder with 1-click itinerary bookmarking, instant booking vouchers, and OwnTracks GPS log imports.
+* **Settings & Administration**: Fully documented Immich integration, AI provider options, Google Maps API setup, OwnTracks webhook, chunked backup/restore, admin user management, and saved home addresses.
+* **Helpful Tips & Shortcuts**: Highlighted automatic coordinate smart parsing (latitude/longitude paste auto-split trick), keyboard shortcuts, browser navigation/bookmarking, and offline pre-loading.
+
+---
+
+### Version 1.2.7
 * **Bulk Location Controls**: Streamlined bulk location selection with a dedicated dropdown and quick Apply button.
 * **Smart Category Recognition**: Improved AI category extraction and normalized standard category labels (`Dining`, `Attraction`, `Lodging`, `Transit`, `Shopping`).
 * **Simplified Documentation**: Updated guide documentation to be easy to read and non-technical for all users.
