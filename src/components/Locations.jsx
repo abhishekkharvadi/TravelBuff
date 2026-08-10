@@ -433,6 +433,38 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
     }
   }, [selectedLocation, token]);
 
+  // Auto-geocode places under selected location missing coordinates
+  useEffect(() => {
+    if (!selectedLocation) return;
+    const unlocatedPlaces = places.filter(p => 
+      String(p.location_id) === String(selectedLocation.id) &&
+      (p.latitude === null || p.latitude === undefined || isNaN(parseFloat(p.latitude))) &&
+      p.geocode_status !== 'failed'
+    );
+
+    if (unlocatedPlaces.length === 0) return;
+
+    unlocatedPlaces.forEach(place => {
+      const query = `${place.name} ${selectedLocation.name}`.trim();
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(query)}`)
+        .then(res => res.json())
+        .then(async (data) => {
+          if (data && data.length > 0 && data[0].lat && data[0].lon) {
+            const lat = parseFloat(data[0].lat);
+            const lon = parseFloat(data[0].lon);
+            const updatedPlace = { ...place, latitude: lat, longitude: lon, geocode_status: 'completed' };
+            await db.places.update(place.id, { latitude: lat, longitude: lon, geocode_status: 'completed' });
+            await queueSyncAction('places', 'update', updatedPlace);
+          } else {
+            await db.places.update(place.id, { geocode_status: 'failed' });
+          }
+        })
+        .catch(async () => {
+          await db.places.update(place.id, { geocode_status: 'failed' });
+        });
+    });
+  }, [selectedLocation, places]);
+
   // Drag & Drop handlers for folder grouping
   const handleDragStart = (e, id) => {
     e.dataTransfer.setData('text/plain', id);
@@ -1372,7 +1404,10 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
     return allPeople.filter(p => personIds.has(p.id));
   };
 
-  const activeLocationPlaces = places.filter(p => selectedLocation && p.location_id === selectedLocation.id);
+  const activeLocationPlaces = places.filter(p => {
+    if (!selectedLocation || !p.location_id) return false;
+    return String(p.location_id).trim().toLowerCase() === String(selectedLocation.id).trim().toLowerCase();
+  });
 
   if (selectedLocation) {
     return (
@@ -2103,7 +2138,12 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                       <div style={{ flexGrow: 1, paddingLeft: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                         <div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <h4 style={{ fontSize: '1rem' }}>{place.name}</h4>
+                            <h4 style={{ fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              {place.name}
+                              {(!place.latitude || isNaN(parseFloat(place.latitude))) && (
+                                <span title="Missing location coordinates" style={{ fontSize: '0.85rem', cursor: 'help' }}>⚠️</span>
+                              )}
+                            </h4>
                             <button 
                               onClick={() => handleTogglePlaceVisited(place)}
                               style={{
@@ -2128,8 +2168,8 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-                          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                            {place.latitude ? `📍 Geocoded` : `⚠️ No Coordinates`}
+                          <span style={{ fontSize: '0.8rem', color: (!place.latitude || isNaN(parseFloat(place.latitude))) ? 'var(--error)' : 'var(--text-secondary)' }}>
+                            {(!place.latitude || isNaN(parseFloat(place.latitude))) ? '⚠️ Missing location coordinates' : '📍 Geocoded'}
                           </span>
                           <button 
                             style={{ background: 'none', border: 'none', color: 'var(--accent-primary-hover)', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
@@ -2151,7 +2191,7 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
           <div style={{ position: 'sticky', top: '100px', height: 'calc(100vh - 160px)', display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto', paddingRight: '4px', zIndex: 10 }}>
             {/* Map View */}
             <div style={{ height: '350px', minHeight: '300px', borderRadius: 'var(--radius-lg)', overflow: 'hidden', flexShrink: 0 }}>
-              {selectedLocation.latitude && selectedLocation.longitude && (
+              {!isNaN(parseFloat(selectedLocation.latitude)) && !isNaN(parseFloat(selectedLocation.longitude)) && (
                 <MapView 
                   points={[
                     selectedLocation, 

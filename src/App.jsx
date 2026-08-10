@@ -325,7 +325,11 @@ export default function App() {
       .then(data => {
         if (data) {
           if (data.isAdmin !== undefined) {
-            setUser(prev => prev ? { ...prev, isAdmin: data.isAdmin } : prev);
+            setUser(prev => {
+              if (!prev) return prev;
+              if (prev.isAdmin === data.isAdmin) return prev;
+              return { ...prev, isAdmin: data.isAdmin };
+            });
             localStorage.setItem('tb_isAdmin', data.isAdmin ? '1' : '0');
           }
           if (data.config && data.config.ai_settings) {
@@ -347,7 +351,7 @@ export default function App() {
     if (user?.token) {
       fetchUserConfig(user.token);
     }
-  }, [user]);
+  }, [user?.token]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -357,7 +361,7 @@ export default function App() {
     };
     window.addEventListener('visibilitychange', handleVisibility);
     return () => window.removeEventListener('visibilitychange', handleVisibility);
-  }, [user, activeMode]);
+  }, [user?.token]);
 
   const handleToggleMode = async (mode) => {
     setActiveMode(mode);

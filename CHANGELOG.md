@@ -2,6 +2,18 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v2] - 2026-08-10
+
+### 🚀 Architecture & Major Release (v2)
+- **Separate Repositories Setup**: Split TravelBuff into core application repository (`travelbuff`) and container distribution repository (`travelbuff-docker`) linked via Git Submodule.
+- **Automated Security Audit & Pre-Sync Gate**: Added `npm audit --audit-level=high` prebuild checks and integrated local security gate in `sync-repos.sh` to block unvetted code from reaching GitHub.
+- **3-Port Conflict-Free Dev Setup**: Dedicated Vite Dev Frontend (Port 3000), Express Dev Backend API (Port 3001), and Docker Container (Port 5000).
+- **Theme-Aware SVG Teardrop Map Pins**: Upgraded Leaflet map markers to 36x42 SVG teardrop pins with drop shadows, crisp white outlines, numeric coordinate parsing, and theme-adaptive colors (Light vs Dark mode).
+- **Automatic Background Geocoding & Error Warning Badge**: Background auto-geocoding for unlocated places with `⚠️ Missing location coordinates` warning indicator on place cards.
+- **Version Bump**: Updated application version to `v2` across `package.json`, `src/version.js`, `src/router.js`, and `CHANGELOG.md`.
+
+---
+
 ## [v1.3.0] - 2026-08-09
 
 ### 🚀 Features & AI Import Improvements

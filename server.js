@@ -16,7 +16,7 @@ import { processMarkdownImport, geocode } from './importService.js';
 import axios from 'axios';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'travelbuff-super-secret-key-12345';
 
 const app = express();

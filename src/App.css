@@ -42,6 +42,13 @@
   --radius-lg: 20px;
 }
 
+/* Leaflet DivIcon Custom Reset */
+.leaflet-div-icon, .custom-div-icon, .leaflet-marker-icon.custom-div-icon {
+  background: transparent !important;
+  border: none !important;
+  overflow: visible !important;
+}
+
 /* Reset and Global Styles */
 * {
   box-sizing: border-box;
@@ -652,10 +659,19 @@ dialog::backdrop {
 /* Leaflet Custom Styles to fit dark mode */
 .leaflet-container {
   background: #121217 !important;
+  width: 100%;
+  height: 100%;
 }
 
-.leaflet-tile {
-  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+.leaflet-marker-pane {
+  z-index: 650 !important;
+}
+
+.leaflet-marker-icon, .custom-div-icon {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
 }
 
 .leaflet-popup-content-wrapper, .leaflet-popup-tip {

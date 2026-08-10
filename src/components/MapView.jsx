@@ -94,6 +94,13 @@ export default function MapView({ points = [], drawLine = false }) {
       return !isNaN(lat) && !isNaN(lng);
     });
 
+    console.log('[MapView Diagnostic]', {
+      totalPointsReceived: points.length,
+      rawPoints: points,
+      validGeocodedPoints: validPoints,
+      engine: (isGoogleMapsReady && window.google?.maps) ? 'Google Maps' : 'Leaflet'
+    });
+
     const pointsSig = validPoints.map(p => `${p.id}-${p.latitude}-${p.longitude}`).join(',');
     const hasPointsChanged = pointsSig !== prevPointsSigRef.current;
 
@@ -325,6 +332,7 @@ export default function MapView({ points = [], drawLine = false }) {
         }
       }
 
+      let isLeafletJustInitialized = false;
       // Initialize Leaflet if not created yet
       if (!mapInstanceRef.current && mapContainerRef.current) {
         const L = window.L;
@@ -341,6 +349,7 @@ export default function MapView({ points = [], drawLine = false }) {
         }).addTo(map);
 
         mapInstanceRef.current = map;
+        isLeafletJustInitialized = true;
       } else if (mapInstanceRef.current && tileLayerRef.current) {
         const isLightTheme = document.body.classList.contains('light-theme');
         const tileUrl = isLightTheme 
@@ -374,29 +383,35 @@ export default function MapView({ points = [], drawLine = false }) {
 
       if (validPoints.length === 0) return;
 
+      const isLightTheme = document.body.classList.contains('light-theme') || document.documentElement.getAttribute('data-theme') === 'light';
+      const innerColor = isLightTheme ? '#ffffff' : '#1e1e2c';
+      const labelTextColor = isLightTheme ? '#111111' : '#ffffff';
+      const popupBg = isLightTheme ? '#ffffff' : '#1e1e2c';
+      const popupTitleColor = isLightTheme ? '#111111' : '#f3f4f6';
+      const popupSubColor = isLightTheme ? '#666666' : '#9ca3af';
+
       // Place or update Leaflet markers
       validPoints.forEach(p => {
-        const color = p.dayLabel 
-          ? getDayColor(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1)
-          : '#6b7280';
-        const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${color}; color: #fff; font-size: 0.6rem; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border-glass); font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${p.dayLabel}</span>` : '';
+        const pinPrimaryColor = p.visited === 1 
+          ? '#10b981' 
+          : (p.dayLabel 
+              ? getDayColor(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1)
+              : (p.location_id ? '#06b6d4' : '#8b5cf6')
+            );
+
+        const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${pinPrimaryColor}; color: #fff; font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; border: 1px solid #ffffff; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.4);">${p.dayLabel}</span>` : '';
         const leafletSeqVal = p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : (p.sequenceOrder !== undefined && p.sequenceOrder !== null ? p.sequenceOrder : null);
+        const markerLabel = String(leafletSeqVal !== null ? leafletSeqVal : getCategoryEmoji(p.category || p.type));
+
         const markerHtml = `
-          <div style="
-            background: var(--bg-surface-elevated, #1e1e2c);
-            border: 2px solid ${p.visited ? 'var(--success, #10b981)' : color};
-            color: white;
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-            position: relative;
-          ">
-            ${leafletSeqVal !== null ? `<span style="font-weight: 800; font-size: 0.9rem; color: var(--text-primary);">${leafletSeqVal}</span>` : getCategoryEmoji(p.category || p.type)}
+          <div style="position: relative; width: 36px; height: 42px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="42" viewBox="0 0 36 42" style="display: block; filter: drop-shadow(0px 4px 8px rgba(0,0,0,0.5));">
+              <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${pinPrimaryColor}" stroke="#ffffff" stroke-width="1.5"/>
+              <circle cx="18" cy="18" r="13" fill="#ffffff"/>
+            </svg>
+            <div style="position: absolute; top: 0; left: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: #111111; font-size: 13px; font-weight: bold; pointer-events: none; line-height: 1;">
+              ${markerLabel}
+            </div>
             ${dayBadge}
           </div>
         `;
@@ -404,34 +419,42 @@ export default function MapView({ points = [], drawLine = false }) {
         const icon = L.divIcon({
           html: markerHtml,
           className: 'custom-div-icon',
-          iconSize: [32, 32],
-          iconAnchor: [16, 16]
+          iconSize: [36, 42],
+          iconAnchor: [18, 42]
         });
 
         const popupHtml = `
-          <div style="padding: 10px; color: var(--text-primary);">
-            <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold; color: var(--text-primary);">${p.name}</h4>
-            <span style="font-size: 0.75rem; color: var(--text-secondary);">
+          <div style="padding: 8px 10px; background: ${popupBg}; color: ${popupTitleColor}; border-radius: 8px; min-width: 140px;">
+            <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold; color: ${popupTitleColor};">${p.name}</h4>
+            <span style="font-size: 0.75rem; color: ${popupSubColor};">
               ${p.category || 'Location'} ${p.dayLabel ? `• ${p.dayLabel}` : ''}
             </span>
-            ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: var(--text-secondary);">${p.notes.substring(0, 80)}...</p>` : ''}
+            ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: ${popupSubColor};">${p.notes.substring(0, 80)}...</p>` : ''}
           </div>
         `;
+
+        const latVal = parseFloat(p.latitude);
+        const lngVal = parseFloat(p.longitude);
 
         let marker = leafletMarkersRef.current[p.id];
         if (marker) {
           // Update position, icon, and popup to prevent recreation flicker
-          marker.setLatLng([p.latitude, p.longitude]);
+          marker.setLatLng([latVal, lngVal]);
           marker.setIcon(icon);
           marker.setPopupContent(popupHtml);
+          if (!map.hasLayer(marker)) {
+            marker.addTo(map);
+          }
         } else {
           // Create new marker
-          marker = L.marker([p.latitude, p.longitude], { icon })
+          marker = L.marker([latVal, lngVal], { icon })
             .addTo(map)
             .bindPopup(popupHtml);
           leafletMarkersRef.current[p.id] = marker;
         }
       });
+
+      console.log('[MapView Leaflet] Rendered marker count:', Object.keys(leafletMarkersRef.current).length, 'on map instance:', map);
 
       // Draw Leaflet actual routes
       if (drawLine && validPoints.length > 0) {
@@ -494,10 +517,22 @@ export default function MapView({ points = [], drawLine = false }) {
       }
 
       // Auto-zoom to fit bounds Leaflet
-      if (validPoints.length > 0 && hasPointsChanged) {
+      if (validPoints.length > 0 && (hasPointsChanged || isLeafletJustInitialized)) {
         const markerArray = Object.values(leafletMarkersRef.current);
-        const group = new L.featureGroup(markerArray);
-        map.fitBounds(group.getBounds().pad(0.15));
+        if (markerArray.length > 0) {
+          if (markerArray.length === 1) {
+            const lat = parseFloat(validPoints[0].latitude);
+            const lng = parseFloat(validPoints[0].longitude);
+            if (!isNaN(lat) && !isNaN(lng)) {
+              map.setView([lat, lng], 13);
+            }
+          } else {
+            const group = new L.featureGroup(markerArray);
+            if (group.getBounds().isValid()) {
+              map.fitBounds(group.getBounds().pad(0.15));
+            }
+          }
+        }
       }
       
       prevPointsSigRef.current = pointsSig;
