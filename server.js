@@ -32,6 +32,12 @@ server.on('upgrade', (request, socket, head) => {
   const parsed = url.parse(request.url, true);
   if (parsed.pathname === '/api/ws') {
     const token = parsed.query.token;
+    if (!token) {
+      console.warn('[WebSocket] Upgrade failed: Missing token in connection query');
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       wss.handleUpgrade(request, socket, head, (ws) => {
@@ -39,6 +45,7 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
       });
     } catch (err) {
+      console.warn(`[WebSocket] Upgrade rejected for user token: ${err.message}`);
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
     }

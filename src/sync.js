@@ -8,6 +8,19 @@ function connectWebSocket(getToken) {
   const token = getToken();
   if (!token) return;
 
+  // Prevent multiple concurrent WebSocket connections
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+    return;
+  }
+
+  // Clean up any existing closed/closing socket reference
+  if (ws) {
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onclose = null;
+    ws.onerror = null;
+  }
+
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/api/ws?token=${encodeURIComponent(token)}`;
 
@@ -40,12 +53,15 @@ function connectWebSocket(getToken) {
   ws.onclose = () => {
     console.log('[WebSocket Sync] Closed. Reconnecting in 5 seconds...');
     syncStatusCallback('error');
+    ws = null;
     setTimeout(() => connectWebSocket(getToken), 5000);
   };
 
   ws.onerror = (err) => {
     console.error('[WebSocket Sync] Connection error:', err);
-    ws.close();
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      ws.close();
+    }
   };
 }
 
