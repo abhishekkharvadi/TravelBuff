@@ -8,7 +8,7 @@
     "audit": "npm audit --audit-level=high",
     "prebuild": "npm run audit",
     "postinstall": "node -e \"try{require.resolve('vite'); require('child_process').execSync('npm run build',{stdio:'inherit'})}catch(e){}\"",
-    "start": "PORT=3000 node --use-system-ca server.js",
+    "start": "node server.js",
     "server": "nodemon --use-system-ca server.js",
     "client": "vite",
     "build": "vite build",

@@ -3068,7 +3068,7 @@ async function runBackgroundPhotoSyncRetry() {
   try {
     await initDatabase();
     JWT_SECRET = await resolveJwtSecret();
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`TravelBuff server is listening on port ${PORT}`);
       
       // Delay initial scheduler run by 30 seconds to allow standard boot tasks to finish

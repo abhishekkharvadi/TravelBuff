@@ -136,8 +136,17 @@ async function fetchMarkdownCheerio(urlStr) {
 // Playwright Scraper
 async function fetchMarkdownPlaywright(urlStr) {
   const launchOptions = { headless: true };
+  const envPath = process.env.CHROMIUM_PATH;
+  const debianPath = '/usr/bin/chromium';
   const alpinePath = '/usr/bin/chromium-browser';
-  if (fs.existsSync(alpinePath)) {
+
+  if (envPath && fs.existsSync(envPath)) {
+    launchOptions.executablePath = envPath;
+    launchOptions.args = ['--no-sandbox', '--disable-setuid-sandbox'];
+  } else if (fs.existsSync(debianPath)) {
+    launchOptions.executablePath = debianPath;
+    launchOptions.args = ['--no-sandbox', '--disable-setuid-sandbox'];
+  } else if (fs.existsSync(alpinePath)) {
     launchOptions.executablePath = alpinePath;
     launchOptions.args = ['--no-sandbox', '--disable-setuid-sandbox'];
   }
