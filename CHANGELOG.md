@@ -2,7 +2,17 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
-## [v2] - 2026-08-10
+## [v3] - 2026-08-11
+
+### 🐛 Bug Fixes & Session Resilience (v3)
+- **Automatic 401/403 Stale Token Invalidation**: Updated `fetchUserConfig` in `App.jsx` to automatically log out users (`handleLogout()`) when `/api/auth/me` returns `401` or `403` status codes, preventing broken logged-in states caused by mismatched JWT secrets.
+- **Harmonized JWT Secret Configuration**: Aligned default `JWT_SECRET` in `docker-compose.yml` to `${JWT_SECRET:-travelbuff-super-secret-key-12345}` for seamless dev and container out-of-the-box local testing.
+- **Server WebSocket Diagnostic Warnings**: Added explicit `console.warn` outputs during `server.on('upgrade')` on `/api/ws` when JWT verification fails or tokens are missing.
+- **Client WebSocket Lifecycle Guard**: Enhanced `connectWebSocket` in `sync.js` to guard against duplicate socket connections and prevent duplicate `.close()` triggers.
+- **PWA Service Worker Cache Upgrade (v3)**: Bumped PWA Service Worker cache version to `travelbuff-v3` to automatically purge stale browser app shell caches.
+- **Version Bump**: Updated application version to `v3` across `package.json`, `src/version.js`, `public/sw.js`, and `CHANGELOG.md`.
+
+---
 
 ### 🚀 Architecture & Major Release (v2)
 - **Separate Repositories Setup**: Split TravelBuff into core application repository (`travelbuff`) and container distribution repository (`travelbuff-docker`) linked via Git Submodule.

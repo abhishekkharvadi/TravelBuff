@@ -2847,8 +2847,12 @@ app.post('/api/backup/restore', async (req, res) => {
 // ==========================================
 app.use(express.static(join(__dirname, 'dist')));
 app.get('*', (req, res, next) => {
-  // If request begins with API, let it fail as 404 naturally
+  // If request begins with /api, let express route handler handle it
   if (req.path.startsWith('/api')) return next();
+  // If request is for an asset or static file extension, return 404 Not Found instead of index.html
+  if (req.path.startsWith('/assets') || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff|woff2|ttf|eot)$/i.test(req.path)) {
+    return res.status(404).send('Asset not found');
+  }
   res.sendFile(join(__dirname, 'dist', 'index.html'));
 });
 

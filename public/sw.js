@@ -1,4 +1,4 @@
-const CACHE_NAME = 'travelbuff-v2';
+const CACHE_NAME = 'travelbuff-v3';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -40,49 +40,50 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
 
-  // Exclude API requests, uploads, and hot-reload WebSockets (Vite) from caching
+  // Exclude API requests, uploads, and WebSockets from SW interception
   if (
     requestUrl.pathname.startsWith('/api') || 
     requestUrl.pathname.startsWith('/uploads') || 
     event.request.url.includes('ws') ||
     event.request.method !== 'GET'
   ) {
-    return; // Let the browser handle these requests natively
+    return; // Let browser handle natively
   }
 
-  // Cache-First strategy for static assets
+  // Network-First strategy for HTML navigation (guarantees fresh asset hashes on deploy)
+  if (event.request.mode === 'navigate' || requestUrl.pathname === '/' || requestUrl.pathname === '/index.html') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          // Offline fallback
+          return caches.match('/index.html') || caches.match('/');
+        })
+    );
+    return;
+  }
+
+  // Stale-While-Revalidate strategy for static assets
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        // Fetch in background to update cache (stale-while-revalidate for local scripts/styles)
-        if (requestUrl.origin === self.location.origin) {
-          fetch(event.request).then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse.clone()));
-            }
-          }).catch(() => {/* Ignore offline fetch errors */});
+      const fetchPromise = fetch(event.request).then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
         }
-        return cachedResponse;
-      }
-
-      return fetch(event.request).then((networkResponse) => {
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
-          return networkResponse;
-        }
-
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
-
         return networkResponse;
-      }).catch(() => {
-        // Fallback for offline navigation
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
-        return new Response('Network error', { status: 480, statusText: 'Offline' });
+      }).catch((err) => {
+        // Return cached response if available, or let request fail natively
+        return cachedResponse;
       });
+
+      return cachedResponse || fetchPromise;
     })
   );
 });
