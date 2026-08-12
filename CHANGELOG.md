@@ -2,7 +2,29 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
-## [v2] - 2026-08-10
+## [v4] - 2026-08-12
+
+### 🚀 Architecture & Session Resilience (v4)
+- **Database-Persisted `JWT_SECRET`**: Auto-generates and persists a secure 64-character secret in `/data/travelbuff.db` (`app_config` table). User sessions, JWT tokens, and WebSockets now survive container restarts, image updates, and Docker Hub pulls without requiring re-login.
+- **3-Port Environment Isolation**:
+  - Local Dev (`npm run dev`): `http://localhost:3000` (Vite) / `3001` (API).
+  - Local Docker Test (`test-docker-build.sh`): `http://localhost:4000`.
+  - Docker Hub Production (`docker-compose.yml`): `http://localhost:5000`.
+- **Express SPA Asset Guard**: Updated catch-all route `app.get('*')` in `server.js` to return HTTP `404` for missing static files (`/assets/`), preventing HTML from being returned for script modules (`NS_ERROR_CORRUPTED_CONTENT`).
+- **Network-First `index.html` Service Worker Strategy**: Configured `sw.js` to load navigation requests network-first when online, ensuring fresh asset hashes on container deployments.
+- **Version Bump**: Updated application version to `v4` across `package.json`, `src/version.js`, `src/router.js`, `public/sw.js`, and `CHANGELOG.md`.
+
+---
+
+### 🐛 Bug Fixes & Session Resilience (v3)
+- **Automatic 401/403 Stale Token Invalidation**: Updated `fetchUserConfig` in `App.jsx` to automatically log out users (`handleLogout()`) when `/api/auth/me` returns `401` or `403` status codes, preventing broken logged-in states caused by mismatched JWT secrets.
+- **Harmonized JWT Secret Configuration**: Aligned default `JWT_SECRET` in `docker-compose.yml` to `${JWT_SECRET:-travelbuff-super-secret-key-12345}` for seamless dev and container out-of-the-box local testing.
+- **Server WebSocket Diagnostic Warnings**: Added explicit `console.warn` outputs during `server.on('upgrade')` on `/api/ws` when JWT verification fails or tokens are missing.
+- **Client WebSocket Lifecycle Guard**: Enhanced `connectWebSocket` in `sync.js` to guard against duplicate socket connections and prevent duplicate `.close()` triggers.
+- **PWA Service Worker Cache Upgrade (v3)**: Bumped PWA Service Worker cache version to `travelbuff-v3` to automatically purge stale browser app shell caches.
+- **Version Bump**: Updated application version to `v3` across `package.json`, `src/version.js`, `public/sw.js`, and `CHANGELOG.md`.
+
+---
 
 ### 🚀 Architecture & Major Release (v2)
 - **Separate Repositories Setup**: Split TravelBuff into core application repository (`travelbuff`) and container distribution repository (`travelbuff-docker`) linked via Git Submodule.

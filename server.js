@@ -17,7 +17,26 @@ import axios from 'axios';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'travelbuff-super-secret-key-12345';
+let JWT_SECRET = process.env.JWT_SECRET || 'travelbuff-super-secret-key-12345';
+
+async function resolveJwtSecret() {
+  if (process.env.JWT_SECRET) {
+    return process.env.JWT_SECRET;
+  }
+  try {
+    const row = await db.get("SELECT value FROM app_config WHERE key = 'jwt_secret'");
+    if (row && row.value) {
+      return row.value;
+    }
+    const newSecret = crypto.randomBytes(32).toString('hex');
+    await db.run("INSERT OR REPLACE INTO app_config (key, value) VALUES ('jwt_secret', ?)", [newSecret]);
+    console.log('[Auth] Generated and persisted new JWT_SECRET in database.');
+    return newSecret;
+  } catch (err) {
+    console.error('[Auth] Error resolving JWT_SECRET from database:', err);
+    return 'travelbuff-super-secret-key-12345';
+  }
+}
 
 const app = express();
 app.use(cors());
@@ -2847,8 +2866,12 @@ app.post('/api/backup/restore', async (req, res) => {
 // ==========================================
 app.use(express.static(join(__dirname, 'dist')));
 app.get('*', (req, res, next) => {
-  // If request begins with API, let it fail as 404 naturally
+  // If request begins with /api, let express route handler handle it
   if (req.path.startsWith('/api')) return next();
+  // If request is for an asset or static file extension, return 404 Not Found instead of index.html
+  if (req.path.startsWith('/assets') || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff|woff2|ttf|eot)$/i.test(req.path)) {
+    return res.status(404).send('Asset not found');
+  }
   res.sendFile(join(__dirname, 'dist', 'index.html'));
 });
 
@@ -3044,6 +3067,7 @@ async function runBackgroundPhotoSyncRetry() {
 (async () => {
   try {
     await initDatabase();
+    JWT_SECRET = await resolveJwtSecret();
     server.listen(PORT, () => {
       console.log(`TravelBuff server is listening on port ${PORT}`);
       
