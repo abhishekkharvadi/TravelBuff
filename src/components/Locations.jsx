@@ -45,7 +45,7 @@ function FolderCover({ folderId, locations, getFeaturedPhoto }) {
   return (
     <img 
       src={activeImg} 
-      onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }} 
+      onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }} 
       alt="Folder Cover" 
     />
   );
@@ -170,6 +170,7 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
 
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [isSavingPlace, setIsSavingPlace] = useState(false);
+  const [fetchingPhotoEntityIds, setFetchingPhotoEntityIds] = useState({});
 
   // Tag creation modal states inside locations
   const [selectedTagToAdd, setSelectedTagToAdd] = useState('');
@@ -721,14 +722,15 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
           });
 
           if (data.fileUrl) {
-            // Insert entity_photos link
-            await queueSyncAction('entity_photos', 'insert', {
+            const newPhotoObj = {
               id: generateUUID(),
               entity_id: newLocId,
               file_path: data.fileUrl,
               is_featured: 1,
               created_at: new Date().toISOString()
-            });
+            };
+            await db.entity_photos.add(newPhotoObj);
+            await queueSyncAction('entity_photos', 'insert', newPhotoObj);
           }
         } else {
           await db.locations.update(newLocId, { photo_sync_status: 'failed' });
@@ -890,7 +892,8 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
     const newPlaceId = generateUUID();
     const latitudeVal = placeLat ? parseFloat(placeLat) : null;
     const longitudeVal = placeLon ? parseFloat(placeLon) : null;
-    const cleanSearchQuery = `${placeName.trim()} ${selectedLocation.name}`.trim();
+    const cleanPlaceQuery = placeName.trim();
+    const locationCtx = selectedLocation ? selectedLocation.name : '';
 
     const newPlace = {
       id: newPlaceId,
@@ -903,10 +906,12 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
       notes: placeNotes,
       local_file_data: null,
       immich_album_id: null,
+      photo_sync_status: 'pending',
       created_at: new Date().toISOString()
     };
 
     // Save to IndexedDB instantly
+    await db.places.add(newPlace);
     await queueSyncAction('places', 'insert', newPlace);
 
     // Fire background photo fetching without holding up the UI
@@ -918,7 +923,8 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
         'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({ 
-        query: cleanSearchQuery, 
+        query: cleanPlaceQuery, 
+        locationContext: locationCtx,
         latitude: latitudeVal, 
         longitude: longitudeVal,
         googleMapsApiKey: localStorage.getItem('google_maps_api_key')
@@ -942,14 +948,15 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
           });
 
           if (data.fileUrl) {
-            // Insert entity_photos link
-            await queueSyncAction('entity_photos', 'insert', {
+            const newPhotoObj = {
               id: generateUUID(),
               entity_id: newPlaceId,
               file_path: data.fileUrl,
               is_featured: 1,
               created_at: new Date().toISOString()
-            });
+            };
+            await db.entity_photos.add(newPhotoObj);
+            await queueSyncAction('entity_photos', 'insert', newPhotoObj);
           }
         } else {
           await db.places.update(newPlaceId, { photo_sync_status: 'failed' });
@@ -1092,6 +1099,7 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
 
   const handleFetchPhotoForEntity = async (entity, isPlace = false) => {
     if (!entity || !entity.name) return;
+    setFetchingPhotoEntityIds(prev => ({ ...prev, [entity.id]: true }));
     trackApiCall('Wikipedia / Google Maps');
     
     let searchQuery = entity.name;
@@ -1121,19 +1129,24 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
           await db[table].update(entity.id, { local_file_data: url, photo_sync_status: 'completed' });
           await queueSyncAction(table, 'update', { ...entity, local_file_data: url });
           
-          await queueSyncAction('entity_photos', 'insert', {
+          const newPhoto = {
             id: generateUUID(),
             entity_id: entity.id,
             file_path: url,
             is_featured: 1,
             created_at: new Date().toISOString()
-          });
+          };
+
+          await db.entity_photos.add(newPhoto);
+          await queueSyncAction('entity_photos', 'insert', newPhoto);
         } else if (data.message) {
           console.log(`[Photo Fetch] ${data.message} for ${searchQuery}`);
         }
       }
     } catch (e) {
       console.error('Failed to fetch photo for entity:', e);
+    } finally {
+      setFetchingPhotoEntityIds(prev => ({ ...prev, [entity.id]: false }));
     }
   };
 
@@ -1778,11 +1791,12 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                 </button>
                 <button 
                   className="btn btn-secondary" 
+                  disabled={!!fetchingPhotoEntityIds[selectedLocation.id]}
                   onClick={() => handleFetchPhotoForEntity(selectedLocation, false)}
                   style={{ width: 'auto', padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
                   title="Fetch cover image from Wikipedia / Google Maps"
                 >
-                  <RefreshCw size={12} /> Fetch Cover Image
+                  <RefreshCw size={12} className={fetchingPhotoEntityIds[selectedLocation.id] ? "sync-spinner" : ""} /> Fetch Cover Image
                 </button>
                 <input
                   type="file"
@@ -1797,7 +1811,7 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                   <div key={photo.id} className="photo-thumb">
                     <img 
                       src={photo.file_path && !photo.file_path.startsWith('http') && !photo.file_path.startsWith('data:') && !photo.file_path.startsWith('/') ? '/' + photo.file_path : photo.file_path} 
-                      onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }}
+                      onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }}
                       alt="Location visual" 
                     />
                     {photo.is_featured === 1 && <span className="featured-badge">Featured</span>}
@@ -2042,11 +2056,20 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                             <button 
                               type="button"
                               className="btn btn-secondary" 
-                              onClick={() => handleFetchPhotoForEntity(place, true)}
+                              disabled={!!fetchingPhotoEntityIds[place.id]}
+                              onClick={() => {
+                                const activePlace = {
+                                  ...place,
+                                  name: editPlaceName.trim() || place.name,
+                                  latitude: editPlaceLat.trim() ? parseFloat(editPlaceLat) : place.latitude,
+                                  longitude: editPlaceLon.trim() ? parseFloat(editPlaceLon) : place.longitude
+                                };
+                                handleFetchPhotoForEntity(activePlace, true);
+                              }}
                               style={{ width: 'auto', padding: '2px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
                               title="Fetch cover image from Wikipedia / Google Maps"
                             >
-                              <RefreshCw size={12} /> Fetch Cover Image
+                              <RefreshCw size={12} className={fetchingPhotoEntityIds[place.id] ? "sync-spinner" : ""} /> Fetch Cover Image
                             </button>
                           </div>
                           <div 
@@ -2067,7 +2090,11 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                           <div className="photos-grid" style={{ marginTop: '8px' }}>
                             {photos.filter(p => p.entity_id === place.id).map(photo => (
                               <div key={photo.id} className="photo-thumb">
-                                <img src={photo.file_path} alt="Place visual" />
+                                <img 
+                                  src={photo.file_path && !photo.file_path.startsWith('http') && !photo.file_path.startsWith('data:') && !photo.file_path.startsWith('/') ? '/' + photo.file_path : photo.file_path} 
+                                  onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=150'; }}
+                                  alt="Place visual" 
+                                />
                                 {photo.is_featured === 1 && <span className="featured-badge">Featured</span>}
                                 <div className="photo-actions">
                                   <button 
@@ -2131,7 +2158,7 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                     >
                       <img 
                         src={featuredPlaceImg} 
-                        onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=150'}
+                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=150'; }}
                         style={{ width: '80px', height: '80px', borderRadius: 'var(--radius-sm)', objectFit: 'cover' }}
                         alt={place.name}
                       />
@@ -3239,7 +3266,7 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                 ) : (
                   <img 
                     src={featuredImg} 
-                    onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'} 
+                    onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }} 
                     alt={loc.name} 
                   />
                 )}

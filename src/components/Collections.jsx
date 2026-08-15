@@ -545,7 +545,7 @@ export default function Collections({ selectedCol, setSelectedCol, onNavigateToL
                           alt={loc.name} 
                           style={{ width: '56px', height: '56px', borderRadius: '6px', objectFit: 'cover', flexShrink: 0, cursor: 'pointer' }}
                           onClick={() => onNavigateToLocation && onNavigateToLocation(loc.id, selectedCol.id)}
-                          onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'}
+                          onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }}
                         />
                         <div style={{ flexGrow: 1 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

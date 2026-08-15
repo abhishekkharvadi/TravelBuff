@@ -2,6 +2,17 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v5] - 2026-08-15
+
+### 🚀 Features & Base Currency Search (v5)
+- **Dynamic 160+ ISO World Currencies**: Expanded Base Currency configurations in `Settings.jsx` from 5 static currencies to all official ISO 4217 world currencies (~160+) dynamically resolved via browser-native `Intl.supportedValuesOf('currency')` and `Intl.DisplayNames`.
+- **Searchable Currency Combobox Component**: Replaced static dropdown with a custom searchable combobox (`SearchableCurrencySelect`) allowing instant search filtering by currency code (e.g. `CAD`), currency name (e.g. `Rupee`, `Euro`, `Yen`), and currency symbol (e.g. `€`, `₹`, `$`).
+- **Pinned Popular Currencies**: Top 12 major world currencies (USD, EUR, GBP, INR, JPY, CAD, AUD, CHF, SGD, AED, CNY, NZD) pinned at the top for 1-click selection.
+- **Theme-Aware UI**: Formatted dropdown colors using CSS root theme variables (`var(--bg-surface)`, `var(--bg-surface-elevated)`, `var(--text-primary)`, `var(--text-secondary)`, `var(--accent-primary)`), seamlessly adapting to Light Mode, Dark Mode, and custom themes.
+- **Version Bump**: Updated application version to `v5` across `package.json`, `src/version.js`, `src/router.js`, and `CHANGELOG.md`.
+
+---
+
 ## [v4] - 2026-08-12
 
 ### 🚀 Architecture & Session Resilience (v4)

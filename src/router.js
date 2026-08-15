@@ -1,5 +1,5 @@
 /**
- * TravelBuff Hash Router Helper (v4)
+ * TravelBuff Hash Router Helper (v5)
  * Manages URL hash synchronization with pure human-readable name slugs.
  */
 

@@ -1,8 +1,298 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, queueSyncAction, generateUUID, clearLocalDb, populateLocalDb } from '../clientDb.js';
-import { Plus, Trash2, Tag, Compass, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock, Users, Home, MapPin, Search, User, Edit2 } from 'lucide-react';
+import { Plus, Trash2, Tag, Compass, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock, Users, Home, MapPin, Search, User, Edit2, ChevronDown } from 'lucide-react';
 import { APP_VERSION } from '../version.js';
+
+const POPULAR_CURRENCIES = [
+  { code: 'USD', name: 'US Dollar', symbol: '$' },
+  { code: 'EUR', name: 'Euro', symbol: '€' },
+  { code: 'GBP', name: 'British Pound', symbol: '£' },
+  { code: 'INR', name: 'Indian Rupee', symbol: '₹' },
+  { code: 'JPY', name: 'Japanese Yen', symbol: '¥' },
+  { code: 'CAD', name: 'Canadian Dollar', symbol: 'CA$' },
+  { code: 'AUD', name: 'Australian Dollar', symbol: 'A$' },
+  { code: 'CHF', name: 'Swiss Franc', symbol: 'Fr' },
+  { code: 'SGD', name: 'Singapore Dollar', symbol: 'S$' },
+  { code: 'AED', name: 'United Arab Emirates Dirham', symbol: 'د.إ' },
+  { code: 'CNY', name: 'Chinese Yuan', symbol: '¥' },
+  { code: 'NZD', name: 'New Zealand Dollar', symbol: 'NZ$' }
+];
+
+function getCurrencySymbol(code) {
+  const popularMatch = POPULAR_CURRENCIES.find(c => c.code === code);
+  if (popularMatch) return popularMatch.symbol;
+  try {
+    const formatted = (0).toLocaleString('en-US', {
+      style: 'currency',
+      currency: code,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    });
+    const symbol = formatted.replace(/[\d\s.,]/g, '');
+    return symbol || code;
+  } catch (e) {
+    return code;
+  }
+}
+
+function getAllCurrenciesList() {
+  let codes = [];
+  if (typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function') {
+    try {
+      codes = Intl.supportedValuesOf('currency');
+    } catch (e) {
+      codes = [];
+    }
+  }
+
+  if (!codes || codes.length === 0) {
+    codes = [
+      'USD', 'EUR', 'GBP', 'INR', 'JPY', 'CAD', 'AUD', 'CHF', 'SGD', 'AED', 'CNY', 'NZD',
+      'BRL', 'ZAR', 'RUB', 'MXN', 'HKD', 'SEK', 'NOK', 'KRW', 'TRY', 'IDR', 'THB', 'MYR',
+      'PHP', 'PLN', 'DKK', 'HUF', 'CZK', 'ILS', 'CLP', 'SAR', 'EGP', 'VND'
+    ];
+  }
+
+  let displayNames = null;
+  if (typeof Intl !== 'undefined' && Intl.DisplayNames) {
+    try {
+      displayNames = new Intl.DisplayNames(['en'], { type: 'currency' });
+    } catch (e) {}
+  }
+
+  const popularMap = new Map(POPULAR_CURRENCIES.map(c => [c.code, c]));
+
+  return codes.map(code => {
+    const pop = popularMap.get(code);
+    let name = pop ? pop.name : '';
+    if (!name && displayNames) {
+      try {
+        name = displayNames.of(code) || code;
+      } catch (e) {
+        name = code;
+      }
+    }
+    if (!name) name = code;
+    const symbol = getCurrencySymbol(code);
+    return { code, name, symbol };
+  });
+}
+
+function SearchableCurrencySelect({ value, onChange }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const dropdownRef = useRef(null);
+
+  const allCurrencies = useMemo(() => getAllCurrenciesList(), []);
+  const popularSet = useMemo(() => new Set(POPULAR_CURRENCIES.map(c => c.code)), []);
+
+  const selectedCurrencyObj = useMemo(() => {
+    return allCurrencies.find(c => c.code === value) || { code: value, name: value, symbol: getCurrencySymbol(value) };
+  }, [value, allCurrencies]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const query = search.trim().toLowerCase();
+
+  const filteredPopular = useMemo(() => {
+    return POPULAR_CURRENCIES.filter(c => 
+      c.code.toLowerCase().includes(query) ||
+      c.name.toLowerCase().includes(query) ||
+      c.symbol.toLowerCase().includes(query)
+    );
+  }, [query]);
+
+  const filteredAll = useMemo(() => {
+    return allCurrencies.filter(c => 
+      !popularSet.has(c.code) && (
+        c.code.toLowerCase().includes(query) ||
+        c.name.toLowerCase().includes(query) ||
+        c.symbol.toLowerCase().includes(query)
+      )
+    );
+  }, [allCurrencies, popularSet, query]);
+
+  return (
+    <div ref={dropdownRef} style={{ position: 'relative', width: '100%' }}>
+      <button
+        type="button"
+        className="form-control"
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          cursor: 'pointer',
+          textAlign: 'left',
+          width: '100%',
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border-glass)',
+          color: 'var(--text-primary)',
+          borderRadius: '8px',
+          padding: '8px 12px'
+        }}
+      >
+        <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selectedCurrencyObj.code} - {selectedCurrencyObj.name} ({selectedCurrencyObj.symbol})
+        </span>
+        <ChevronDown size={16} style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.7, flexShrink: 0, marginLeft: '8px' }} />
+      </button>
+
+      {isOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: 0,
+            right: 0,
+            zIndex: 1000,
+            background: 'var(--bg-surface-elevated)',
+            border: '1px solid var(--border-glass)',
+            borderRadius: '8px',
+            boxShadow: 'var(--shadow-panel, 0 8px 24px rgba(0,0,0,0.3))',
+            maxHeight: '320px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden'
+          }}
+        >
+          <div style={{ padding: '8px', borderBottom: '1px solid var(--border-glass)', display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-surface)' }}>
+            <Search size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+            <input
+              type="text"
+              autoFocus
+              placeholder="Search code, name, or symbol..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                color: 'var(--text-primary)',
+                fontSize: '0.85rem'
+              }}
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, display: 'flex' }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <div style={{ overflowY: 'auto', flex: 1, padding: '4px 0' }}>
+            {filteredPopular.length === 0 && filteredAll.length === 0 ? (
+              <div style={{ padding: '16px', textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                No matching currencies found
+              </div>
+            ) : (
+              <>
+                {filteredPopular.length > 0 && (
+                  <div>
+                    <div style={{ padding: '6px 12px 2px 12px', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                      ⭐ Popular Currencies
+                    </div>
+                    {filteredPopular.map(c => (
+                      <div
+                        key={c.code}
+                        onClick={() => {
+                          onChange(c.code);
+                          setIsOpen(false);
+                          setSearch('');
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          background: value === c.code ? 'var(--accent-primary-glow, rgba(139, 92, 246, 0.15))' : 'transparent',
+                          color: value === c.code ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          transition: 'background 0.15s'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (value !== c.code) e.currentTarget.style.background = 'var(--bg-surface)';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (value !== c.code) e.currentTarget.style.background = 'transparent';
+                        }}
+                      >
+                        <span>
+                          <strong style={{ color: 'var(--text-primary)' }}>{c.code}</strong> - {c.name} ({c.symbol})
+                        </span>
+                        {value === c.code && <Check size={14} style={{ color: 'var(--accent-primary)' }} />}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {filteredAll.length > 0 && (
+                  <div>
+                    <div style={{ padding: '8px 12px 2px 12px', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderTop: filteredPopular.length > 0 ? '1px solid var(--border-glass)' : 'none', marginTop: filteredPopular.length > 0 ? '4px' : '0' }}>
+                      🌐 All Currencies ({filteredAll.length})
+                    </div>
+                    {filteredAll.map(c => (
+                      <div
+                        key={c.code}
+                        onClick={() => {
+                          onChange(c.code);
+                          setIsOpen(false);
+                          setSearch('');
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          background: value === c.code ? 'var(--accent-primary-glow, rgba(139, 92, 246, 0.15))' : 'transparent',
+                          color: value === c.code ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          transition: 'background 0.15s'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (value !== c.code) e.currentTarget.style.background = 'var(--bg-surface)';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (value !== c.code) e.currentTarget.style.background = 'transparent';
+                        }}
+                      >
+                        <span>
+                          <strong style={{ color: 'var(--text-primary)' }}>{c.code}</strong> - {c.name} ({c.symbol})
+                        </span>
+                        {value === c.code && <Check size={14} style={{ color: 'var(--accent-primary)' }} />}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function SettingsComponent({ token, userId, onLogout, onResumeMarkdown }) {
   // Dexie live queries
@@ -1177,21 +1467,13 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
 
             <div className="form-group">
               <label>Base Currency</label>
-              <select 
-                className="form-control" 
-                value={baseCurrency} 
-                onChange={(e) => {
-                  const val = e.target.value;
+              <SearchableCurrencySelect
+                value={baseCurrency}
+                onChange={(val) => {
                   setBaseCurrency(val);
                   handleSaveField('general', { base_currency: val });
                 }}
-              >
-                <option value="USD">USD ($)</option>
-                <option value="EUR">EUR (€)</option>
-                <option value="INR">INR (₹)</option>
-                <option value="GBP">GBP (£)</option>
-                <option value="JPY">JPY (¥)</option>
-              </select>
+              />
             </div>
 
             {typeof window !== 'undefined' && 

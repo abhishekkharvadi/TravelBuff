@@ -1,17 +1,17 @@
 import sqlite3 from 'sqlite3';
-import { dirname, join } from 'path';
+import path, { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Ensure data directory exists for persistence
-const DB_DIR = process.env.DATABASE_DIR || join(__dirname, 'data');
+const DB_DIR = process.env.DATABASE_DIR ? path.resolve(process.env.DATABASE_DIR) : path.join(__dirname, 'data');
 if (!fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
 }
 
-const DB_PATH = join(DB_DIR, 'travelbuff.db');
+const DB_PATH = path.join(DB_DIR, 'travelbuff.db');
 const dbInstance = new sqlite3.Database(DB_PATH);
 
 // Promise Wrappers for SQLite
@@ -324,6 +324,8 @@ export async function initDatabase() {
   await db.run('ALTER TABLE trips ADD COLUMN companions TEXT').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN start_address_id TEXT').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN stop_address_id TEXT').catch(() => {});
+  await db.run('ALTER TABLE locations ADD COLUMN photo_sync_retry_count INTEGER DEFAULT 0').catch(() => {});
+  await db.run('ALTER TABLE places ADD COLUMN photo_sync_retry_count INTEGER DEFAULT 0').catch(() => {});
 
   // Auto-promote earliest registered user to Admin if no admin exists yet
   try {
@@ -337,6 +339,25 @@ export async function initDatabase() {
     }
   } catch (err) {
     console.error('Error auto-promoting earliest user to Admin:', err);
+  }
+
+  // Clean up duplicate place copies marked with (copy)
+  await cleanupDuplicateCopyPlaces().catch(err => console.error('Error in cleanupDuplicateCopyPlaces:', err));
+
+  // Migration: Normalize entity_photos so only the latest/most recent featured photo has is_featured = 1 per entity
+  try {
+    await db.run(`
+      UPDATE entity_photos 
+      SET is_featured = 0 
+      WHERE is_featured = 1 AND id NOT IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY created_at DESC) as rn 
+          FROM entity_photos WHERE is_featured = 1
+        ) WHERE rn = 1
+      )
+    `);
+  } catch (err) {
+    console.error('Error normalizing duplicate featured flags:', err);
   }
 
   // One-Time Safe Migration: Backfill locations and places local_file_data from existing entity_photos
@@ -441,5 +462,63 @@ export async function seedDefaultCategories(userId) {
     }
   } catch (err) {
     console.error('Error seeding default categories:', err);
+  }
+}
+
+// Helper to deduplicate places marked with (copy)
+export async function cleanupDuplicateCopyPlaces() {
+  try {
+    const copyPlaces = await db.all(
+      `SELECT * FROM places WHERE name LIKE '%(copy%' OR name LIKE '%(Copy%'`
+    );
+
+    if (!copyPlaces || copyPlaces.length === 0) return 0;
+    let mergedCount = 0;
+
+    for (const copyPlace of copyPlaces) {
+      const cleanName = copyPlace.name.replace(/\s*\(copy\s*\d*\)/i, '').trim();
+      if (!cleanName) continue;
+
+      const originalPlace = await db.get(
+        `SELECT * FROM places WHERE location_id = ? AND user_id = ? AND LOWER(TRIM(name)) = LOWER(?) AND id != ? LIMIT 1`,
+        [copyPlace.location_id, copyPlace.user_id, cleanName, copyPlace.id]
+      );
+
+      if (originalPlace) {
+        // 1. Reassign photos from copy to original place
+        await db.run(`UPDATE entity_photos SET entity_id = ? WHERE entity_id = ?`, [originalPlace.id, copyPlace.id]);
+
+        // 2. Reassign itinerary items
+        await db.run(`UPDATE itinerary_items SET place_id = ? WHERE place_id = ?`, [originalPlace.id, copyPlace.id]);
+
+        // 3. Reassign entity tags safely
+        const tags = await db.all(`SELECT tag_id FROM entity_tags WHERE entity_id = ?`, [copyPlace.id]);
+        for (const t of tags) {
+          await db.run(`INSERT OR IGNORE INTO entity_tags (entity_id, tag_id) VALUES (?, ?)`, [originalPlace.id, t.tag_id]);
+        }
+        await db.run(`DELETE FROM entity_tags WHERE entity_id = ?`, [copyPlace.id]);
+
+        // 4. Update local_file_data if original has none
+        if (!originalPlace.local_file_data && copyPlace.local_file_data) {
+          await db.run(`UPDATE places SET local_file_data = ? WHERE id = ?`, [copyPlace.local_file_data, originalPlace.id]);
+        }
+
+        // 5. Delete copy place
+        await db.run(`DELETE FROM places WHERE id = ?`, [copyPlace.id]);
+        mergedCount++;
+      } else {
+        // Strip (copy) from name if original doesn't exist
+        await db.run(`UPDATE places SET name = ? WHERE id = ?`, [cleanName, copyPlace.id]);
+        mergedCount++;
+      }
+    }
+
+    if (mergedCount > 0) {
+      console.log(`[Deduplication] Successfully merged/cleaned up ${mergedCount} duplicate "(copy)" place records.`);
+    }
+    return mergedCount;
+  } catch (err) {
+    console.error('Error cleaning up duplicate (copy) places:', err);
+    throw err;
   }
 }

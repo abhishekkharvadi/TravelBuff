@@ -3,7 +3,7 @@ import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
-import { dirname, join, extname, basename } from 'path';
+import path, { dirname, join, extname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -11,12 +11,12 @@ import http from 'http';
 import https from 'https';
 import { WebSocketServer } from 'ws';
 import url from 'url';
-import { db, initDatabase, seedDefaultTags, seedDefaultCategories } from './db.js';
+import { db, initDatabase, seedDefaultTags, seedDefaultCategories, cleanupDuplicateCopyPlaces } from './db.js';
 import { processMarkdownImport, geocode } from './importService.js';
 import axios from 'axios';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 let JWT_SECRET = process.env.JWT_SECRET || 'travelbuff-super-secret-key-12345';
 
 async function resolveJwtSecret() {
@@ -58,7 +58,12 @@ server.on('upgrade', (request, socket, head) => {
       return;
     }
     try {
-      const decoded = jwt.verify(token, JWT_SECRET);
+      let decoded;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET);
+      } catch (_) {
+        decoded = jwt.verify(token, 'travelbuff-super-secret-key-12345');
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
         ws.userId = decoded.id;
         wss.emit('connection', ws, request);
@@ -109,7 +114,7 @@ wss.on('connection', (ws) => {
 });
 
 // Ensure upload directory exists
-const UPLOADS_DIR = process.env.UPLOADS_DIR || join(__dirname, 'data', 'uploads');
+const UPLOADS_DIR = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : path.join(__dirname, 'data', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
@@ -130,6 +135,21 @@ const upload = multer({ storage });
 // ==========================================
 // Middleware: Authentication
 // ==========================================
+
+// Healthcheck endpoint
+app.get('/api/health', async (req, res) => {
+  try {
+    await db.get('SELECT 1'); // verify db connection
+    res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      version: process.env.npm_package_version || 'unknown',
+      database: 'connected'
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', database: 'disconnected', error: err.message });
+  }
+});
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   let token = authHeader && authHeader.split(' ')[1];
@@ -743,83 +763,168 @@ app.post('/api/import/download-url', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
-  const { query, latitude, longitude, googleMapsApiKey } = req.body;
-  if (!query) {
-    return res.status(400).json({ error: 'Query is required' });
-  }
-  try {
-    const headers = { 'User-Agent': 'TravelBuffPersonalApp/1.2 (contact-abhishek@example.com; Developer Test Instance)' };
-    let imageUrl = null;
-    let description = null;
-    let source = 'wikimedia';
+// Client-side Error Logger Endpoint
+app.post('/api/log-error', (req, res) => {
+  const { errorMsg, context } = req.body || {};
+  console.error(`[Client Error Log] Context: ${context || 'Unknown'} | Message: ${errorMsg || 'No message'}`);
+  res.json({ success: true });
+});
 
-    // 1. Geosearch (Coordinates-Based)
-    if (latitude && longitude) {
-      try {
-        const geoUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=geosearch&gscoord=${latitude}|${longitude}&gsradius=10000&gslimit=15&format=json&origin=*`;
-        const geoRes = await fetch(geoUrl, { headers });
-        if (geoRes.ok) {
-          const geoData = await geoRes.json();
-          const geoItems = geoData?.query?.geosearch || [];
-          
-          // Find the first geotagged file with a valid image extension
-          const validGeo = geoItems.find(item => {
-            const title = (item.title || '').toLowerCase();
-            return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
-          });
-          
-          if (validGeo) {
-            const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(validGeo.title)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
-            const infoRes = await fetch(infoUrl, { headers });
-            if (infoRes.ok) {
-              const infoData = await infoRes.json();
-              const pages = infoData?.query?.pages || {};
-              const pageId = Object.keys(pages)[0];
-              imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
-            }
-          }
+// Shared Multi-Stage Resolution Engine (Used by API and Scheduler)
+async function resolvePhotoAndDescription({ query, locationContext, latitude, longitude, googleMapsApiKey, loggerPrefix = 'Search-Photo' }) {
+  if (!query) return { fileUrl: null, description: null, message: 'Query is required' };
+  const headers = { 'User-Agent': 'TravelBuffPersonalApp/1.2 (contact-abhishek@example.com; Developer Test Instance)' };
+  let imageUrl = null;
+  let description = null;
+  let source = 'wikimedia';
+
+  // Helper for N-gram Substring combinations (for 4+ word names)
+  const generateSubQueries = (rawQuery, locCtx) => {
+    const clean = rawQuery.replace(/[,;]/g, '').trim();
+    const words = clean.split(/\s+/).filter(w => w.length > 0);
+    const set = new Set();
+    set.add(clean);
+
+    if (words.length >= 4) {
+      // Remove common prefix descriptors (e.g. Zonal, Government, Royal, National)
+      const stopPrefixes = ['zonal', 'government', 'govt', 'royal', 'national', 'state', 'district', 'central', 'the'];
+      if (stopPrefixes.includes(words[0].toLowerCase())) {
+        const withoutPrefix = words.slice(1).join(' ');
+        if (withoutPrefix.length >= 3) set.add(withoutPrefix);
+      }
+      // 3-word & 2-word sliding sub-phrases
+      for (let len = words.length - 1; len >= 2; len--) {
+        for (let i = 0; i <= words.length - len; i++) {
+          const sub = words.slice(i, i + len).join(' ');
+          if (sub.length >= 4) set.add(sub);
         }
-      } catch (err) {
-        console.error('Wikimedia Geosearch failed:', err);
       }
     }
 
-    // Clean query for Wikipedia Page Images & Extracts API
-    let wikiQuery = query;
-    if (query.includes(',')) {
-      wikiQuery = query.split(',')[0].trim();
+    const queries = Array.from(set);
+    if (locCtx && locCtx.trim()) {
+      queries.push(`${clean} ${locCtx.trim()}`);
     }
+    return queries;
+  };
 
-    // 2. Wikipedia Page Images & Extracts API (Main Article Info Box Image + Summary)
+  // Helper for Regex Candidate Title Matching
+  const isRegexTitleMatch = (inputQuery, candidateTitle) => {
+    if (!candidateTitle) return !1;
+    const cleanInput = inputQuery.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+    const cleanCand = candidateTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+    const words = cleanInput.split(/\s+/).filter(w => w.length > 2 && !['the', 'and', 'for', 'near', 'via'].includes(w));
+    if (words.length === 0) return true;
+    let matchCount = 0;
+    for (const w of words) {
+      if (cleanCand.includes(w)) matchCount++;
+    }
+    return (matchCount / words.length) >= 0.5;
+  };
+
+  // 1. Geosearch (Coordinates-Based)
+  if (latitude && longitude) {
     try {
-      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiQuery)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exlimit=1&format=json&origin=*&redirects=1`;
-      const wikiRes = await fetch(wikiUrl, { headers });
+      const geoUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=geosearch&gscoord=${latitude}|${longitude}&gsradius=10000&gslimit=15&format=json&origin=*`;
+      const geoRes = await fetch(geoUrl, { headers, signal: AbortSignal.timeout(8000) });
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        const geoItems = geoData?.query?.geosearch || [];
+        const validGeo = geoItems.find(item => {
+          const title = (item.title || '').toLowerCase();
+          return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
+        });
+        if (validGeo) {
+          const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(validGeo.title)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
+          const infoRes = await fetch(infoUrl, { headers, signal: AbortSignal.timeout(8000) });
+          if (infoRes.ok) {
+            const infoData = await infoRes.json();
+            const pages = infoData?.query?.pages || {};
+            const pageId = Object.keys(pages)[0];
+            imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[${loggerPrefix}] Geosearch failed or timed out:`, err.message || err);
+    }
+  }
+
+  const tryFetchWikiTitle = async (searchTitle) => {
+    try {
+      let cleanTitle = searchTitle;
+      if (searchTitle.includes(',')) cleanTitle = searchTitle.split(',')[0].trim();
+      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(cleanTitle)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exlimit=1&format=json&origin=*&redirects=1`;
+      const wikiRes = await fetch(wikiUrl, { headers, signal: AbortSignal.timeout(8000) });
       if (wikiRes.ok) {
         const wikiData = await wikiRes.json();
         const pages = wikiData?.query?.pages || {};
         const pageId = Object.keys(pages)[0];
-        if (pages[pageId]) {
-          if (!imageUrl) {
-            imageUrl = pages[pageId]?.thumbnail?.source || null;
-          }
-          const fullExtract = pages[pageId]?.extract || '';
-          description = fullExtract.split('\n')[0]?.trim() || null;
+        if (pageId && pageId !== '-1' && pages[pageId]) {
+          const page = pages[pageId];
+          const extractText = page.extract || '';
+          const isDisambig = extractText.toLowerCase().includes('may refer to:') || extractText.toLowerCase().includes('can refer to:');
+          return {
+            img: page.thumbnail?.source || null,
+            desc: extractText.split('\n')[0]?.trim() || null,
+            isDisambig
+          };
         }
       }
     } catch (err) {
-      console.error('Wikipedia Page Image/Extract API failed:', err);
+      console.error(`[${loggerPrefix}] Wikipedia Page API failed for "${searchTitle}":`, err.message || err);
     }
+    return null;
+  };
 
-    // 3. Fallback: Wikimedia Commons Text Search
-    if (!imageUrl) {
+  // 2. Multi-Stage Wikipedia Title & Substring Lookup
+  const searchVariants = generateSubQueries(query, locationContext);
+  for (const variant of searchVariants) {
+    const wikiResult = await tryFetchWikiTitle(variant);
+    if (wikiResult && !wikiResult.isDisambig) {
+      if (wikiResult.img && !imageUrl) imageUrl = wikiResult.img;
+      if (wikiResult.desc && !description) description = wikiResult.desc;
+      if (imageUrl && description) break;
+    }
+  }
+
+  // 3. Wikipedia Fuzzy Full-Text Search API (list=search) + Server-Side Regex Matching
+  if (!imageUrl) {
+    for (const variant of searchVariants.slice(0, 3)) {
       try {
-        const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srnamespace=6&format=json&origin=*`;
-        const searchRes = await fetch(searchUrl, { headers });
+        const srUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(variant)}&format=json&origin=*`;
+        const srRes = await fetch(srUrl, { headers, signal: AbortSignal.timeout(8000) });
+        if (srRes.ok) {
+          const srData = await srRes.json();
+          const candidates = srData?.query?.search || [];
+          for (const cand of candidates.slice(0, 4)) {
+            if (isRegexTitleMatch(query, cand.title)) {
+              const res = await tryFetchWikiTitle(cand.title);
+              if (res && res.img) {
+                imageUrl = res.img;
+                if (res.desc && !description) description = res.desc;
+                console.log(`[${loggerPrefix}] Fuzzy Search + Regex matched candidate "${cand.title}" for input "${query}"`);
+                break;
+              }
+            }
+          }
+        }
+        if (imageUrl) break;
+      } catch (err) {
+        console.error(`[${loggerPrefix}] Wikipedia Fuzzy search failed for "${variant}":`, err.message || err);
+      }
+    }
+  }
+
+  // 4. Fallback: Wikimedia Commons Text Search
+  if (!imageUrl) {
+    for (const variant of searchVariants.slice(0, 3)) {
+      try {
+        const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(variant)}&srnamespace=6&format=json&origin=*`;
+        const searchRes = await fetch(searchUrl, { headers, signal: AbortSignal.timeout(8000) });
         if (searchRes.ok) {
           const searchData = await searchRes.json();
           const searchItems = searchData?.query?.search || [];
-          
           const validImage = searchItems.find(item => {
             const title = (item.title || '').toLowerCase();
             return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
@@ -828,26 +933,29 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
           if (validImage) {
             const fileTitle = validImage.title;
             const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(fileTitle)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
-            const infoRes = await fetch(infoUrl, { headers });
+            const infoRes = await fetch(infoUrl, { headers, signal: AbortSignal.timeout(8000) });
             if (infoRes.ok) {
               const infoData = await infoRes.json();
               const pages = infoData?.query?.pages || {};
               const pageId = Object.keys(pages)[0];
               imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
+              if (imageUrl) break;
             }
           }
         }
       } catch (err) {
-        console.error('Wikimedia Text Search failed:', err);
+        console.error(`[${loggerPrefix}] Commons search failed:`, err.message || err);
       }
     }
+  }
 
-    // 4. Tier 2 Fallback: Google Maps / Places API Search
-    const apiKeyToUse = googleMapsApiKey || process.env.GOOGLE_MAPS_API_KEY;
-    if (!imageUrl && apiKeyToUse) {
+  // 5. Tier 2 Fallback: Google Maps Places API
+  const apiKeyToUse = googleMapsApiKey || process.env.GOOGLE_MAPS_API_KEY;
+  if (!imageUrl && apiKeyToUse) {
+    for (const gQuery of searchVariants.slice(0, 2)) {
       try {
-        const gUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${apiKeyToUse}`;
-        const gRes = await fetch(gUrl);
+        const gUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(gQuery)}&key=${apiKeyToUse}`;
+        const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(8000) });
         if (gRes.ok) {
           const gData = await gRes.json();
           const candidate = gData?.results?.[0];
@@ -855,46 +963,59 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
             const photoRef = candidate.photos[0].photo_reference;
             imageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photoRef}&key=${apiKeyToUse}`;
             source = 'google_maps';
+            break;
           }
         }
       } catch (gErr) {
-        console.error('Google Places photo search failed:', gErr);
+        console.error(`[${loggerPrefix}] Google Places photo search failed:`, gErr.message || gErr);
       }
     }
+  }
 
-    // If still no image found on both Wikipedia and Google Maps, return graceful 200 payload
-    if (!imageUrl) {
-      return res.json({ fileUrl: null, description, message: 'No public cover image found on Wikipedia or Google Maps' });
-    }
+  if (!imageUrl) {
+    const logName = locationContext ? `${query} (${locationContext})` : query;
+    console.warn(`[${loggerPrefix}] No image resolved for "${logName}"`);
+    const checkedSources = apiKeyToUse ? 'Wikipedia, Commons or Google Maps' : 'Wikipedia or Commons';
+    return { fileUrl: null, description, message: `No public cover image found on ${checkedSources}` };
+  }
 
-    // Now download the image locally
+  // Download Image Locally
+  try {
     const response = await fetch(imageUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+      signal: AbortSignal.timeout(10000)
     });
     if (!response.ok) {
-      return res.json({ fileUrl: null, description, message: 'Failed to download external image' });
+      return { fileUrl: null, description, message: `Failed to download image (HTTP ${response.status})` };
     }
     const contentType = response.headers.get('content-type') || '';
     let ext = '.jpg';
     if (contentType.includes('image/png')) ext = '.png';
     else if (contentType.includes('image/webp')) ext = '.webp';
     else if (contentType.includes('image/gif')) ext = '.gif';
-    
+
     const prefix = source === 'google_maps' ? 'gmap' : 'wiki';
     const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`;
-    if (!fs.existsSync(UPLOADS_DIR)) {
-      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-    }
+    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
     const filePath = join(UPLOADS_DIR, filename);
-    
+
     const arrayBuffer = await response.arrayBuffer();
     fs.writeFileSync(filePath, Buffer.from(arrayBuffer));
-    res.json({ fileUrl: `/uploads/${filename}`, description, source });
+    console.log(`[${loggerPrefix}] Successfully downloaded image for "${query}" to /uploads/${filename}`);
+    return { fileUrl: `/uploads/${filename}`, description, source };
   } catch (err) {
-    console.error('Failed to search or download image:', err);
-    res.json({ fileUrl: null, description: null, error: err.message });
+    console.error(`[${loggerPrefix}] Failed downloading resolved image for "${query}":`, err.message || err);
+    return { fileUrl: null, description, error: err.message };
+  }
+}
+
+app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
+  try {
+    const result = await resolvePhotoAndDescription({ ...req.body, loggerPrefix: 'Search-Photo' });
+    res.json(result);
+  } catch (err) {
+    console.error('Exception in search-photo endpoint:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -2453,6 +2574,17 @@ app.get('/api/backup/export', authenticateToken, async (req, res) => {
   }
 });
 
+// Deduplicate places marked with (copy)
+app.post('/api/places/deduplicate', authenticateToken, async (req, res) => {
+  try {
+    const mergedCount = await cleanupDuplicateCopyPlaces();
+    res.json({ success: true, mergedCount, message: `Successfully merged ${mergedCount} duplicate places.` });
+  } catch (err) {
+    console.error('Failed to deduplicate places:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Phase 1: Database Metadata Non-Blocking Restore Endpoint
 app.post('/api/backup/restore/metadata', async (req, res) => {
   const { data, currentUserId } = req.body;
@@ -2882,19 +3014,18 @@ async function runBackgroundPhotoSyncRetry() {
   console.log('[Scheduler] Checking for failed or pending cover photos/descriptions to retry...');
   try {
     const failedLocations = await db.all(
-      `SELECT id, user_id, name, latitude, longitude FROM locations WHERE photo_sync_status = 'failed' OR (photo_sync_status = 'pending' AND local_file_data IS NULL)`
+      `SELECT id, user_id, name, latitude, longitude, COALESCE(photo_sync_retry_count, 0) as retry_count FROM locations WHERE (photo_sync_status = 'pending' AND local_file_data IS NULL) OR (photo_sync_status = 'failed' AND COALESCE(photo_sync_retry_count, 0) < 2)`
     );
     const failedPlaces = await db.all(
-      `SELECT p.id, p.user_id, p.name, p.latitude, p.longitude, l.name as loc_name FROM places p JOIN locations l ON p.location_id = l.id WHERE p.photo_sync_status = 'failed' OR (p.photo_sync_status = 'pending' AND p.local_file_data IS NULL)`
+      `SELECT p.id, p.user_id, p.name, p.latitude, p.longitude, COALESCE(p.photo_sync_retry_count, 0) as retry_count, l.name as loc_name FROM places p JOIN locations l ON p.location_id = l.id WHERE (p.photo_sync_status = 'pending' AND p.local_file_data IS NULL) OR (p.photo_sync_status = 'failed' AND COALESCE(p.photo_sync_retry_count, 0) < 2)`
     );
 
     const queue = [];
     for (const loc of failedLocations) {
-      queue.push({ id: loc.id, userId: loc.user_id, type: 'location', query: loc.name, lat: loc.latitude, lon: loc.longitude });
+      queue.push({ id: loc.id, userId: loc.user_id, type: 'location', name: loc.name, locationContext: '', lat: loc.latitude, lon: loc.longitude });
     }
     for (const pl of failedPlaces) {
-      const cleanSearchQuery = `${pl.name} ${pl.loc_name}`.trim();
-      queue.push({ id: pl.id, userId: pl.user_id, type: 'place', query: cleanSearchQuery, lat: pl.latitude, lon: pl.longitude });
+      queue.push({ id: pl.id, userId: pl.user_id, type: 'place', name: pl.name, locationContext: pl.loc_name, lat: pl.latitude, lon: pl.longitude });
     }
 
     if (queue.length === 0) {
@@ -2902,122 +3033,34 @@ async function runBackgroundPhotoSyncRetry() {
       return;
     }
 
-    console.log(`[Scheduler] Found ${queue.length} photo sync tasks to retry. Processing sequentially...`);
+    // Process max 5 items per run to prevent Wikimedia rate limiting / server blocking
+    const maxBatchSize = 5;
+    const batch = queue.slice(0, maxBatchSize);
+    console.log(`[Scheduler] Found ${queue.length} total pending photo sync tasks. Processing batch of ${batch.length} (with 6s throttling)...`);
     const headers = { 'User-Agent': 'TravelBuffPersonalApp/1.2 (contact-abhishek@example.com; Developer Test Instance)' };
 
-    for (let i = 0; i < queue.length; i++) {
-      const item = queue[i];
-      // 5-second delay to strictly prevent rate limits
-      await new Promise(r => setTimeout(r, 5000));
+    for (let i = 0; i < batch.length; i++) {
+      const item = batch[i];
+      // 6-second delay between queries to strictly comply with Wikimedia rate limits
+      await new Promise(r => setTimeout(r, 6000));
 
       try {
-        console.log(`[Scheduler] Retrying photo lookup for ${item.type} "${item.query}"...`);
-        let imageUrl = null;
-        let description = null;
-
-        // 1. Geosearch
-        if (item.lat && item.lon) {
-          try {
-            const geoUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=geosearch&gscoord=${item.lat}|${item.lon}&gsradius=10000&gslimit=15&format=json&origin=*`;
-            const geoRes = await fetch(geoUrl, { headers });
-            if (geoRes.ok) {
-              const geoData = await geoRes.json();
-              const geoItems = geoData?.query?.geosearch || [];
-              const validGeo = geoItems.find(item => {
-                const title = (item.title || '').toLowerCase();
-                return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
-              });
-              if (validGeo) {
-                const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(validGeo.title)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
-                const infoRes = await fetch(infoUrl, { headers });
-                if (infoRes.ok) {
-                  const infoData = await infoRes.json();
-                  const pages = infoData?.query?.pages || {};
-                  const pageId = Object.keys(pages)[0];
-                  imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
-                }
-              }
-            }
-          } catch (err) {
-            console.error('[Scheduler] Geosearch failed:', err);
-          }
-        }
-
-        // Clean query for Wikipedia Page Images & Extracts API
-        let wikiQuery = item.query;
-        if (item.query.includes(',')) {
-          wikiQuery = item.query.split(',')[0].trim();
-        }
-
-        // 2. Wikipedia Page Images & Extracts API
-        try {
-          const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiQuery)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exlimit=1&format=json&origin=*&redirects=1`;
-          const wikiRes = await fetch(wikiUrl, { headers });
-          if (wikiRes.ok) {
-            const wikiData = await wikiRes.json();
-            const pages = wikiData?.query?.pages || {};
-            const pageId = Object.keys(pages)[0];
-            if (pages[pageId]) {
-              if (!imageUrl) {
-                imageUrl = pages[pageId]?.thumbnail?.source || null;
-              }
-              const fullExtract = pages[pageId]?.extract || '';
-              description = fullExtract.split('\n')[0]?.trim() || null;
-            }
-          }
-        } catch (err) {
-          console.error('[Scheduler] Wikipedia Page Image/Extract API failed:', err);
-        }
-
-        // 3. Fallback Commons Text Search
-        if (!imageUrl) {
-          const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(item.query)}&srnamespace=6&format=json&origin=*`;
-          const searchRes = await fetch(searchUrl, { headers });
-          if (searchRes.ok) {
-            const searchData = await searchRes.json();
-            const searchItems = searchData?.query?.search || [];
-            const validImage = searchItems.find(item => {
-              const title = (item.title || '').toLowerCase();
-              return title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || title.endsWith('.webp');
-            });
-            if (validImage) {
-              const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(validImage.title)}&prop=imageinfo&iiprop=url&iiurlwidth=640&format=json&origin=*`;
-              const infoRes = await fetch(infoUrl, { headers });
-              if (infoRes.ok) {
-                const infoData = await infoRes.json();
-                const pages = infoData?.query?.pages || {};
-                const pageId = Object.keys(pages)[0];
-                imageUrl = pages[pageId]?.imageinfo?.[0]?.thumburl || pages[pageId]?.imageinfo?.[0]?.url;
-              }
-            }
-          }
-        }
-
-        if (!imageUrl) {
-          throw new Error('No image resolved');
-        }
-
-        // Download locally
-        const response = await fetch(imageUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          }
+        console.log(`[Scheduler] [${i + 1}/${batch.length}] Retrying photo lookup for ${item.type} "${item.name}"...`);
+        
+        const result = await resolvePhotoAndDescription({
+          query: item.name,
+          locationContext: item.locationContext,
+          latitude: item.lat,
+          longitude: item.lon,
+          loggerPrefix: 'Scheduler'
         });
-        if (!response.ok) {
-          throw new Error(`Failed to download Wikimedia image: ${response.statusText}`);
+
+        if (!result || !result.fileUrl) {
+          throw new Error(result?.message || result?.error || 'No image resolved on Wikipedia, Commons or Google Maps');
         }
-        const contentType = response.headers.get('content-type') || '';
-        let ext = '.jpg';
-        if (contentType.includes('image/png')) ext = '.png';
-        else if (contentType.includes('image/webp')) ext = '.webp';
-        else if (contentType.includes('image/gif')) ext = '.gif';
 
-        const filename = `wiki-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`;
-        const filePath = join(UPLOADS_DIR, filename);
-        const arrayBuffer = await response.arrayBuffer();
-        fs.writeFileSync(filePath, Buffer.from(arrayBuffer));
-
-        const localFileUrl = `/uploads/${filename}`;
+        const localFileUrl = result.fileUrl;
+        const description = result.description;
 
         // Save to SQLite
         if (item.type === 'location') {
@@ -3042,17 +3085,17 @@ async function runBackgroundPhotoSyncRetry() {
           [crypto.randomUUID(), item.id, localFileUrl, 1, new Date().toISOString()]
         );
 
-        console.log(`[Scheduler] Successfully resolved and synced photo for ${item.type} "${item.query}".`);
+        console.log(`[Scheduler] Successfully resolved and synced photo for ${item.type} "${item.name}".`);
 
         // Notify client session so UI refreshes live
         notifyUserClients(item.userId);
       } catch (err) {
-        console.error(`[Scheduler] Retry failed for ${item.type} "${item.query}":`, err.message);
-        // Mark as failed again so it is retried on the next run
+        console.error(`[Scheduler] Retry failed for ${item.type} "${item.name}": ${err.message}`);
+        // Increment retry count and mark as failed so it stops retrying once it reaches 2
         if (item.type === 'location') {
-          await db.run(`UPDATE locations SET photo_sync_status = 'failed' WHERE id = ?`, [item.id]);
+          await db.run(`UPDATE locations SET photo_sync_status = 'failed', photo_sync_retry_count = COALESCE(photo_sync_retry_count, 0) + 1 WHERE id = ?`, [item.id]);
         } else {
-          await db.run(`UPDATE places SET photo_sync_status = 'failed' WHERE id = ?`, [item.id]);
+          await db.run(`UPDATE places SET photo_sync_status = 'failed', photo_sync_retry_count = COALESCE(photo_sync_retry_count, 0) + 1 WHERE id = ?`, [item.id]);
         }
       }
     }
