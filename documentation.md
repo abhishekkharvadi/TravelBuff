@@ -1,6 +1,6 @@
 # TravelBuff Documentation
 
-Welcome to the official documentation for **TravelBuff** — your personal travel organizer and itinerary planner designed to work seamlessly across all your devices, even when you're offline.
+Welcome to the official documentation for **TravelBuff** — your personal travel organizer, trip companion, and itinerary planner designed to work seamlessly across all your devices, even when you're offline.
 
 ---
 
@@ -8,20 +8,23 @@ Welcome to the official documentation for **TravelBuff** — your personal trave
 
 ### The TravelBuff Philosophy
 TravelBuff is designed for travelers who value reliability, speed, and privacy. Traditional travel planners stop working when you lose internet connection in remote locations, subways, or during flights. TravelBuff solves this with an **Offline-First** approach:
-* All your travel details are saved directly on your device.
-* Any changes you make show up instantly without waiting for a connection.
-* When you reconnect to the internet, your changes automatically sync with your backup account.
+* All your travel details are saved directly on your device (in browser IndexedDB storage).
+* Any changes you make show up instantly without waiting for a server connection.
+* When you reconnect to the internet, your changes automatically sync with your backend account via secure WebSockets.
 * Live updates automatically sync across your phone, tablet, and computer so all your devices stay up to date.
 
 ### Core Features
-* **Organized Folders & Tags**: Group your destinations and regions into clear folders with custom labels.
-* **Visited Badges**: Easily see where you've been with visual "Visited", "Partial", and "Not Visited" status indicators.
-* **Interactive Maps & Numbered Routes**: View your spots on interactive maps with clear step-by-step numbered markers (`#1`, `#2`, `#3`...).
-* **AI Trip Importer**: Automatically convert web articles, travel guides, or documents into structured travel plans with smart location details.
-* **Photo & Travel Companion Sync**: Connect with your photo library server to easily tag travel companions with face photo avatars.
-* **GPS Travel Log Import**: Import GPS logs from your trips to accurately measure your actual travel distances.
-* **Multi-Currency Expense Tracker**: Log expenses in any currency and set custom exchange rates to stay on top of your travel budget.
-* **Mobile-Friendly Design**: Simple, easy-to-use interface optimized for smartphone screens and touch navigation.
+* **Organized Folders & Drag-and-Drop**: Group your destinations and regions into clear folders with custom labels and intuitive drag-and-drop organization.
+* **Animated Folder Covers**: Folder cards automatically cycle through featured photos of your saved child destinations.
+* **Visited Badges & Status Tracking**: Easily see where you've been with visual "Visited", "Partial", and "Not Visited" status indicators.
+* **Interactive Maps & Numbered Routes**: View your spots on interactive maps with theme-aware SVG teardrop markers and clear step-by-step numbered route pins (`#1`, `#2`, `#3`...).
+* **AI Trip Importer**: Automatically convert web articles, travel guides, or documents into structured travel plans with smart location details and geocoding.
+* **Photo & Travel Companion Sync**: Connect with your self-hosted Immich photo library server to easily tag travel companions with recognized face photo avatars.
+* **GPS Travel Log Import**: Import GPS logs from your trips (via OwnTracks) to accurately measure your actual travel distances against planned routes.
+* **Dynamic Multi-Currency Expense Tracker**: Log expenses in any of 160+ official ISO world currencies with instant searchable currency lookup, pinned popular currencies, and custom exchange rate overrides.
+* **Printable Itineraries**: Generate clean, printer-ready trip itineraries with full schedules, notes, and route stops for offline paper copies or PDF export.
+* **Theme Customization**: Seamlessly toggle between Dark Mode, Light Mode, and System Theme preferences.
+* **Mobile-Friendly Progressive Web App (PWA)**: Installable standalone app optimized for smartphone screens, touch gestures, and pull-to-refresh navigation.
 
 ---
 
@@ -58,7 +61,7 @@ Download all the application components by running the install command in your t
 ```bash
 npm install
 ```
-This process takes about a minute to complete and sets up all necessary libraries automatically.
+This process sets up all necessary libraries automatically.
 
 ---
 
@@ -69,13 +72,13 @@ TravelBuff uses a configuration file named `.env` in the main folder to manage b
 Create a file named `.env` in your project folder with the following settings:
 
 ```env
-# Port number where TravelBuff will run (Default: 5000)
+# Port number where TravelBuff backend API will run (Default: 5000 in production, 3001 in dev)
 PORT=5000
 
-# Secret phrase used to secure user accounts (replace with your own secret word/key)
+# Secret phrase used to secure user accounts (persisted securely in SQLite database)
 JWT_SECRET=my-travelbuff-secret-key-12345
 
-# Folder path for storing uploaded photos and documents
+# Folder path for storing uploaded photos, receipts, and booking documents
 UPLOADS_DIR=./data/uploads
 ```
 
@@ -101,17 +104,17 @@ UPLOADS_DIR=./data/uploads
 
 ### Step 4: Launch TravelBuff
 
-You can choose to run TravelBuff interactively in your terminal or continuously in the background.
+You can choose to run TravelBuff interactively in your terminal, continuously in the background, or inside a Docker container.
 
-#### Option A: Run Interactively (Foreground Mode)
+#### Option A: Run Interactively (Foreground / Development Mode)
 Use this option when testing or developing locally:
 
 ```bash
 npm run dev
 ```
-This starts both the server and application interface. Keep your terminal window open while using TravelBuff.
+This starts the Vite development server (Port 3000) and the backend API server (Port 3001). Keep your terminal window open while using TravelBuff.
 
-#### Option B: Run in the Background (Recommended for Continuous Use)
+#### Option B: Run in the Background (Recommended for Continuous Host Use)
 Use this option if you want TravelBuff to keep running in the background even when you close your terminal:
 
 * **Cross-Platform Option (Using PM2 - Recommended for Windows, macOS, Linux)**:
@@ -136,7 +139,7 @@ Use this option if you want TravelBuff to keep running in the background even wh
 
 #### Option C: Deploying via Docker & Docker Compose (Recommended for Self-Hosting)
 
-If you prefer using Docker or self-hosting on home servers (Unraid, Synology, Portainer, or VPS), you can deploy TravelBuff using the official Docker image `abhishekkharvadi/travelbuff:latest`.
+If you prefer using Docker or self-hosting on home servers (Unraid, Synology, Portainer, TrueNAS, or VPS), you can deploy TravelBuff using the official Docker image `abhishekkharvadi/travelbuff:latest`.
 
 ##### 1. Quick Start via Docker CLI:
 Run this command in your terminal to start TravelBuff with persistent storage:
@@ -187,11 +190,13 @@ volumes:
 ---
 
 ### Step 5: Open TravelBuff in Your Web Browser
-Once launched, open your web browser (Chrome, Safari, Edge, Firefox) and navigate to:
+Once launched, open your web browser (Chrome, Safari, Edge, Firefox, Brave) and navigate to:
 
 ```text
 http://localhost:5000
 ```
+*(Or `http://localhost:3000` when running `npm run dev`)*.
+
 Welcome to TravelBuff! You can now start creating your travel folders, itineraries, and trip logs.
 
 ---
@@ -202,8 +207,10 @@ Welcome to TravelBuff! You can now start creating your travel folders, itinerari
 Organize your travel destinations with automated details and folder grouping:
 * **Add a Location**: Click the **+ Add Location** button on the Locations screen.
 * **Search & Auto-Fill**: Start typing your destination in the search bar and select your location from the dropdown suggestions. Location details—including name, state, country, and map coordinates—are automatically filled in for you.
-* **Automated Featured Cover Photos**: Once saved, TravelBuff automatically searches for and downloads a featured cover photo for your location in the background.
-* **Folder Option**: You can check the **Create as Folder** option when adding a location, or click **Convert to Folder** on any existing location. This allows you to treat a location (such as a Country or State) as a folder containing multiple other sub-locations or cities.
+* **Automated Featured Cover Photos**: Once saved, TravelBuff automatically searches for and downloads a featured cover photo for your location (from Wikipedia or Google Places API fallback).
+* **Folder Option**: Check the **Create as Folder** option when adding a location, or click **Convert to Folder** on any existing location. This allows you to treat a location (such as a Country or State) as a folder containing multiple other sub-locations or cities.
+* **Drag-and-Drop Organization**: Easily organize your destinations by clicking and dragging any location card and dropping it directly into a Folder card to move it into that folder.
+* **Animated Folder Cover Carousel**: Folder cards dynamically cycle through featured photos of child destinations every 3 seconds for an engaging visual overview.
 
 ---
 
@@ -211,8 +218,9 @@ Organize your travel destinations with automated details and folder grouping:
 Add specific spots and landmarks (such as cafes, temples, hotels, or waterfalls) inside any location:
 * **Multiple Places per Location**: Each location can store multiple individual places of visit.
 * **Spot Categories**: Assign categories to your spots (e.g. `hotel`, `stay`, `resort`, `restaurant`, `cafe`, `temple`, `museum`, `waterfall`, `mountain`, `trek`, `airport`, `station`, or custom user categories).
-* **Coordinates & Descriptions**: Each place of visit is saved with its own exact map coordinates and can include custom notes or descriptions.
-* **Photo Management**: Featured cover photos are automatically fetched and downloaded if available. If a photo isn't available or if you prefer a custom picture, you can manually upload images or star any uploaded photo as the featured cover image.
+* **Coordinates & In-Place Editing**: Each place of visit is saved with its own exact map coordinates and notes. You can edit names, categories, coordinates, and notes inline at any time.
+* **Missing Coordinate Warning**: If a place is saved without valid GPS coordinates, TravelBuff displays a `⚠️ Missing location coordinates` badge on the card and attempts background geocoding.
+* **Photo Management**: Featured cover photos are automatically fetched. You can manually upload custom images, fetch new covers via the **Fetch Cover Image** button, or star any photo to set it as the primary cover.
 
 ---
 
@@ -227,9 +235,9 @@ Easily locate your destinations using the flexible filter panel (`🔍 Filters &
 
 ---
 
-### Interactive Maps & Image Sources
-* **Map Pins**: View your locations and places of visit displayed visually with interactive markers on the map canvas.
-* **Image Sources**: By default, location cover photos and map details are pulled automatically from OpenStreetMap and Wikipedia. If you want Google Maps place search and imagery, you can add a Google Maps API Key in Settings (see Section 6 for details).
+### Interactive Maps & Teardrop Pins
+* **Theme-Aware Teardrop Markers**: View your locations and places rendered as 36x42 SVG teardrop pins with crisp white borders, drop shadows, and theme-adaptive colors (Light vs Dark mode).
+* **Image Sources**: Location cover photos and map details are pulled automatically from OpenStreetMap and Wikipedia. If you want Google Maps place search and imagery, you can add a Google Maps API Key in Settings.
 
 ---
 
@@ -256,7 +264,7 @@ TravelBuff provides built-in system collections as well as full custom collectio
 
 When creating or editing a collection, you can choose how items are gathered:
 
-1. **Manual Selection**: Hand-pick specific destination folders or individual places of visit using a searchable tree list.
+1. **Manual Selection**: Hand-pick specific destination folders or individual places of visit using a searchable, collapsible tree list.
 2. **Auto-Group Rules**: Automatically populate collections using smart filtering criteria:
    - **Filter by Locations**: Include items located within specific parent folders or cities.
    - **Filter by Categories**: Group spots by type (e.g. `restaurant`, `cafe`, `museum`, `hotel`).
@@ -348,8 +356,8 @@ TravelBuff lets you quickly build travel plans by automatically importing struct
 ---
 
 ### Accessing & Resuming Saved Guides
-* **Automatic Storage**: As soon as a web article or document is imported, TravelBuff automatically saves the raw guide content into your local database (`Saved Travel Guides`).
-* **Resuming Work**: You can access, view, or resume curation for any imported guide at any time by going to **Settings** -> **Saved Travel Guides**.
+* **Automatic Storage**: As soon as a web article or document is imported, TravelBuff automatically saves the raw guide content into your local database (`Saved Travel Guides & Markdowns`).
+* **Resuming Work**: Access, view, or resume curation for any imported guide at any time by going to **Settings** -> **Saved Travel Guides & Markdowns**.
 * **Progress Auto-Save**: Your curation progress (selected locations, categories, tags, day assignments) is saved automatically so you can safely pause and resume whenever needed.
 
 ---
@@ -407,6 +415,7 @@ The **Trips** tab is your central workspace for organizing multi-day travel plan
 ### Trip Planner Overview
 The main Trip Planner page displays all your trips organized into clear cards:
 * **Trip Filter & Search**: Search your trips by title or filter by status (**All**, **Planned**, or **Completed**).
+* **Trip Statistics**: Displays trip duration, total planned stops, and live expense spending at a glance.
 * **Active Trip Mode**: Mark a trip as **Active** to hide extra clutter during your travels and focus exclusively on today's schedule, booking vouchers, and quick expense entries.
 
 ---
@@ -419,7 +428,7 @@ Click **+ Plan New Trip** to open the 2-step setup wizard:
 - **Trip Title**: Enter a name for your journey (e.g., *"Japan Cherry Blossom Tour 2026"*).
 - **Start Date & Length**: Set your starting date and the total number of days for your trip.
 - **Trip Notes & Description**: Add general notes or travel goals.
-- **Planned Budget & Base Currency**: Set a target spending limit and select your primary currency.
+- **Planned Budget & Base Currency**: Set a target spending limit and select your primary currency from 160+ world currencies.
 - **Starting & Ending Address**: Select a saved home address to calculate travel routes from your home to your first stop and back.
 
 #### Step 2: Choosing Your Planning Mode
@@ -438,13 +447,13 @@ You can choose between two creation methods:
 ### Selecting Locations or Collections for Your Trip
 When creating a trip, choose specific destination folders (**Locations**) or custom thematic sets (**Collections**):
 * The trip planner automatically loads all places belonging to your selected locations and collections into your trip's **Places Bank**.
-* This makes it easy to drag and drop spots directly into your daily schedule without searching your entire database.
+* This makes it easy to add spots directly into your daily schedule without searching your entire database.
 
 ---
 
 ### Domestic vs. International Trips
 * **Domestic Trips**: Uses your primary home currency for simple expense logging and budget tracking.
-* **International Trips**: Enables multi-currency tracking, allowing you to log expenses in foreign currencies (e.g. `EUR`, `JPY`, `GBP`) with custom exchange rate overrides.
+* **International Trips**: Enables multi-currency tracking, allowing you to log expenses in foreign currencies (e.g. `EUR`, `JPY`, `CAD`, `GBP`, `AED`, `AUD`) with custom exchange rate overrides.
 
 ---
 
@@ -458,9 +467,10 @@ When editing a trip, TravelBuff opens an interactive 3-column workspace:
   - Click **+ Add** on any spot to assign it directly to a specific day in your plan.
 
 * **Column 2: Daily Itinerary Schedule (Middle Column)**:
-  - Organized day-by-day (**Day 1**, **Day 2**, etc.).
+  - Organized day-by-day (**Day 1**, **Day 2**, etc.) with distinctive color banners.
   - **Drag & Drop Reordering**: Drag items up or down to adjust your chronological schedule.
-  - **Automated Distances & Travel Times**: Automatically calculates driving distances (in km) and estimated travel times between consecutive stops using real-time routing engines.
+  - **Automated Distances & Travel Times**: Automatically calculates driving distances (in km) and estimated travel times between consecutive stops using real-time routing engines (OSRM or Google Distance Matrix).
+  - **Custom Stop Timing & Notes**: Add arrival/departure times, custom stop descriptions, and notes.
   - **Inline Booking Confirmation**: Attach flights, train tickets, rental cars, and hotel confirmation PDFs directly to specific days.
 
 * **Column 3: Interactive Route Map (Right Column)**:
@@ -471,9 +481,15 @@ When editing a trip, TravelBuff opens an interactive 3-column workspace:
 
 ### Workspace Sub-Tabs (`Itinerary`, `Budget`, `Notes`)
 
-* **Itinerary Tab**: Manage daily stops, map markers, booking attachments, and overnight hotel selections.
+* **Itinerary Tab**: Manage daily stops, map markers, booking attachments, overnight hotel selections, and print formatted itineraries.
 * **Budget Tab**: Monitor planned vs. actual spending, log expenses, add custom exchange rates, and view cost charts.
 * **Notes Tab**: Keep general trip notes, packing lists, and important travel documents handy.
+
+---
+
+### Printable Trip Itineraries (Print View)
+* Click the **🖨️ Printer icon** in the trip workspace header to generate a clean, printer-friendly summary of your trip.
+* The printable format includes daily timelines, landmark names, addresses, stop notes, driving distances, and booking reference numbers — perfect for paper backups or saving as a PDF.
 
 ---
 
@@ -481,8 +497,6 @@ When editing a trip, TravelBuff opens an interactive 3-column workspace:
 
 * **Home Address Handling**: Save your primary origin under **Settings** -> **Saved Home Addresses**. Starting a trip calculates exact driving distances and travel times from your home to your first stop.
 * **Hotel / Stay / Resort Anchors**: Places categorized as stays (hotels, resorts, Airbnb) can be selected as overnight lodging anchors for each day, automatically linking booking confirmations and establishing return points for the evening.
-
----
 
 ---
 
@@ -504,8 +518,8 @@ TravelBuff includes a full multi-currency budgeting engine to help you plan, tra
 
 ---
 
-### Multi-Currency Budgets & Custom Exchange Rates
-- **Base Home Currency**: Set your primary home currency in **Settings** (e.g. `USD`, `EUR`, `INR`, `GBP`, `JPY`).
+### Multi-Currency Budgets & 160+ World Currencies
+- **Base Home Currency**: Set your primary home currency in **Settings** or during trip creation using the searchable combobox supporting **160+ official ISO world currencies** with top 12 pinned popular currencies.
 - **Foreign Currency Expenses**: Record expenses in whichever currency you paid with. TravelBuff automatically converts foreign costs into your base currency for total budget calculations.
 - **Custom Exchange Rate Overrides**: If you exchange cash at a specific local kiosk or airport conversion rate, enter custom conversion overrides under **Currency Exchange Rates** in the Trip Budget page. TravelBuff will prioritize your custom exchange rates over default API rates.
 
@@ -539,7 +553,7 @@ When you are actively traveling—standing in an airport line, riding a train, o
 #### 1. Today's Streamlined Schedule
 - Automatically detects your active trip and opens today's date.
 - Displays chronological stops for the day with category icons, notes, and driving distances/times between stops.
-- One-tap links to open turn-by-turn directions in your favorite map app.
+- One-tap links to open turn-by-turn directions in your favorite map app (Google Maps or Apple Maps).
 
 #### 2. 100% Offline Mode & Instant Local Sync
 - All your trip itineraries, vouchers, locations, and notes are saved directly on your device.
@@ -569,9 +583,16 @@ When you are actively traveling—standing in an airport line, riding a train, o
 
 ---
 
-## 9. Settings
+## 9. Settings & System Administration
 
-The **Settings** page is your central control panel for managing integrations, AI assistants, backup files, custom categories, travel companions, saved addresses, and user administration.
+The **Settings** page is your central control panel for managing integrations, AI assistants, backup files, custom categories, travel companions, saved addresses, user administration, and API logs.
+
+---
+
+### User Account & Profile Management
+Accessible from the user menu in the top-right header:
+* **Profile Photo / Avatar**: Upload and update your personal profile picture.
+* **Password Management**: Self-service password updates with current password verification.
 
 ---
 
@@ -581,6 +602,7 @@ Connect your self-hosted **Immich** photo server to automatically sync photo alb
 * **Alternative URL**: Optional public URL used when opening Immich web album links directly from location cards.
 * **Immich API Key**: Enter your personal Immich API key for secure photo syncing.
 * **Test Connection Tool**: Click **Test Connection** to verify your API credentials and detect your Immich server version instantly.
+* **Immich Recognized People Sync**: Search and import recognized face profiles from Immich to automatically create travel companions with photo avatars.
 
 ---
 
@@ -602,8 +624,9 @@ TravelBuff defaults to free OpenStreetMap and Leaflet maps out of the box. You c
 
 ---
 
-### General Configurations & Navigation Options
-* **Base Currency**: Set your primary home currency (`USD`, `EUR`, `INR`, `GBP`, `JPY`) for budget tracking and automatic foreign expense conversions.
+### General Configurations & Theme Options
+* **Base Currency (160+ ISO Currencies)**: Set your default home currency using the searchable combobox with pinned major currencies (USD, EUR, GBP, INR, JPY, CAD, AUD, CHF, SGD, AED, CNY, NZD).
+* **Appearance / Themes**: Choose between **Dark Mode**, **Light Mode**, or **System Theme** matching your OS preference.
 * **Default Navigation Map App**: (iOS & macOS devices) Choose whether direction links open in **Google Maps** or **Apple Maps**.
 
 ---
@@ -619,6 +642,14 @@ Protect your travel database and move your data across devices seamlessly:
 * **Download Backup (`.json`)**: Click **📥 Download Backup** to save all locations, places, trips, expenses, guides, notes, and uploaded photos into a single backup file.
 * **Chunked Restore**: Upload a saved backup JSON file. TravelBuff safely restores database records and uploaded media in background chunks with real-time progress indicators.
 * **Re-Sync Pending Media**: Click **🔄 Re-Sync Pending Media** to refresh local storage and rebuild companion photo avatars if needed.
+
+---
+
+### External API Usage Logs (Past 6 Months)
+Monitor your third-party API consumption over the past 6 months to avoid unexpected billing:
+* **Tracked Services**: Google Maps JavaScript, Directions, Distance Matrix, Geocoding, Places, OSRM Routing, Wikipedia, and AI Assistant calls.
+* **Monthly Breakdown**: View real-time request counts broken down month-by-month.
+* **Export Usage Logs (`.csv`)**: Click **📥 Export API Log (.csv)** to download a full CSV report for billing analysis or audits.
 
 ---
 
@@ -644,7 +675,7 @@ Visible exclusively to server administrators (the first account created on your 
 
 ### Travel Companions (People)
 * Manage profiles for friends and family members traveling with you.
-* Link companions to **Immich face/person IDs** to display round photo avatars in trip headers and location albums.
+* Link companions to **Immich face/person IDs** or import recognized faces directly to display round photo avatars in trip headers and location albums.
 
 ---
 
@@ -657,6 +688,18 @@ When adding or editing a location, place of visit, or saved address, you don't n
 * Simply copy a full coordinate pair string (e.g. `28.6139° N, 77.2090° E` or `28.6139, 77.2090` from Google Maps or Apple Maps).
 * Paste the string directly into the **Search Address or Coordinates** field.
 * TravelBuff's smart coordinate parser will automatically split the numbers, extract the exact latitude and longitude values, and place your map pin accurately on the map!
+
+---
+
+### 📂 Drag-and-Drop Folder Hierarchy
+* To organize nested destinations quickly, simply click and drag any location card onto any folder card.
+* The destination is instantly moved into that folder, updating its hierarchy and cover photo previews.
+
+---
+
+### 🖨️ 1-Click Printable Trip Schedules
+* Before departing, open your trip in the planner and click the **Printer icon**.
+* Print out your complete schedule, day-by-day route stops, contact addresses, and booking references or save them as a clean PDF for zero-battery peace of mind.
 
 ---
 
@@ -691,72 +734,90 @@ When adding or editing a location, place of visit, or saved address, you don't n
 
 ---
 
-## 11. Mobile & Screen Adaptability
+## 11. Mobile & Progressive Web App (PWA) Setup
 
-TravelBuff is built for great mobile experiences:
-* **Flexible Design**: Header elements and navigation automatically adapt to small phone screens.
-* **Mobile Navigation Bar**: When viewed on smartphones, a fixed bottom bar allows smooth switching between *Locations*, *Collections*, *Trips*, and *Settings*.
-* **Screen Edge Padding**: Automatic edge padding ensures navigation controls never block phone home bars or notches.
+TravelBuff is built as an installable Progressive Web App (PWA) with complete offline resilience:
+
+### Installing the Mobile App (PWA)
+
+#### On iPhone & iPad (iOS Safari)
+1. Open **Safari** and navigate to your TravelBuff web address (e.g. `http://your-server-ip:5000` or custom domain).
+2. Tap the **Share** icon (box with an upward arrow) in the bottom toolbar.
+3. Scroll down and tap **Add to Home Screen**.
+4. Confirm the app name ("TravelBuff") and tap **Add** in the top-right corner.
+5. TravelBuff will now launch in fullscreen standalone mode without browser URL bars!
+
+#### On Android (Google Chrome)
+1. Open **Google Chrome** and navigate to your TravelBuff web address.
+2. Tap the **three-dot menu** in the top-right corner.
+3. Select **Install App** or **Add to Home Screen**.
+4. Follow the prompt to complete installation.
+
+---
+
+### Mobile Navigation & Touch Features
+* **Mobile Navigation Bar**: Fixed bottom bar allows smooth 1-tap switching between *Locations*, *Collections*, *Trips*, and *Settings*.
+* **Pull-to-Refresh**: Swipe downward from the top of the screen on mobile devices to trigger an instant server data synchronization.
+* **Screen Edge Padding**: Automatic edge padding ensures navigation controls never overlap phone home bars or display notches.
 
 ---
 
 ## 12. Release Notes & Version History
 
-### Version 1.2.9 (Current Release)
-* **Docker & Docker Compose Deployment Guide**: Added comprehensive container setup instructions under Section 2 ("Setting Up TravelBuff").
+### Version 5 (v5) - Current Release
+* **Dynamic 160+ ISO World Currencies**: Expanded Base Currency configurations in Settings and Trip Planner from static lists to all official ISO 4217 world currencies (~160+) dynamically resolved via browser-native `Intl.supportedValuesOf('currency')` and `Intl.DisplayNames`.
+* **Searchable Currency Combobox Component**: Added custom searchable combobox (`SearchableCurrencySelect`) allowing instant search filtering by currency code (e.g. `CAD`), currency name (e.g. `Rupee`, `Euro`, `Yen`), and currency symbol (e.g. `€`, `₹`, `$`).
+* **Pinned Popular Currencies**: Top 12 major world currencies (USD, EUR, GBP, INR, JPY, CAD, AUD, CHF, SGD, AED, CNY, NZD) pinned at the top for 1-click selection.
+* **Theme-Aware UI**: Formatted dropdown colors and map pins using CSS root theme variables, seamlessly adapting to Light Mode, Dark Mode, and custom themes.
+* **External API Usage Logs & CSV Export**: Added dedicated 6-month API request tracking panel with exportable CSV logs.
+
+---
+
+### Version 4 (v4)
+* **Database-Persisted `JWT_SECRET`**: Auto-generates and persists a secure 64-character secret in `/data/travelbuff.db` (`app_config` table). User sessions, JWT tokens, and WebSockets now survive container restarts and Docker updates without requiring re-login.
+* **3-Port Environment Isolation**:
+  - Local Dev (`npm run dev`): `http://localhost:3000` (Vite) / `3001` (API).
+  - Local Docker Test: `http://localhost:4000`.
+  - Docker Hub Production (`docker-compose.yml`): `http://localhost:5000`.
+* **Express SPA Asset Guard**: Updated catch-all route in `server.js` to return HTTP `404` for missing static files (`/assets/`), preventing HTML from being returned for script modules.
+* **Network-First Service Worker Strategy**: Configured navigation requests network-first when online, ensuring fresh asset hashes on container deployments.
+
+---
+
+### Version 3 (v3)
+* **Automatic 401/403 Stale Token Invalidation**: Automatically logs out users when `/api/auth/me` returns `401` or `403` status codes, preventing broken logged-in states.
+* **Client WebSocket Lifecycle Guard**: Guarded against duplicate socket connections and duplicate close triggers.
+* **PWA Service Worker Cache Upgrade**: Purged stale browser app shell caches on updates.
+
+---
+
+### Version 2 (v2)
+* **Separate Repositories Setup**: Split TravelBuff into core application repository (`travelbuff`) and container distribution repository (`travelbuff-docker`) linked via Git Submodule.
+* **Automated Security Audit & Pre-Sync Gate**: Added `npm audit --audit-level=high` prebuild checks.
+* **Theme-Aware SVG Teardrop Map Pins**: Upgraded Leaflet map markers to 36x42 SVG teardrop pins with drop shadows, crisp white outlines, and theme-adaptive colors.
+* **Automatic Background Geocoding & Error Warning Badge**: Background auto-geocoding for unlocated places with `⚠️ Missing location coordinates` warning indicator on place cards.
+
+---
+
+### Version 1.3.0
+* **AI Location-First Extraction & Tagging**: Updated AI import extraction prompt to resolve top-level locations first and automatically link places of visit to their corresponding parent locations.
+* **Duplicate Prevention & Non-Location Filtering**: Filtered duplicate entries and non-specific location text from AI geocoding and resolution.
+
+---
+
+### Version 1.2.9
+* **Docker & Docker Compose Deployment Guide**: Added official Docker container deployment instructions.
 * **Official Docker Repository**: Documented official image `abhishekkharvadi/travelbuff:latest`.
 * **Production-Ready Compose Template**: Provided sample `docker-compose.yml` configuration file with persistent volume mounts (`/app/data` and `/app/data/uploads`) and lifecycle commands (`up`, `logs`, `down`).
 
 ---
 
 ### Version 1.2.8
-* **Comprehensive Documentation Overhaul**: Reorganized and expanded guide documentation into 12 comprehensive, non-technical sections reflecting exact code behavior.
-* **Collections Guide & Real-World Examples**: Detailed manual vs. auto-grouping rules with 5 concrete real-world usage examples ("Wonders of the World", "Excellent Restaurants in Delhi", "Places for a Day Trip from Chennai", "Paris Cultural Landmarks", "Tokyo Coffee Trail").
-* **Travel Guide & AI Importer**: Documented URL web scraping, file uploads, saved guides workspace, AI button toolbars, and 1-click itinerary generation.
+* **Comprehensive Documentation Overhaul**: Reorganized and expanded guide documentation into structured, non-technical sections reflecting exact code behavior.
+* **Collections Guide & Real-World Examples**: Detailed manual vs. auto-grouping rules with 5 concrete real-world usage examples.
 * **Trip Planner Workspace**: Detailed 2-step setup wizard (Manual vs AI Assisted), 3-column workspace, sub-tabs (`Itinerary`, `Budget`, `Notes`), home distance estimates, and hotel stay anchors.
 * **Expense Engine & Multi-Currency**: Documented planned vs. actual budget tracking, multi-currency conversions, custom exchange rates, category breakdown charts, and receipt attachments.
 * **Trip Mode & 100% Offline Sync**: Documented mobile-optimized single-screen companion view, 100% offline local sync, quick expense logging, 2km nearby food finder with 1-click itinerary bookmarking, instant booking vouchers, and OwnTracks GPS log imports.
-* **Settings & Administration**: Fully documented Immich integration, AI provider options, Google Maps API setup, OwnTracks webhook, chunked backup/restore, admin user management, and saved home addresses.
-* **Helpful Tips & Shortcuts**: Highlighted automatic coordinate smart parsing (latitude/longitude paste auto-split trick), keyboard shortcuts, browser navigation/bookmarking, and offline pre-loading.
-
----
-
-### Version 1.2.7
-* **Bulk Location Controls**: Streamlined bulk location selection with a dedicated dropdown and quick Apply button.
-* **Smart Category Recognition**: Improved AI category extraction and normalized standard category labels (`Dining`, `Attraction`, `Lodging`, `Transit`, `Shopping`).
-* **Simplified Documentation**: Updated guide documentation to be easy to read and non-technical for all users.
-
----
-
-### Version 1.2.6
-* **Smart Cover Photo Search**: Added automated cover photo lookup with clean fallback options for accurate landmark photos.
-* **Enhanced Location Matching**: Combined place names and destination cities for more accurate photo matches.
-* **Clearer Button Labels**: Updated photo buttons to "Fetch Cover Image" for better clarity.
-* **Smooth Error Handling**: Improved network response stability during photo searches.
-
----
-
-### Version 1.2.0
-* **Seamless Back & Forward Navigation**:
-  - Full browser back and forward button support so you can navigate folder structures and pages naturally without leaving the application.
-* **Direct Web Bookmarking**:
-  - Save links directly to specific folders or settings pages to reopen them instantly.
-
----
-
-### Version 1.1.0
-* **First-User Admin Rights**:
-  - The first account created on your server automatically receives administrator management options.
-* **Account Management**:
-  - Admins can manage accounts, reset passwords, or remove user entries from Settings.
-* **Clean Data Removal**:
-  - Deleting an account safely clears all associated trips, expenses, places, and uploaded files.
-* **Reliable Backup & Restore Engine**:
-  - Large backup files and media attachments restore reliably in manageable chunks.
-* **Private Account Backups**:
-  - Backup exports are safely isolated to individual accounts.
-* **Version Information**:
-  - Displays version badges (`TravelBuff v1.1.0`) across login and settings screens.
 
 ---
 

@@ -940,7 +940,6 @@ dialog::backdrop {
     padding: 8px 12px !important;
     max-width: 100vw !important;
     box-sizing: border-box !important;
-    overflow-x: hidden !important;
   }
   .header-controls {
     gap: 6px !important;
@@ -965,6 +964,38 @@ dialog::backdrop {
     bottom: calc(64px + env(safe-area-inset-bottom)) !important;
     right: 8px !important;
     max-width: calc(100vw - 24px) !important;
+  }
+  .bulk-actions-floating-bar {
+    bottom: calc(76px + env(safe-area-inset-bottom)) !important;
+    z-index: 1050 !important;
+    max-width: calc(100vw - 24px) !important;
+    padding: 6px 12px !important;
+    gap: 8px !important;
+  }
+}
+
+/* Horizontal Action Strip (v6 Mobile Discoverability) */
+.header-actions-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  max-width: 100%;
+  padding-bottom: 2px;
+  padding-right: 4px;
+}
+.header-actions-strip::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .header-actions-strip {
+    padding-right: 16px;
+    mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
   }
 }
 
@@ -1167,5 +1198,92 @@ body.light-theme .btn-secondary:hover {
 body.light-theme .nav-link:hover {
   color: var(--text-primary) !important;
   background: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Floating Bulk Action Bar (v6) */
+.bulk-actions-floating-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-surface-elevated, #18181b);
+  border: 1px solid var(--border-glass, rgba(255, 255, 255, 0.15));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(99, 102, 241, 0.15);
+  border-radius: 40px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 1000;
+  backdrop-filter: blur(16px);
+  animation: slideUpFade 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: 90vw;
+}
+
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 20px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.search-input-wrapper {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  color: var(--text-muted, #71717a);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 50%;
+  transition: all 0.15s ease;
+}
+
+.search-clear-btn:hover {
+  color: var(--text-primary, #fff);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.card-select-checkbox {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 15;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(4px);
+}
+
+.card-select-checkbox.selected {
+  background: var(--accent-primary, #6366f1);
+  border-color: var(--accent-primary, #6366f1);
+  color: #ffffff;
+}
+
+.card.is-selected {
+  outline: 2px solid var(--accent-primary, #6366f1);
+  outline-offset: 2px;
 }
 

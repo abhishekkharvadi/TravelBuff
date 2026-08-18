@@ -39,7 +39,9 @@ async function resolveJwtSecret() {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  exposedHeaders: ['X-Refreshed-Token']
+}));
 app.use(express.json({ limit: '500mb' }));
 
 // Wrap express with HTTP server
@@ -160,11 +162,36 @@ function authenticateToken(req, res, next) {
   
   if (!token) return res.status(401).json({ error: 'Access token required' });
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid or expired token' });
-    req.user = user;
+  let decodedUser;
+  let usedFallback = false;
+
+  try {
+    decodedUser = jwt.verify(token, JWT_SECRET);
+  } catch (err1) {
+    try {
+      decodedUser = jwt.verify(token, 'travelbuff-super-secret-key-12345');
+      usedFallback = true;
+    } catch (err2) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+  }
+
+  if (decodedUser) {
+    if (usedFallback && JWT_SECRET !== 'travelbuff-super-secret-key-12345') {
+      try {
+        const refreshedToken = jwt.sign(
+          { id: decodedUser.id, username: decodedUser.username, is_admin: decodedUser.is_admin || 0 },
+          JWT_SECRET,
+          { expiresIn: '3650d' }
+        );
+        res.setHeader('X-Refreshed-Token', refreshedToken);
+      } catch (signErr) {
+        console.warn('[Auth] Failed to generate refreshed token on fallback match:', signErr);
+      }
+    }
+    req.user = decodedUser;
     next();
-  });
+  }
 }
 
 function authenticateAdminToken(req, res, next) {
@@ -266,6 +293,29 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
       isAdmin: user ? (user.is_admin || 0) : 0, 
       config, 
       profilePicture: user ? user.profile_picture : null 
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
+  try {
+    const user = await db.get('SELECT id, username, is_admin, profile_picture FROM users WHERE id = ?', [req.user.id]);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const token = jwt.sign(
+      { id: user.id, username: user.username, is_admin: user.is_admin || 0 },
+      JWT_SECRET,
+      { expiresIn: '3650d' }
+    );
+    res.json({
+      token,
+      userId: user.id,
+      username: user.username,
+      isAdmin: user.is_admin || 0,
+      profilePicture: user.profile_picture
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2253,6 +2303,16 @@ app.delete('/api/trips/:id', authenticateToken, async (req, res) => {
 app.get('/api/trips/:tripId/rates', authenticateToken, async (req, res) => {
   try {
     const list = await db.all('SELECT * FROM trip_currency_rates WHERE trip_id = ?', [req.params.tripId]);
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Trip Notes
+app.get('/api/trips/:tripId/notes', authenticateToken, async (req, res) => {
+  try {
+    const list = await db.all('SELECT * FROM trip_notes WHERE trip_id = ? ORDER BY created_at ASC', [req.params.tripId]);
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });

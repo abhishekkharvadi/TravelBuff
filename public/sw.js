@@ -1,4 +1,4 @@
-const CACHE_NAME = 'travelbuff-v4';
+const CACHE_NAME = 'travelbuff-v6';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -8,7 +8,7 @@ const ASSETS_TO_CACHE = [
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];
 
-// Install Event
+// Install Event - Pre-cache core app shell
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
@@ -20,7 +20,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate Event
+// Activate Event - Clean up old cache versions
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -40,7 +40,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
 
-  // Exclude API requests, uploads, and WebSockets from SW interception
+  // Exclude API requests, uploads, WebSockets, and non-GET methods from SW interception
   if (
     requestUrl.pathname.startsWith('/api') || 
     requestUrl.pathname.startsWith('/uploads') || 
@@ -62,28 +62,44 @@ self.addEventListener('fetch', (event) => {
           return networkResponse;
         })
         .catch(() => {
-          // Offline fallback
-          return caches.match('/index.html') || caches.match('/');
+          // Offline navigation fallback: serve cached index.html or root
+          return caches.match('/index.html').then((response) => response || caches.match('/'));
         })
     );
     return;
   }
 
-  // Stale-While-Revalidate strategy for static assets
+  // Cache-First strategy for static assets (JS, CSS, Web Fonts, Images, CDNs)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
-        }
-        return networkResponse;
-      }).catch((err) => {
-        // Return cached response if available, or let request fail natively
+      if (cachedResponse) {
+        // Return cached version immediately
         return cachedResponse;
-      });
+      }
 
-      return cachedResponse || fetchPromise;
+      // If not in cache, fetch from network and dynamically cache valid responses
+      return fetch(event.request)
+        .then((networkResponse) => {
+          if (
+            networkResponse && 
+            networkResponse.status === 200 && 
+            (networkResponse.type === 'basic' || networkResponse.type === 'cors' || networkResponse.type === 'opaque')
+          ) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
+          }
+          return networkResponse;
+        })
+        .catch((err) => {
+          console.warn('[Service Worker] Fetch failed for:', event.request.url, err);
+          // Return a 503 response if offline and no cache match is available (never return undefined!)
+          return new Response('Network error occurred and no cache available', {
+            status: 503,
+            statusText: 'Service Unavailable',
+            headers: new Headers({ 'Content-Type': 'text/plain' })
+          });
+        });
     })
   );
 });
+

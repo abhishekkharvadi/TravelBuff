@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   MapPin, Plus, Check, Square, Star, Image as ImageIcon, Trash2, 
-  Search, X, Edit, Edit2, Eye, Navigation, PlusCircle, Compass, RefreshCw 
+  Search, X, Edit, Edit2, Eye, Navigation, PlusCircle, Compass, RefreshCw,
+  Folder, FolderPlus, FolderInput, Layers, CheckSquare, Filter
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
 import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
 import MapView from './MapView.jsx';
+import MoveToFolderModal from './MoveToFolderModal.jsx';
 
 function FolderCover({ folderId, locations, getFeaturedPhoto }) {
   const getAllChildLocationIds = (fId) => {
@@ -107,6 +109,20 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
   const [filterVisited, setFilterVisited] = useState(''); // '', 'visited', 'not-visited'
   const [filterSource, setFilterSource] = useState('');
   const [sortBy, setSortBy] = useState('date-desc');
+
+  // Multi-select & Move to Folder Modal State (v6)
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedLocIds, setSelectedLocIds] = useState([]);
+  const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
+  const [locationsToMove, setLocationsToMove] = useState([]);
+  const [toastMessage, setToastMessage] = useState(null);
+  const [isFolderLocked, setIsFolderLocked] = useState(false);
+  const [pendingMoveLocations, setPendingMoveLocations] = useState([]);
+
+  // Reset window scroll position when opening a location or entering/exiting folders
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [selectedLocation?.id, currentFolderId]);
 
   // Searchable Tag State
   const [tagSearch, setTagSearch] = useState('');
@@ -492,6 +508,122 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
       const updatedLoc = { ...draggedLoc, parent_id: targetFolder.id };
       await db.locations.update(draggedId, { parent_id: targetFolder.id });
       await queueSyncAction('locations', 'update', updatedLoc);
+      showToast(`Moved "${draggedLoc.name}" to "${targetFolder.name}"`);
+    }
+  };
+
+  // Toast Notification Helper
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // Modal Open / Close Helpers (Mutual Exclusivity)
+  const openMoveModal = (locs) => {
+    setFolderToDelete(null);
+    setShowAddForm(false);
+    setLocationsToMove(locs || []);
+    setIsMoveModalOpen(true);
+  };
+
+  const closeMoveModal = () => {
+    setIsMoveModalOpen(false);
+    setLocationsToMove([]);
+  };
+
+  const openDeleteFolderModal = (folderLoc) => {
+    setIsMoveModalOpen(false);
+    setShowAddForm(false);
+    setFolderToDelete(folderLoc);
+  };
+
+  const closeDeleteFolderModal = () => {
+    setFolderToDelete(null);
+  };
+
+  const openAddLocationModal = () => {
+    setIsMoveModalOpen(false);
+    setFolderToDelete(null);
+    setIsFolderChecked(false);
+    setIsFolderLocked(false);
+    setPendingMoveLocations([]);
+    setShowAddForm(true);
+  };
+
+  const openAddFolderModal = (locsToMove = []) => {
+    setIsMoveModalOpen(false);
+    setFolderToDelete(null);
+    setIsFolderChecked(true);
+    setIsFolderLocked(true);
+    setPendingMoveLocations(locsToMove || []);
+    setShowAddForm(true);
+  };
+
+  const closeAddModal = () => {
+    setShowAddForm(false);
+    setIsFolderLocked(false);
+    setPendingMoveLocations([]);
+  };
+
+  // Move Locations to Target Folder (Option A, B, C)
+  const handleMoveLocations = async (targetFolderId, overrideLocs = null) => {
+    const locs = overrideLocs || locationsToMove;
+    if (!locs || locs.length === 0) return;
+    const targetFolder = locations.find(l => l.id === targetFolderId);
+    const targetName = targetFolder ? targetFolder.name : 'Top Level / Root';
+
+    for (const loc of locs) {
+      const updated = { ...loc, parent_id: targetFolderId };
+      await db.locations.update(loc.id, { parent_id: targetFolderId });
+      await queueSyncAction('locations', 'update', updated);
+    }
+
+    if (selectedLocation && locs.some(l => l.id === selectedLocation.id)) {
+      setSelectedLocation(prev => prev ? { ...prev, parent_id: targetFolderId } : prev);
+    }
+
+    const count = locs.length;
+    setSelectedLocIds([]);
+    setLocationsToMove([]);
+    setPendingMoveLocations([]);
+    setIsSelectMode(false);
+    setIsMoveModalOpen(false);
+    showToast(count === 1 ? `Moved "${locs[0].name}" to ${targetName}` : `Moved ${count} locations to ${targetName}`);
+  };
+
+  // Toggle Single Location in Selection Mode
+  const handleToggleSelectLocation = (id) => {
+    setSelectedLocIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  // Bulk Delete Selected Locations/Folders
+  const handleBulkDelete = async () => {
+    if (selectedLocIds.length === 0) return;
+    const count = selectedLocIds.length;
+    const hasFolder = selectedLocIds.some(id => {
+      const l = locations.find(loc => loc.id === id);
+      return l && l.is_folder === 1;
+    });
+
+    const confirmMsg = hasFolder
+      ? `Are you sure you want to delete ${count} selected item(s)? Any folders and all nested locations, places, and photos inside them will be permanently deleted.`
+      : `Are you sure you want to delete ${count} selected location(s)? All places of visit and photos within them will be permanently deleted.`;
+
+    if (window.confirm(confirmMsg)) {
+      for (const id of selectedLocIds) {
+        const l = locations.find(loc => loc.id === id);
+        if (l && l.is_folder === 1) {
+          await queueSyncAction('locations', 'delete_folder', { id, deleteContents: true });
+        } else {
+          await queueSyncAction('locations', 'delete', { id });
+        }
+      }
+      if (selectedLocation && selectedLocIds.includes(selectedLocation.id)) {
+        setSelectedLocation(null);
+      }
+      setSelectedLocIds([]);
+      setIsSelectMode(false);
+      showToast(`Successfully deleted ${count} item(s)`);
     }
   };
 
@@ -749,6 +881,22 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
         });
       });
 
+    // Auto-move pending locations into this newly created folder
+    if (pendingMoveLocations && pendingMoveLocations.length > 0) {
+      for (const pLoc of pendingMoveLocations) {
+        const updated = { ...pLoc, parent_id: newLocId };
+        await db.locations.update(pLoc.id, { parent_id: newLocId });
+        await queueSyncAction('locations', 'update', updated);
+      }
+      if (selectedLocation && pendingMoveLocations.some(l => l.id === selectedLocation.id)) {
+        setSelectedLocation(prev => prev ? { ...prev, parent_id: newLocId } : prev);
+      }
+      showToast(pendingMoveLocations.length === 1 ? `Moved "${pendingMoveLocations[0].name}" to "${finalName}"` : `Moved ${pendingMoveLocations.length} locations to "${finalName}"`);
+      setPendingMoveLocations([]);
+      setSelectedLocIds([]);
+      setIsSelectMode(false);
+    }
+
     // Reset Form
     setLocName('');
     setLocState('');
@@ -757,7 +905,9 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
     setLocLon('');
     setLocNotes('');
     setSearchQuery('');
+    setSearchResults([]);
     setIsFolderChecked(false);
+    setIsFolderLocked(false);
     setShowAddForm(false);
     setIsSavingLocation(false);
   };
@@ -839,11 +989,12 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
     if (!loc) return;
 
     if (loc.is_folder === 1) {
-      setFolderToDelete(loc);
+      openDeleteFolderModal(loc);
     } else {
       if (window.confirm('Are you sure you want to delete this location? This will permanently delete the location, all places of visit within it, and all associated photo files.')) {
         await queueSyncAction('locations', 'delete', { id: locId });
         setSelectedLocation(null);
+        showToast(`Deleted "${loc.name}"`);
       }
     }
   };
@@ -1417,6 +1568,260 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
     return allPeople.filter(p => personIds.has(p.id));
   };
 
+  const renderModals = () => (
+    <>
+      {/* Delete Folder Custom Dialog Modal */}
+      {folderToDelete && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100,
+          padding: '20px', backdropFilter: 'blur(6px)'
+        }}>
+          <div className="login-card" style={{ maxWidth: '450px', width: '100%', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h3 style={{ margin: 0 }}>Delete Folder</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0 }}>
+              Are you sure you want to delete the folder <strong>{folderToDelete.name}</strong>?
+            </p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0, lineHeight: '1.4' }}>
+              You can choose to permanently delete all contents inside this folder, or preserve them and move them back to the root Locations list.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+              <button 
+                onClick={async () => {
+                  await queueSyncAction('locations', 'delete_folder', { id: folderToDelete.id, deleteContents: true });
+                  if (currentFolderId === folderToDelete.id) {
+                    setCurrentFolderId(folderToDelete.parent_id || null);
+                  }
+                  closeDeleteFolderModal();
+                  setSelectedLocation(null);
+                  showToast(`Deleted folder "${folderToDelete.name}" and all contents`);
+                }}
+                className="btn"
+                style={{ backgroundColor: 'var(--error)', color: '#fff', border: 'none', fontWeight: '600' }}
+              >
+                Delete All Contents
+              </button>
+              <button 
+                onClick={async () => {
+                  await queueSyncAction('locations', 'delete_folder', { id: folderToDelete.id, deleteContents: false });
+                  if (currentFolderId === folderToDelete.id) {
+                    setCurrentFolderId(folderToDelete.parent_id || null);
+                  }
+                  closeDeleteFolderModal();
+                  setSelectedLocation(null);
+                  showToast(`Deleted folder "${folderToDelete.name}" (contents preserved)`);
+                }}
+                className="btn btn-secondary"
+                style={{ fontWeight: '600' }}
+              >
+                Move to Locations
+              </button>
+              <button 
+                onClick={closeDeleteFolderModal}
+                className="btn"
+                style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', fontWeight: '600' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Location / Add Folder Overlay Dialog */}
+      {showAddForm && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000,
+          padding: '20px', backdropFilter: 'blur(6px)'
+        }}>
+          <div className="login-card" style={{ maxWidth: '500px', width: '100%', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <h3>{isFolderLocked ? 'Add New Folder' : 'Add New Location'}</h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={closeAddModal} />
+            </div>
+
+            {/* Geocode Search */}
+            <div className="form-group">
+              <label>Search {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'} for Region</label>
+              <div className="search-input-wrapper" style={{ position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ paddingLeft: '38px', paddingRight: searchQuery ? '32px' : '12px' }}
+                  placeholder="e.g. Paris, Tokyo, Bali..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSearchResults([]);
+                    }}
+                    title="Clear search"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              {isSearching && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'}...</p>}
+              {searchResults.length > 0 && (
+                <div style={{
+                  background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-sm)', marginTop: '8px', maxHeight: '150px', overflowY: 'auto'
+                }}>
+                  {searchResults.map((r, i) => (
+                    <div 
+                      key={i} 
+                      onClick={() => handleSelectSearchResult(r)}
+                      style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-glass)', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                      {r.display_name}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleCreateLocation}>
+              <div className="form-group">
+                <label>Location Name</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  required
+                  value={locName}
+                  onChange={(e) => setLocName(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>State / Region</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Tamil Nadu, Tokyo"
+                    value={locState}
+                    onChange={(e) => setLocState(e.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Country</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. India, Japan"
+                    value={locCountry}
+                    onChange={(e) => setLocCountry(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Latitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    value={locLat}
+                    onChange={(e) => setLocLat(e.target.value)}
+                    onPaste={(e) => handleCoordsPaste(e, setLocLat, setLocLon)}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Longitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    value={locLon}
+                    onChange={(e) => setLocLon(e.target.value)}
+                    onPaste={(e) => handleCoordsPaste(e, setLocLat, setLocLon)}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <input
+                  type="checkbox"
+                  id="createAsFolder"
+                  checked={isFolderChecked}
+                  disabled={isFolderLocked}
+                  onChange={(e) => !isFolderLocked && setIsFolderChecked(e.target.checked)}
+                  style={{ width: '16px', height: '16px', cursor: isFolderLocked ? 'not-allowed' : 'pointer' }}
+                />
+                <label htmlFor="createAsFolder" style={{ cursor: isFolderLocked ? 'default' : 'pointer', fontSize: '0.85rem', userSelect: 'none', margin: 0, color: isFolderLocked ? 'var(--accent-primary-hover)' : 'inherit' }}>
+                  {isFolderLocked ? 'Folder (Required for grouping locations)' : 'Create as Folder (allows grouping other locations inside)'}
+                </label>
+              </div>
+
+              <div className="form-group">
+                <label>Notes</label>
+                <textarea
+                  className="form-control"
+                  rows="3"
+                  value={locNotes}
+                  onChange={(e) => setLocNotes(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                <button type="button" className="btn btn-secondary" onClick={closeAddModal} style={{ flex: 1 }}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={isSavingLocation} style={{ flex: 1 }}>
+                  {isSavingLocation ? 'Saving...' : (isFolderLocked ? 'Save Folder' : 'Save Location')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Unified Move to Folder Modal */}
+      <MoveToFolderModal
+        isOpen={isMoveModalOpen}
+        onClose={closeMoveModal}
+        movingLocations={locationsToMove}
+        locations={locations}
+        onMove={handleMoveLocations}
+        onOpenAddFolder={openAddFolderModal}
+      />
+
+      {/* Toast Feedback Notification */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          background: 'var(--bg-surface-elevated, #18181b)',
+          color: 'var(--text-primary, #ffffff)',
+          border: '1px solid var(--accent-primary, #6366f1)',
+          borderRadius: '8px',
+          padding: '12px 18px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+          zIndex: 2000,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '0.85rem',
+          fontWeight: 500,
+          backdropFilter: 'blur(10px)',
+          animation: 'slideUpFade 0.25s ease'
+        }}>
+          <Check size={16} style={{ color: 'var(--accent-primary, #6366f1)' }} />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+    </>
+  );
+
   const activeLocationPlaces = places.filter(p => {
     if (!selectedLocation || !p.location_id) return false;
     return String(p.location_id).trim().toLowerCase() === String(selectedLocation.id).trim().toLowerCase();
@@ -1425,6 +1830,7 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
   if (selectedLocation) {
     return (
       <div className="container">
+        {renderModals()}
         {returnToCollectionId && (
           <button 
             type="button"
@@ -1556,15 +1962,17 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
               </div>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="header-actions-strip">
             <button 
               onClick={() => handleToggleVisited(selectedLocation)}
               style={{
                 background: selectedLocation.visited === 1 ? 'var(--success-glow)' : 'rgba(255,255,255,0.05)',
-                border: '1px solid var(--border-glass)', borderRadius: '20px', padding: '8px 16px',
+                border: '1px solid var(--border-glass)', borderRadius: '20px', padding: '0 16px',
                 fontSize: '0.8rem', fontWeight: 600, color: selectedLocation.visited === 1 ? 'var(--success)' : 'var(--text-secondary)',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', height: '36px',
+                whiteSpace: 'nowrap', flexShrink: 0
               }}
+              title={selectedLocation.visited === 1 ? "Mark as not visited" : "Mark as visited"}
             >
               {selectedLocation.visited === 1 ? '✓ Visited' : '○ Not Visited'}
             </button>
@@ -1610,20 +2018,55 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                 }
               }}
               style={{
-                background: selectedLocation.is_folder === 1 ? 'var(--accent-primary-glow)' : 'rgba(255,255,255,0.05)',
-                border: '1px solid var(--border-glass)', borderRadius: '20px', padding: '8px 16px',
-                fontSize: '0.8rem', fontWeight: 600, color: selectedLocation.is_folder === 1 ? 'var(--accent-primary-hover)' : 'var(--text-secondary)',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                height: '36px',
+                padding: '0 14px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: selectedLocation.is_folder === 1 ? 'rgba(6, 182, 212, 0.2)' : 'rgba(255,255,255,0.05)',
+                border: selectedLocation.is_folder === 1 ? '1px solid rgba(6, 182, 212, 0.4)' : '1px solid var(--border-glass)',
+                borderRadius: '20px',
+                color: selectedLocation.is_folder === 1 ? 'var(--accent-secondary)' : 'var(--text-secondary)',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
               }}
+              title={selectedLocation.is_folder === 1 ? "Folder (Click to convert to regular location)" : "Convert to Folder (allows grouping other locations inside)"}
             >
-              {selectedLocation.is_folder === 1 ? '📂 Folder' : '📄 Convert to Folder'}
+              {selectedLocation.is_folder === 1 ? <Folder size={15} /> : <FolderPlus size={15} />}
+              <span>{selectedLocation.is_folder === 1 ? 'Folder' : 'Convert to Folder'}</span>
+            </button>
+            <button 
+              onClick={() => openMoveModal([selectedLocation])}
+              style={{
+                height: '36px',
+                padding: '0 14px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid var(--border-glass)',
+                borderRadius: '20px',
+                color: 'var(--text-secondary)',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}
+              title="Move this location to a folder or top level"
+            >
+              <FolderInput size={15} />
+              <span>Move</span>
             </button>
             <button 
               onClick={() => handleDeleteLocation(selectedLocation.id)} 
               style={{ 
                 width: '36px', height: '36px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', 
                 background: 'rgba(239, 68, 68, 0.15)', color: 'var(--error)', border: '1px solid var(--error-glow)', 
-                borderRadius: '50%', cursor: 'pointer' 
+                borderRadius: '50%', cursor: 'pointer', flexShrink: 0 
               }}
               title="Delete Location"
             >
@@ -1852,16 +2295,29 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                   {/* OSM Place Search */}
                   <div className="form-group">
                     <label>Search {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'} for Place / Landmark</label>
-                    <div style={{ position: 'relative' }}>
+                    <div className="search-input-wrapper" style={{ position: 'relative' }}>
                       <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                       <input
                         type="text"
                         className="form-control"
-                        style={{ paddingLeft: '38px' }}
+                        style={{ paddingLeft: '38px', paddingRight: placeSearchQuery ? '32px' : '12px' }}
                         placeholder="Search landmarks, cafes, sights near this region..."
                         value={placeSearchQuery}
                         onChange={(e) => setPlaceSearchQuery(e.target.value)}
                       />
+                      {placeSearchQuery && (
+                        <button
+                          type="button"
+                          className="search-clear-btn"
+                          onClick={() => {
+                            setPlaceSearchQuery('');
+                            setPlaceSearchResults([]);
+                          }}
+                          title="Clear search"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
                     </div>
                     {isSearchingPlace && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'}...</p>}
                     {placeSearchResults.length > 0 && (
@@ -2521,36 +2977,208 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
             })()}
           </h2>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {currentFolderId && (
-            <button 
-              type="button"
-              className="btn btn-secondary" 
-              onClick={() => handleDeleteLocation(currentFolderId)} 
-              style={{ 
-                height: '36px', padding: '0 12px', fontSize: '0.78rem',
-                background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444', 
-                border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '6px', 
-                display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
-                fontWeight: 600
-              }}
-              title="Delete Active Folder"
-            >
-              <Trash2 size={15} />
-              <span>Delete Folder</span>
-            </button>
+        <div className="header-actions-strip">
+          {currentFolderId ? (
+            <>
+              {/* 1. Move (Pill) */}
+              <button 
+                type="button"
+                onClick={() => {
+                  const fLoc = locations.find(l => l.id === currentFolderId);
+                  if (fLoc) openMoveModal([fLoc]);
+                }} 
+                style={{ 
+                  height: '36px',
+                  padding: '0 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: '20px',
+                  color: 'var(--text-secondary)',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+                title="Move this folder to another folder or top level"
+              >
+                <FolderInput size={15} />
+                <span>Move</span>
+              </button>
+
+              {/* 2. Select (Pill) */}
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsSelectMode(!isSelectMode);
+                  setSelectedLocIds([]);
+                }} 
+                style={{ 
+                  height: '36px',
+                  padding: '0 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: isSelectMode ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                  color: isSelectMode ? '#ffffff' : 'var(--text-secondary)',
+                  border: isSelectMode ? 'none' : '1px solid var(--border-glass)',
+                  borderRadius: '20px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+                title={isSelectMode ? "Cancel selection mode" : "Select multiple locations to move or delete"}
+              >
+                <Layers size={15} />
+                <span>{isSelectMode ? 'Cancel Selection' : 'Select'}</span>
+              </button>
+
+              {/* 3. Add Location (Pill) */}
+              <button 
+                type="button"
+                onClick={openAddLocationModal} 
+                style={{ 
+                  height: '36px',
+                  padding: '0 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'var(--accent-primary)',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '20px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+                title="Add new location in this folder"
+              >
+                <Plus size={15} />
+                <span>Add Location</span>
+              </button>
+
+              {/* 4. Filter (Round) */}
+              <button 
+                type="button"
+                onClick={() => setShowFilters(!showFilters)} 
+                style={{ 
+                  width: '36px', height: '36px', padding: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: showFilters ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255,255,255,0.05)',
+                  color: showFilters ? 'var(--accent-primary-hover)' : 'var(--text-secondary)',
+                  border: showFilters ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
+                  borderRadius: '50%',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
+                title={showFilters ? "Hide filters" : "Show search & filters"}
+              >
+                <Filter size={16} />
+              </button>
+
+              {/* 5. Delete Folder (Round) */}
+              <button 
+                type="button"
+                onClick={() => handleDeleteLocation(currentFolderId)} 
+                style={{ 
+                  width: '36px', height: '36px', padding: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(239, 68, 68, 0.15)',
+                  color: 'var(--error)', 
+                  border: '1px solid var(--error-glow)',
+                  borderRadius: '50%',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
+                title="Delete this folder"
+              >
+                <Trash2 size={16} />
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Main Locations: 1. Select (Pill) */}
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsSelectMode(!isSelectMode);
+                  setSelectedLocIds([]);
+                }} 
+                style={{ 
+                  height: '36px',
+                  padding: '0 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: isSelectMode ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                  color: isSelectMode ? '#ffffff' : 'var(--text-secondary)',
+                  border: isSelectMode ? 'none' : '1px solid var(--border-glass)',
+                  borderRadius: '20px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+                title={isSelectMode ? "Cancel selection mode" : "Select multiple locations to move or delete"}
+              >
+                <Layers size={15} />
+                <span>{isSelectMode ? 'Cancel Selection' : 'Select'}</span>
+              </button>
+
+              {/* Main Locations: 2. Filter (Round) */}
+              <button 
+                type="button"
+                onClick={() => setShowFilters(!showFilters)} 
+                style={{ 
+                  width: '36px', height: '36px', padding: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: showFilters ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255,255,255,0.05)',
+                  color: showFilters ? 'var(--accent-primary-hover)' : 'var(--text-secondary)',
+                  border: showFilters ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
+                  borderRadius: '50%',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
+                title={showFilters ? "Hide filters" : "Show search & filters"}
+              >
+                <Filter size={16} />
+              </button>
+
+              {/* Main Locations: 3. Add Location (Pill) */}
+              <button 
+                type="button"
+                onClick={openAddLocationModal} 
+                style={{ 
+                  height: '36px',
+                  padding: '0 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'var(--accent-primary)',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '20px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+                title="Add new location"
+              >
+                <Plus size={15} />
+                <span>Add Location</span>
+              </button>
+            </>
           )}
-          <button 
-            className="btn btn-secondary" 
-            onClick={() => setShowFilters(!showFilters)} 
-            style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '6px', height: '36px', padding: '0 12px' }}
-          >
-            <span>🔍 {showFilters ? 'Hide Filters' : 'Filters'}</span>
-          </button>
-          <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <MapPin size={16} />
-            <span className="desktop-only-text">Add Location</span>
-          </button>
         </div>
       </div>
 
@@ -2685,205 +3313,6 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
         </div>
       )}
 
-
-      {/* Delete Folder Custom Dialog Modal */}
-      {folderToDelete && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100,
-          padding: '20px'
-        }}>
-          <div className="login-card" style={{ maxWidth: '450px', width: '100%', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <h3 style={{ margin: 0 }}>Delete Folder</h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0 }}>
-              Are you sure you want to delete the folder <strong>{folderToDelete.name}</strong>?
-            </p>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0, lineHeight: '1.4' }}>
-              You can choose to permanently delete all contents inside this folder, or preserve them and move them back to the root Locations list.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
-              <button 
-                onClick={async () => {
-                  await queueSyncAction('locations', 'delete_folder', { id: folderToDelete.id, deleteContents: true });
-                  if (currentFolderId === folderToDelete.id) {
-                    setCurrentFolderId(folderToDelete.parent_id || null);
-                  }
-                  setFolderToDelete(null);
-                  setSelectedLocation(null);
-                }}
-                className="btn"
-                style={{ backgroundColor: 'var(--error)', color: '#fff', border: 'none', fontWeight: '600' }}
-              >
-                Delete All Contents
-              </button>
-              <button 
-                onClick={async () => {
-                  await queueSyncAction('locations', 'delete_folder', { id: folderToDelete.id, deleteContents: false });
-                  if (currentFolderId === folderToDelete.id) {
-                    setCurrentFolderId(folderToDelete.parent_id || null);
-                  }
-                  setFolderToDelete(null);
-                  setSelectedLocation(null);
-                }}
-                className="btn btn-secondary"
-                style={{ fontWeight: '600' }}
-              >
-                Move to Locations
-              </button>
-              <button 
-                onClick={() => setFolderToDelete(null)}
-                className="btn"
-                style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', fontWeight: '600' }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Location Overlay Dialog */}
-      {showAddForm && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000,
-          padding: '20px'
-        }}>
-          <div className="login-card" style={{ maxWidth: '500px', width: '100%', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-              <h3>Add New Location</h3>
-              <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowAddForm(false)} />
-            </div>
-
-            {/* Geocode Search */}
-            <div className="form-group">
-              <label>Search {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'} for Region</label>
-              <div style={{ position: 'relative' }}>
-                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                <input
-                  type="text"
-                  className="form-control"
-                  style={{ paddingLeft: '38px' }}
-                  placeholder="e.g. Paris, Tokyo, Bali..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-              {isSearching && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'}...</p>}
-              {searchResults.length > 0 && (
-                <div style={{
-                  background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)',
-                  borderRadius: 'var(--radius-sm)', marginTop: '8px', maxHeight: '150px', overflowY: 'auto'
-                }}>
-                  {searchResults.map((r, i) => (
-                    <div 
-                      key={i} 
-                      onClick={() => handleSelectSearchResult(r)}
-                      style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-glass)', cursor: 'pointer', fontSize: '0.85rem' }}
-                    >
-                      {r.display_name}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <form onSubmit={handleCreateLocation}>
-              <div className="form-group">
-                <label>Location Name</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  required
-                  value={locName}
-                  onChange={(e) => setLocName(e.target.value)}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label>State / Region</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. Tamil Nadu, Tokyo"
-                    value={locState}
-                    onChange={(e) => setLocState(e.target.value)}
-                  />
-                </div>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label>Country</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. India, Japan"
-                    value={locCountry}
-                    onChange={(e) => setLocCountry(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label>Latitude</label>
-                  <input
-                    type="number"
-                    step="any"
-                    className="form-control"
-                    value={locLat}
-                    onChange={(e) => setLocLat(e.target.value)}
-                    onPaste={(e) => handleCoordsPaste(e, setLocLat, setLocLon)}
-                  />
-                </div>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label>Longitude</label>
-                  <input
-                    type="number"
-                    step="any"
-                    className="form-control"
-                    value={locLon}
-                    onChange={(e) => setLocLon(e.target.value)}
-                    onPaste={(e) => handleCoordsPaste(e, setLocLat, setLocLon)}
-                  />
-                </div>
-              </div>
-
-              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                <input
-                  type="checkbox"
-                  id="createAsFolder"
-                  checked={isFolderChecked}
-                  onChange={(e) => setIsFolderChecked(e.target.checked)}
-                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                />
-                <label htmlFor="createAsFolder" style={{ cursor: 'pointer', fontSize: '0.85rem', userSelect: 'none', margin: 0 }}>
-                  Create as Folder (allows grouping other locations inside)
-                </label>
-              </div>
-
-              <div className="form-group">
-                <label>Notes</label>
-                <textarea
-                  className="form-control"
-                  rows="3"
-                  value={locNotes}
-                  onChange={(e) => setLocNotes(e.target.value)}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowAddForm(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={isSavingLocation}>
-                  {isSavingLocation ? 'Saving...' : 'Save Location'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Filtering and Sorting Toolbar */}
       <div style={{
         display: 'flex',
@@ -2896,15 +3325,25 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
         marginBottom: '20px'
       }}>
         {/* Row 2: Search (Always Visible) */}
-        <div style={{ width: '100%' }}>
+        <div className="search-input-wrapper" style={{ width: '100%', position: 'relative' }}>
           <input
             type="text"
             className="form-control"
             placeholder="Search locations by name/notes..."
             value={listSearchQuery}
             onChange={(e) => setListSearchQuery(e.target.value)}
-            style={{ fontSize: '0.8rem', padding: '6px 12px', height: '34px' }}
+            style={{ fontSize: '0.8rem', padding: '6px 34px 6px 12px', height: '34px' }}
           />
+          {listSearchQuery && (
+            <button 
+              type="button" 
+              className="search-clear-btn" 
+              onClick={() => setListSearchQuery('')}
+              title="Clear search"
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
 
         {/* Row 1: Filters & Sort & Reset (Collapsible) */}
@@ -3233,11 +3672,17 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
           const featuredImg = getFeaturedPhoto(loc.id);
           const locTags = getEntityTagsList(loc.id);
 
+          const isLocSelected = selectedLocIds.includes(loc.id);
+
           return (
             <div 
               key={loc.id} 
-              className="card" 
+              className={`card ${isSelectMode && isLocSelected ? 'is-selected' : ''}`}
               onClick={() => {
+                if (isSelectMode) {
+                  handleToggleSelectLocation(loc.id);
+                  return;
+                }
                 if (loc.is_folder === 1) {
                   setCurrentFolderId(loc.id);
                   setListSearchQuery('');
@@ -3245,7 +3690,7 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                   setSelectedLocation(loc);
                 }
               }}
-              draggable={loc.is_folder !== 1}
+              draggable={!isSelectMode && loc.is_folder !== 1}
               onDragStart={(e) => handleDragStart(e, loc.id)}
               onDragOver={(e) => handleDragOver(e, loc)}
               onDragLeave={() => setDragOverFolderId(null)}
@@ -3255,12 +3700,28 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                   ? '2px dashed var(--accent-primary)' 
                   : (loc.is_folder === 1 
                       ? 'var(--border-folder-card)' 
-                      : '1px solid var(--border-glass)'),
-                background: loc.is_folder === 1 ? 'var(--bg-folder-card)' : 'var(--bg-surface)',
+                      : (isSelectMode && isLocSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)')),
+                background: isSelectMode && isLocSelected 
+                  ? 'rgba(99, 102, 241, 0.12)' 
+                  : (loc.is_folder === 1 ? 'var(--bg-folder-card)' : 'var(--bg-surface)'),
                 boxShadow: loc.is_folder === 1 ? 'var(--shadow-glow)' : 'var(--shadow-panel)'
               }}
             >
               <div className="card-media">
+                {/* Multi-Select Checkbox Overlay */}
+                {isSelectMode && (
+                  <div 
+                    className={`card-select-checkbox ${isLocSelected ? 'selected' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleSelectLocation(loc.id);
+                    }}
+                    title={isLocSelected ? 'Deselect' : 'Select'}
+                  >
+                    {isLocSelected && <Check size={14} />}
+                  </div>
+                )}
+
                 {loc.is_folder === 1 ? (
                   <FolderCover folderId={loc.id} locations={locations} getFeaturedPhoto={getFeaturedPhoto} />
                 ) : (
@@ -3271,6 +3732,36 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                   />
                 )}
                 <div style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', gap: '6px', zIndex: 10 }}>
+                  {/* Quick Action: Move to Folder (Option A) */}
+                  {!isSelectMode && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openMoveModal([loc]);
+                      }}
+                      style={{
+                        background: 'rgba(0, 0, 0, 0.65)',
+                        border: '1px solid rgba(255, 255, 255, 0.25)',
+                        color: '#ffffff',
+                        borderRadius: '12px',
+                        padding: '4px 8px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
+                        backdropFilter: 'blur(4px)',
+                        transition: 'all 0.15s ease'
+                      }}
+                      title={`Move "${loc.name}" to folder`}
+                    >
+                      <FolderInput size={13} />
+                      <span className="desktop-only-text">Move</span>
+                    </button>
+                  )}
+
                   {loc.is_folder === 1 ? (
                     (() => {
                       const status = getFolderVisitedStatus(loc.id);
@@ -3373,6 +3864,104 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
           );
         })})()}
       </div>
+
+      {/* Floating Bulk Action Bar (Option C) */}
+      {isSelectMode && selectedLocIds.length > 0 && (
+        <div className="bulk-actions-floating-bar">
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+            {selectedLocIds.length} selected
+          </span>
+
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              const visibleLocs = locations.filter(loc => {
+                if (!listSearchQuery.trim()) {
+                  const parentId = loc.parent_id;
+                  const hasParent = parentId && parentId !== 'null' && parentId !== 'undefined';
+                  if (currentFolderId === null) {
+                    if (hasParent) return false;
+                  } else {
+                    if (parentId !== currentFolderId) return false;
+                  }
+                }
+                return true;
+              });
+              const visibleIds = visibleLocs.map(l => l.id);
+              const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedLocIds.includes(id));
+              if (allSelected) {
+                setSelectedLocIds(prev => prev.filter(id => !visibleIds.includes(id)));
+              } else {
+                setSelectedLocIds(Array.from(new Set([...selectedLocIds, ...visibleIds])));
+              }
+            }}
+            style={{ fontSize: '0.78rem', padding: '6px 12px', height: '32px' }}
+          >
+            Select All
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              const locs = locations.filter(l => selectedLocIds.includes(l.id));
+              openMoveModal(locs);
+            }}
+            style={{
+              fontSize: '0.78rem',
+              padding: '6px 14px',
+              height: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            <FolderInput size={14} />
+            <span>Move ({selectedLocIds.length})</span>
+          </button>
+
+          <button
+            type="button"
+            className="btn"
+            onClick={handleBulkDelete}
+            style={{
+              fontSize: '0.78rem',
+              padding: '6px 12px',
+              height: '32px',
+              background: 'rgba(239, 68, 68, 0.18)',
+              color: '#ef4444',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+              cursor: 'pointer'
+            }}
+          >
+            <Trash2 size={14} />
+            <span>Delete ({selectedLocIds.length})</span>
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              setSelectedLocIds([]);
+              setIsSelectMode(false);
+            }}
+            style={{ fontSize: '0.78rem', padding: '6px 10px', height: '32px' }}
+            title="Done selecting"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* Shared Modals & Toast */}
+      {renderModals()}
     </div>
   );
 }

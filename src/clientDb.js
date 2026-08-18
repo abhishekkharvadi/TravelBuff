@@ -150,6 +150,15 @@ export function triggerSync() {
   syncTriggerCallback();
 }
 
+function checkResponseAuth(res) {
+  if (!res || !res.headers) return;
+  const refreshedToken = res.headers.get('X-Refreshed-Token');
+  if (refreshedToken) {
+    localStorage.setItem('tb_token', refreshedToken);
+    window.dispatchEvent(new CustomEvent('tb_token_refreshed', { detail: { token: refreshedToken } }));
+  }
+}
+
 // Helper to fully seed/update local storage from server API
 export async function populateLocalDb(token) {
   const headers = { Authorization: `Bearer ${token}` };
@@ -180,6 +189,13 @@ export async function populateLocalDb(token) {
   for (const item of tables) {
     try {
       const res = await fetch(item.url, { headers });
+      checkResponseAuth(res);
+
+      if (res.status === 401 || res.status === 403) {
+        console.warn(`[ClientDB] Auth failed on ${item.url} (${res.status}). Aborting populate.`);
+        throw new Error('AUTH_EXPIRED');
+      }
+
       if (res.ok) {
         const rows = await res.json();
         
@@ -203,6 +219,9 @@ export async function populateLocalDb(token) {
         }
       }
     } catch (err) {
+      if (err.message === 'AUTH_EXPIRED') {
+        throw err;
+      }
       console.warn(`Unable to prefetch table ${item.table} from server (offline):`, err);
     }
   }
@@ -213,6 +232,10 @@ export async function populateLocalDb(token) {
     for (const t of trips) {
       // Reservations
       const resRes = await fetch(`/api/reservations/${t.id}`, { headers });
+      checkResponseAuth(resRes);
+      if (resRes.status === 401 || resRes.status === 403) {
+        throw new Error('AUTH_EXPIRED');
+      }
       if (resRes.ok) {
         const rows = await resRes.json();
         const parsedRows = [];
@@ -258,6 +281,10 @@ export async function populateLocalDb(token) {
       
       // Itinerary items
       const itinRes = await fetch(`/api/itineraries/${t.id}`, { headers });
+      checkResponseAuth(itinRes);
+      if (itinRes.status === 401 || itinRes.status === 403) {
+        throw new Error('AUTH_EXPIRED');
+      }
       if (itinRes.ok) {
         const rows = await itinRes.json();
         await db.transaction('rw', [db.itinerary_items], async () => {
@@ -275,6 +302,10 @@ export async function populateLocalDb(token) {
       
       // Expenses
       const expRes = await fetch(`/api/expenses/${t.id}`, { headers });
+      checkResponseAuth(expRes);
+      if (expRes.status === 401 || expRes.status === 403) {
+        throw new Error('AUTH_EXPIRED');
+      }
       if (expRes.ok) {
         const rows = await expRes.json();
         await db.transaction('rw', [db.expenses], async () => {
@@ -292,6 +323,10 @@ export async function populateLocalDb(token) {
 
       // Rates
       const rateRes = await fetch(`/api/trips/${t.id}/rates`, { headers });
+      checkResponseAuth(rateRes);
+      if (rateRes.status === 401 || rateRes.status === 403) {
+        throw new Error('AUTH_EXPIRED');
+      }
       if (rateRes.ok) {
         const rows = await rateRes.json();
         await db.transaction('rw', [db.trip_currency_rates], async () => {
@@ -306,14 +341,42 @@ export async function populateLocalDb(token) {
           }
         });
       }
+
+      // Trip Notes
+      const notesRes = await fetch(`/api/trips/${t.id}/notes`, { headers });
+      checkResponseAuth(notesRes);
+      if (notesRes.status === 401 || notesRes.status === 403) {
+        throw new Error('AUTH_EXPIRED');
+      }
+      if (notesRes.ok) {
+        const rows = await notesRes.json();
+        await db.transaction('rw', [db.trip_notes], async () => {
+          const localNoteRows = await db.trip_notes.where({ trip_id: t.id }).toArray();
+          const serverNoteIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
+          const noteIdsToDelete = localNoteRows.map(r => r.id).filter(id => id && !serverNoteIds.has(id.toString()) && !pendingIds.has(id.toString()));
+          const noteRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
+
+          await db.trip_notes.bulkPut(noteRowsToPut);
+          if (noteIdsToDelete.length > 0) {
+            await db.trip_notes.bulkDelete(noteIdsToDelete);
+          }
+        });
+      }
     }
   } catch (err) {
-    console.warn('Unable to prefetch trip itineraries/expenses (offline):', err);
+    if (err.message === 'AUTH_EXPIRED') {
+      throw err;
+    }
+    console.warn('Unable to prefetch trip itineraries/expenses/notes (offline):', err);
   }
 
   // Pre-fetch all photos in bulk atomically
   try {
     const photoRes = await fetch('/api/photos', { headers });
+    checkResponseAuth(photoRes);
+    if (photoRes.status === 401 || photoRes.status === 403) {
+      throw new Error('AUTH_EXPIRED');
+    }
     if (photoRes.ok) {
       const photos = await photoRes.json();
       await db.transaction('rw', [db.entity_photos], async () => {
@@ -321,6 +384,9 @@ export async function populateLocalDb(token) {
       });
     }
   } catch (err) {
+    if (err.message === 'AUTH_EXPIRED') {
+      throw err;
+    }
     console.warn('Unable to prefetch entity photos (offline):', err);
   }
 }
@@ -344,5 +410,6 @@ export async function clearLocalDb() {
   await db.saved_markdowns.clear();
   await db.people.clear();
   await db.user_addresses.clear();
+  if (db.trip_notes) await db.trip_notes.clear();
   await db.sync_queue.clear();
 }

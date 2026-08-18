@@ -2,6 +2,47 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v6] - 2026-08-18
+
+### 🚀 Features & Organization Controls (v6)
+- **Move to Folder Actions**:
+  - **Quick Action on Location Cards (Option A)**: 1-click move button on location cards to relocate any location or subfolder into another folder or back to root without dragging.
+  - **Location Detail Move Action (Option B)**: Dedicated "Move" pill button in the Location Detail view header with real-time breadcrumb and destination updates.
+  - **Multi-Select Bulk Move & Delete (Option C)**: Multi-selection mode for locations with glowing card selections and a floating bulk action bar to move or delete multiple locations at once with safety confirmations for nested folders.
+- **Unified `MoveToFolderModal`**:
+  - Interactive searchable folder selector with wide search bar (`flex: 1`), 1-click clear (`✕`), and hierarchical tree breadcrumbs (e.g. `Root > Asia > Japan`).
+  - Safe circular dependency prevention (guards against moving a folder into itself or its own sub-tree).
+  - Quick **"🏠 Root / Top Level (No Folder)"** target.
+  - Compact **"+ New Folder"** action that seamlessly opens the creation dialog with the "Folder" checkbox checked and locked (`isFolderLocked`), automatically moving the selected locations into the new folder upon save.
+- **Targeted Pill Buttons & Horizontal Action Strip Toolbar**:
+  - Standardized `36px` uniform height, typography, and hover transitions across all header buttons.
+  - Added non-wrapping horizontal swipe action strip (`.header-actions-strip`) ensuring 100% discoverability of text labels on mobile while preventing awkward multi-line wrapping glitches.
+  - **Main Locations Header**: `[Select (Pill)]`, `(Filters (Round))`, `[Add Location (Pill)]`.
+  - **Within Folder Header**: Strict requested ordering `[Move (Pill)]`, `[Select (Pill)]`, `[Add Location (Pill)]`, `(Filter (Round))`, `(Delete (Round, red error styling))` on the far right.
+  - **Location Detail Header**: `[✓ Visited / ○ Not Visited (Pill)]` first in line, `[Folder / Convert to Folder (Pill)]`, `[Move (Pill)]`, `(Delete (Round, red error styling))`.
+- **Navigation Scroll Position Reset**:
+  - Automatically resets window scroll position to the top when navigating from a scrolled list in a folder to a specific location detail view.
+- **Trip Mode Offline Note Saving & Sync Resilience**:
+  - Enabled 100% offline trip note creation and deletion backed by local Dexie IndexedDB (`trip_notes`) and queued synchronization (`queueSyncAction`).
+  - Added `/api/trips/:tripId/notes` server endpoint and full client-server database synchronization.
+  - Handled offline network errors gracefully in PWA synchronization, setting status to `'offline'` without alarming red error badges.
+  - Added instant visual feedback toasts when creating or removing trip notes.
+- **Mobile Floating Bulk Action Bar Elevation**:
+  - Elevated `.bulk-actions-floating-bar` on mobile viewports above the bottom navigation footer (`Locations`, `Collections`, `Trips`) with safe-area insets.
+- **1-Click Search Clear Buttons**: Added instant clear (`✕`) buttons on search bars across Locations, Sub-places, Add Location geocoding search, and Move to Folder destination search.
+- **Modal Mutual Exclusivity & Shared Rendering**:
+  - Extracted unified modal rendering (`renderModals()`) ensuring Move and Delete Folder dialogs open smoothly directly within Location Detail views.
+  - Enforced mutual exclusivity so opening one modal automatically closes any other active modal dialogs.
+- **Version Bump**: Updated application version to `v6` across `package.json`, `src/version.js`, `src/router.js`, `public/sw.js`, and `CHANGELOG.md`.
+
+### 🐛 Bug Fixes (v6)
+- **Mobile Import Dropdown Clipping**: Removed `overflow-x: hidden` clipping on mobile app header and elevated Import dropdown z-index to `1100`.
+- **Location Detail View Crash**: Fixed `activeLocationPlaces` ReferenceError when opening specific location detail pages.
+- **Modal Search Bar Proportion**: Corrected search window sizing and compact "+ New Folder" placement in the Move to Folder modal.
+- **Folder Creation Checkbox Lock**: Prevented unchecking "Folder" when creating a folder through the Move flow.
+
+---
+
 ## [v5] - 2026-08-15
 
 ### 🚀 Features & Base Currency Search (v5)

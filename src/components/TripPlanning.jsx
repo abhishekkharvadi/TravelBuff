@@ -11,6 +11,47 @@ import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
 import { getDayColor } from '../utils/dayColors.js';
 import MapView from './MapView.jsx';
 
+const getBrowserCurrencies = () => {
+  let codes = [];
+  if (typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function') {
+    try {
+      codes = Intl.supportedValuesOf('currency');
+    } catch (e) {
+      codes = [];
+    }
+  }
+
+  if (!codes || codes.length === 0) {
+    codes = [
+      'USD', 'EUR', 'GBP', 'INR', 'JPY', 'CAD', 'AUD', 'CHF', 'SGD', 'AED', 'CNY', 'NZD',
+      'BRL', 'ZAR', 'RUB', 'MXN', 'HKD', 'SEK', 'NOK', 'KRW', 'TRY', 'IDR', 'THB', 'MYR',
+      'PHP', 'PLN', 'DKK', 'HUF', 'CZK', 'ILS', 'CLP', 'SAR', 'EGP', 'VND'
+    ];
+  }
+
+  let displayNames = null;
+  if (typeof Intl !== 'undefined' && Intl.DisplayNames) {
+    try {
+      displayNames = new Intl.DisplayNames(['en'], { type: 'currency' });
+    } catch (e) {}
+  }
+
+  return codes.map(code => {
+    let name = '';
+    if (displayNames) {
+      try {
+        name = displayNames.of(code) || code;
+      } catch (e) {
+        name = code;
+      }
+    }
+    return {
+      value: code,
+      label: name ? `${code} - ${name}` : code
+    };
+  });
+};
+
 const safeParseArray = (val) => {
   if (!val) return [];
   try {
@@ -2738,7 +2779,12 @@ Only return the places to visit for each day in the itinerary.`;
                     <form onSubmit={(e) => { handleAddRate(e); setShowRatesForm(false); }} style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                       <div style={{ flex: 1 }}>
                         <label style={{ fontSize: '0.75rem' }}>Currency</label>
-                        <input type="text" className="form-control" placeholder="e.g. EUR" value={targetCur} onChange={(e) => setTargetCur(e.target.value)} required />
+                        <SearchableSelect
+                          options={getBrowserCurrencies()}
+                          value={targetCur}
+                          onChange={(val) => setTargetCur(val)}
+                          placeholder="Select currency..."
+                        />
                       </div>
                       <div style={{ flex: 1 }}>
                         <label style={{ fontSize: '0.75rem' }}>Conversion Rate (to {baseCurrency})</label>

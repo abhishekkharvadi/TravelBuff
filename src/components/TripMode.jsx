@@ -133,6 +133,12 @@ export default function TripMode({ token }) {
   const [ownTracksLoading, setOwnTracksLoading] = useState(false);
   const [ownTracksDistance, setOwnTracksDistance] = useState(null);
   const [distanceByDay, setDistanceByDay] = useState({});
+  const [toastMessage, setToastMessage] = useState(null);
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
 
   // Route Segment Distances Cache & Fetcher
   const [distances, setDistances] = useState({});
@@ -398,10 +404,12 @@ export default function TripMode({ token }) {
     setNoteContent('');
     setNoteCategory('General');
     setShowTripNoteModal(false);
+    showToast('Trip note saved');
   };
 
   const handleDeleteTripNote = async (id) => {
     await queueSyncAction('trip_notes', 'delete', { id });
+    showToast('Trip note removed');
   };
 
   const handleFindNearbyFood = async (categoryFilter = 'all') => {
@@ -1536,6 +1544,32 @@ export default function TripMode({ token }) {
             style={{ width: '100%', height: '100%', border: 'none' }} 
             title="PDF Document Viewer"
           />
+        </div>
+      )}
+
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(15, 23, 42, 0.95)',
+          color: '#ffffff',
+          padding: '10px 20px',
+          borderRadius: '24px',
+          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.5), 0 0 15px rgba(99, 102, 241, 0.3)',
+          border: '1px solid rgba(99, 102, 241, 0.4)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '0.88rem',
+          fontWeight: 600,
+          backdropFilter: 'blur(10px)',
+          animation: 'slideUpFade 0.25s ease-out'
+        }}>
+          <span>✅</span>
+          <span>{toastMessage}</span>
         </div>
       )}
     </div>

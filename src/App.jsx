@@ -5,6 +5,7 @@ import { db } from './clientDb.js';
 import AiImportModal from './components/AiImportModal.jsx';
 import AiReviewQueue from './components/AiReviewQueue.jsx';
 import AccountModal from './components/AccountModal.jsx';
+import ReauthModal from './components/ReauthModal.jsx';
 import Login from './components/Login.jsx';
 import Locations from './components/Locations.jsx';
 import Collections from './components/Collections.jsx';
@@ -34,6 +35,7 @@ export default function App() {
   const [importDropdownOpen, setImportDropdownOpen] = useState(false);
   const [showAiReview, setShowAiReview] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [showReauthModal, setShowReauthModal] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [resumeMarkdown, setResumeMarkdown] = useState(null);
@@ -316,20 +318,49 @@ export default function App() {
     setIsInitializing(false);
   }, []);
 
-  const fetchUserConfig = (token) => {
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      console.warn('[Auth Event] Received tb_auth_expired event.');
+      setShowReauthModal(true);
+    };
+
+    const handleTokenRefreshed = (e) => {
+      const newToken = e.detail?.token;
+      if (newToken) {
+        setUser(prev => prev ? { ...prev, token: newToken } : prev);
+      }
+    };
+
+    window.addEventListener('tb_auth_expired', handleAuthExpired);
+    window.addEventListener('tb_token_refreshed', handleTokenRefreshed);
+
+    return () => {
+      window.removeEventListener('tb_auth_expired', handleAuthExpired);
+      window.removeEventListener('tb_token_refreshed', handleTokenRefreshed);
+    };
+  }, []);
+
+  const fetchUserConfig = async (token) => {
     if (!token) return;
-    fetch('/api/auth/me', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then(res => {
-        if (res.status === 401 || res.status === 403) {
-          console.warn('[Auth] Stale or invalid session token. Logging out...');
-          handleLogout();
-          return null;
-        }
-        return res.ok ? res.json() : null;
-      })
-      .then(data => {
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      const refreshedToken = res.headers?.get('X-Refreshed-Token');
+      if (refreshedToken) {
+        localStorage.setItem('tb_token', refreshedToken);
+        setUser(prev => prev ? { ...prev, token: refreshedToken } : prev);
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        console.warn('[Auth] Stale or invalid session token. Prompting for re-authentication...');
+        setShowReauthModal(true);
+        return;
+      }
+
+      if (res.ok) {
+        const data = await res.json();
         if (data) {
           if (data.isAdmin !== undefined) {
             setUser(prev => {
@@ -350,8 +381,10 @@ export default function App() {
             }
           }
         }
-      })
-      .catch(err => console.error('Failed to fetch user config:', err));
+      }
+    } catch (err) {
+      console.warn('Failed to fetch user config (offline or network error):', err);
+    }
   };
 
   useEffect(() => {
@@ -464,6 +497,34 @@ export default function App() {
     setSyncStatus('syncing');
     await populateLocalDb(data.token);
     setSyncStatus('synced');
+  };
+
+  const handleReauthSuccess = async (data) => {
+    localStorage.setItem('tb_token', data.token);
+    localStorage.setItem('tb_username', data.username);
+    localStorage.setItem('tb_userId', data.userId);
+    localStorage.setItem('tb_isAdmin', data.isAdmin ? '1' : '0');
+    if (data.owntracksKey) {
+      localStorage.setItem('tb_owntracksKey', data.owntracksKey);
+    }
+    if (data.profilePicture) {
+      localStorage.setItem('tb_profilePicture', data.profilePicture);
+    }
+
+    setUser(data);
+    setShowReauthModal(false);
+
+    // Sync status manager
+    initSync(data.token);
+
+    // Resume database sync
+    setSyncStatus('syncing');
+    try {
+      await populateLocalDb(data.token);
+      setSyncStatus('synced');
+    } catch (err) {
+      console.warn('Post-reauth sync error:', err);
+    }
   };
 
   const handleLogout = async () => {
@@ -704,7 +765,7 @@ export default function App() {
                   border: '1px solid var(--border-glass)',
                   borderRadius: 'var(--radius-sm)',
                   boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-                  zIndex: 1000,
+                  zIndex: 1100,
                   minWidth: '160px',
                   overflow: 'hidden',
                   display: 'flex',
@@ -829,6 +890,16 @@ export default function App() {
           {showAiImport && <AiImportModal token={user.token} initialMode={importMode} resumeMarkdown={resumeMarkdown} onClose={() => { setShowAiImport(false); setResumeMarkdown(null); }} />}
           {showAiReview && <AiReviewQueue items={pendingImports || []} onClose={() => setShowAiReview(false)} />}
           {showAccountModal && <AccountModal token={user.token} profilePicture={user.profilePicture} username={user.username} onClose={() => setShowAccountModal(false)} onProfileUpdated={handleProfileUpdated} />}
+          {showReauthModal && user && (
+            <ReauthModal
+              username={user.username}
+              onReauthSuccess={handleReauthSuccess}
+              onForceLogout={() => {
+                setShowReauthModal(false);
+                handleLogout();
+              }}
+            />
+          )}
 
           {/* Main Pages Switcher */}
           <main style={{ flexGrow: 1 }}>
