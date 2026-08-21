@@ -12,6 +12,12 @@ import https from 'https';
 import { WebSocketServer } from 'ws';
 import url from 'url';
 import { db, initDatabase, seedDefaultTags, seedDefaultCategories, cleanupDuplicateCopyPlaces } from './db.js';
+import { 
+  initTelemetry, 
+  getTelemetryStatus, 
+  setTelemetryEnabled, 
+  triggerManualPing 
+} from './telemetryService.js';
 import { processMarkdownImport, geocode } from './importService.js';
 import axios from 'axios';
 
@@ -348,6 +354,37 @@ app.post('/api/admin/users/:userId/reset-password', authenticateAdminToken, asyn
     const hash = await bcrypt.hash(newPassword, 10);
     await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, userId]);
     res.json({ success: true, message: `Password for "${targetUser.username}" updated successfully.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// Admin Telemetry API
+// ==========================================
+app.get('/api/admin/telemetry/status', authenticateAdminToken, async (req, res) => {
+  try {
+    const status = await getTelemetryStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/telemetry/toggle', authenticateAdminToken, async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    await setTelemetryEnabled(enabled);
+    res.json({ success: true, enabled });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/telemetry/ping', authenticateAdminToken, async (req, res) => {
+  try {
+    await triggerManualPing();
+    res.json({ success: true, message: 'Test ping dispatched successfully.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3170,6 +3207,7 @@ async function runBackgroundPhotoSyncRetry() {
 (async () => {
   try {
     await initDatabase();
+    await initTelemetry();
     JWT_SECRET = await resolveJwtSecret();
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`TravelBuff server is listening on port ${PORT}`);

@@ -2,6 +2,51 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.2.0] - 2026-08-21
+
+### 🛠️ Fixes & Architectural Improvements
+- **Telemetry Cryptography Architecture**: Upgraded Ed25519 signature payload construction. Migrated internal storage from `PEM` encoded strings to raw 32-byte hex seeds to guarantee strict Cloudflare Worker (`crypto.subtle`) verification compatibility.
+- **Self-Healing Background Pipeline**: Implemented an auto-recovery subsystem within the telemetry client that gracefully catches desynchronized backend states (`requires_registration`) and automatically initiates a background Proof-of-Work handshake to self-correct.
+- **Optimized Boot Sequence**: Removed the artificial startup delay for outbound telemetry pings. Network handshakes and `startup` events now execute completely asynchronously the millisecond the Node server boots without halting the main thread.
+
+## [v7.1.0] - 2026-08-21
+
+### 🔒 Privacy & Architecture Updates
+- **Cryptographic Anonymous Telemetry Client**: 
+  - Introduced an opt-out, 100% anonymous usage reporting system to guide open-source development priorities. 
+  - Uses Ed25519 asymmetric signatures and Proof-of-Work (PoW) registration to guarantee genuine app instances without exposing personally identifiable information (PII).
+  - Collects generic infrastructure metrics (Node version, OS architecture) and feature utilization buckets. No IPs, precise counts, or location strings are ever logged.
+  - Added a non-intrusive First-Run Notice Banner for admin users.
+  - **Opt-Out Control**: Added a "Privacy & Telemetry" toggle in the Admin Settings UI, and support for the `DISABLE_TELEMETRY=true` environment variable to completely block telemetry initialization at the container level.
+- **Treunas Scale Listing Compliance**: Bumped standard version string to formal SemVer `7.1.0` to comply with listing requirements.
+
+## [v7] - 2026-08-19
+
+### 🚀 Features & Interactive Onboarding System (v7)
+- **Interactive UI Spotlight Tour (`OnboardingTour.jsx`)**:
+  - Guided 7-step onboarding tour introducing TravelBuff's offline-first architecture, Locations & Folders, Smart Collections, AI Travel Guide Importer, Trips & Itinerary Planner, Trip Mode, and Settings & Integrations.
+  - **SVG Cutout Mask**: Implemented an SVG-based transparent cutout mask (`fill-rule="evenodd"`) with target-highlighted pulsing glow borders (`#8b5cf6`), eliminating backdrop occlusions and keeping spotlighted navigation buttons crisp, bright, and legible.
+  - **Trip Mode Guidance**: Dedicated step explaining single-screen daily schedules, 1-click nearby food/cafe bookmarking, offline voucher viewers, and quick expense logging.
+  - Responsive positioning adapting to desktop and mobile viewports with step progress indicator dots, previous/next navigation, skip controls, and celebration finish.
+- **Floating "Getting Started" Checklist Widget (`OnboardingChecklist.jsx`)**:
+  - Sleek collapsible glassmorphic widget floating in the bottom-right corner tracking 5 essential onboarding milestones:
+    1. 📍 **Add your first Location or Folder**
+    2. 📚 **Create a Collection** (filters out virtual system collections so only user-created collections count)
+    3. ✨ **Import a Guide (URL or PDF)**
+    4. 🗓️ **Plan a Trip & Daily Itinerary**
+    5. ⚙️ **Configure Home Address or Settings**
+  - **Dynamic Dexie Live Queries**: Uses `useLiveQuery` on IndexedDB (`db.locations`, `db.collections`, `db.markdowns`, `db.trips`, `db.user_addresses`) to automatically check off milestones in real time.
+  - Direct 1-click action shortcuts on each task to open modals or switch to the corresponding screen.
+  - Compact minimize launcher badge (`[?] Getting Started (X/5)`) and celebratory completion reward (`You're a TravelBuff Pro! 🎉`).
+- **User-Scoped Onboarding Lifecycle & First-Time Registration**:
+  - User-scoped completion keys (`tb_tour_completed_${userId}`, `tb_checklist_dismissed_${userId}`, `tb_checklist_collapsed_${userId}`).
+  - Automatically launches the spotlight tour and checklist immediately upon new account registration.
+- **Settings Guided Onboarding Controls**:
+  - Added **"Help & Guided Onboarding"** card in `Settings.jsx` with **"🚀 Re-start Guided Tour"** and **"📋 Show Getting Started Checklist"** controls.
+- **Version Bump**: Updated application version to `v7` across `package.json`, `src/version.js`, `src/router.js`, `public/sw.js`, and `CHANGELOG.md`.
+
+---
+
 ## [v6] - 2026-08-18
 
 ### 🚀 Features & Organization Controls (v6)

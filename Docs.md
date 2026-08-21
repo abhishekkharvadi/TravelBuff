@@ -58,6 +58,10 @@ JWT_SECRET=a_very_long_random_alphanumeric_jwt_secret_key_129847198
 # Directory where uploaded files (reservation attachments, receipts) are stored
 UPLOADS_DIR=./data/uploads
 
+# Disable Anonymous Telemetry (Optional)
+# Set to 'true' to block all background telemetry and registry tasks
+DISABLE_TELEMETRY=true
+
 # Path to the SQLite local database file
 SQLITE_DB_PATH=./data/database.sqlite
 ```

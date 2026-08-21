@@ -37,7 +37,7 @@ export default function Login({ onLoginSuccess }) {
       }
 
       // Handle successful login
-      onLoginSuccess(data, trustDevice);
+      onLoginSuccess({ ...data, isNewUser: isRegister }, trustDevice);
     } catch (err) {
       setError(err.message);
     } finally {

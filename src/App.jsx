@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Cloud, CloudLightning, RefreshCw, LogOut, MapPin, ClipboardList, Settings, Compass, Moon, Edit, Map, Sparkles, User } from 'lucide-react';
+import { Cloud, CloudLightning, RefreshCw, LogOut, MapPin, ClipboardList, Settings, Compass, Moon, Edit, Map, Sparkles, User, X } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './clientDb.js';
 import AiImportModal from './components/AiImportModal.jsx';
@@ -12,6 +12,8 @@ import Collections from './components/Collections.jsx';
 import TripPlanning from './components/TripPlanning.jsx';
 import SettingsTab from './components/Settings.jsx';
 import TripMode from './components/TripMode.jsx';
+import OnboardingTour from './components/OnboardingTour.jsx';
+import OnboardingChecklist from './components/OnboardingChecklist.jsx';
 import { initSyncManager, registerSyncStatusListener } from './sync.js';
 import { populateLocalDb, clearLocalDb } from './clientDb.js';
 import { APP_VERSION } from './version.js';
@@ -39,6 +41,38 @@ export default function App() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [resumeMarkdown, setResumeMarkdown] = useState(null);
+
+  // Onboarding Tour & Getting Started Checklist states
+  const [showOnboardingTour, setShowOnboardingTour] = useState(false);
+  const [showOnboardingChecklist, setShowOnboardingChecklist] = useState(false);
+
+  // Telemetry Banner state
+  const [showTelemetryBanner, setShowTelemetryBanner] = useState(false);
+
+  // Auto-launch tour & checklist on user session
+  useEffect(() => {
+    if (user?.userId) {
+      const tourKey = `tb_tour_completed_${user.userId}`;
+      const dismissedKey = `tb_checklist_dismissed_${user.userId}`;
+      
+      const tourDone = localStorage.getItem(tourKey) === 'true';
+      const checklistDismissed = localStorage.getItem(dismissedKey) === 'true';
+
+      setShowOnboardingChecklist(!checklistDismissed);
+
+      if (user.isAdmin === 1) {
+        const telemetryDismissed = localStorage.getItem('tb_telemetry_banner_dismissed') === 'true';
+        setShowTelemetryBanner(!telemetryDismissed);
+      }
+
+      if (!tourDone) {
+        const timer = setTimeout(() => {
+          setShowOnboardingTour(true);
+        }, 700);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [user?.userId]);
 
   // Pull-to-refresh touch states
   const [startY, setStartY] = useState(0);
@@ -488,6 +522,16 @@ export default function App() {
       sessionStorage.setItem('tb_session_token', data.token);
     }
 
+    if (data.isNewUser) {
+      localStorage.removeItem(`tb_tour_completed_${data.userId}`);
+      localStorage.removeItem(`tb_checklist_dismissed_${data.userId}`);
+      localStorage.removeItem(`tb_checklist_collapsed_${data.userId}`);
+      localStorage.removeItem('tb_tour_completed');
+      localStorage.removeItem('tb_checklist_dismissed');
+      setShowOnboardingChecklist(true);
+      setTimeout(() => setShowOnboardingTour(true), 600);
+    }
+
     setUser(data);
     
     // Sync status manager
@@ -655,6 +699,7 @@ export default function App() {
         {activeMode === 'planning' && (
           <nav className="header-nav no-print">
             <button
+              id="tour-nav-locations"
               className={`nav-link ${activeTab === 'locations' ? 'active' : ''}`}
               onClick={() => { handleTabSelect('locations'); setSelectedLocation(null); setCurrentFolderId(null); }}
             >
@@ -662,6 +707,7 @@ export default function App() {
               <span>Locations</span>
             </button>
             <button
+              id="tour-nav-collections"
               className={`nav-link ${activeTab === 'collections' ? 'active' : ''}`}
               onClick={() => { handleTabSelect('collections'); setSelectedCol(null); }}
             >
@@ -669,6 +715,7 @@ export default function App() {
               <span>Collections</span>
             </button>
             <button
+              id="tour-nav-trips"
               className={`nav-link ${activeTab === 'trips' ? 'active' : ''}`}
               onClick={() => handleTabSelect('trips')}
             >
@@ -708,7 +755,7 @@ export default function App() {
           </div>
 
           {/* Mode toggle */}
-          <div className="mode-switch-wrapper">
+          <div id="tour-nav-trip-mode" className="mode-switch-wrapper">
             <button
               className={`mode-btn ${activeMode === 'planning' ? 'active' : ''}`}
               onClick={() => handleToggleMode('planning')}
@@ -730,7 +777,7 @@ export default function App() {
           </div>
 
           {/* AI Import Dropdown Button */}
-          <div className="no-print import-menu-container" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <div id="tour-nav-import" className="no-print import-menu-container" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <button 
               className="mode-btn"
               onClick={() => setImportDropdownOpen(!importDropdownOpen)}
@@ -811,7 +858,7 @@ export default function App() {
           </div>
 
           {/* User Profile Dropdown */}
-          <div className="desktop-only-block user-menu-container" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <div id="tour-user-menu" className="desktop-only-block user-menu-container" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <button 
               className="no-print"
               onClick={() => setUserMenuOpen(!userMenuOpen)}
@@ -901,6 +948,26 @@ export default function App() {
             />
           )}
 
+          {/* Telemetry Notice Banner */}
+          {showTelemetryBanner && (
+            <div style={{ background: 'var(--accent-primary-glow)', borderBottom: '1px solid var(--accent-primary)', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                <strong>🚀 Help Improve TravelBuff!</strong> We collect 100% anonymous usage stats to guide development. Zero personal data or location data is tracked. 
+                <a href="https://travelbuff.app/#privacy" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary-hover)', marginLeft: '6px' }}>Learn More</a>. 
+                You can manage this in <button onClick={() => handleTabSelect('settings')} style={{ background: 'transparent', border: 'none', color: 'var(--accent-primary-hover)', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}>Settings</button>.
+              </div>
+              <button 
+                onClick={() => {
+                  localStorage.setItem('tb_telemetry_banner_dismissed', 'true');
+                  setShowTelemetryBanner(false);
+                }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+          )}
+
           {/* Main Pages Switcher */}
           <main style={{ flexGrow: 1 }}>
             {activeMode === 'trip' ? (
@@ -933,7 +1000,24 @@ export default function App() {
                     onSelectTrip={handleTripSelect}
                   />
                 )}
-                {activeTab === 'settings' && <SettingsTab token={user.token} userId={user.userId} onLogout={handleLogout} onResumeMarkdown={(md) => { setResumeMarkdown(md); setShowAiImport(true); }} />}
+                {activeTab === 'settings' && (
+                  <SettingsTab 
+                    token={user.token} 
+                    userId={user.userId} 
+                    onLogout={handleLogout} 
+                    onResumeMarkdown={(md) => { setResumeMarkdown(md); setShowAiImport(true); }} 
+                    onRestartTour={() => setShowOnboardingTour(true)}
+                    onShowChecklist={() => {
+                      setShowOnboardingChecklist(true);
+                      if (user?.userId) {
+                        localStorage.removeItem(`tb_checklist_dismissed_${user.userId}`);
+                        localStorage.removeItem(`tb_checklist_collapsed_${user.userId}`);
+                      }
+                      localStorage.removeItem('tb_checklist_dismissed');
+                      localStorage.removeItem('tb_checklist_collapsed');
+                    }}
+                  />
+                )}
               </>
             )}
           </main>
@@ -1018,6 +1102,49 @@ export default function App() {
           </button>
         </nav>
       )}
+
+      {/* Interactive UI Spotlight Tour */}
+      <OnboardingTour
+        isOpen={showOnboardingTour}
+        userId={user?.userId}
+        onClose={() => setShowOnboardingTour(false)}
+        onNavigateTab={(tab) => {
+          handleTabSelect(tab);
+          if (tab === 'locations') {
+            setSelectedLocation(null);
+            setCurrentFolderId(null);
+          } else if (tab === 'collections') {
+            setSelectedCol(null);
+          }
+        }}
+      />
+
+      {/* Getting Started Progress Checklist */}
+      <OnboardingChecklist
+        isVisible={showOnboardingChecklist && activeMode === 'planning'}
+        userId={user?.userId}
+        onClose={() => {
+          setShowOnboardingChecklist(false);
+          if (user?.userId) {
+            localStorage.setItem(`tb_checklist_dismissed_${user.userId}`, 'true');
+          }
+          localStorage.setItem('tb_checklist_dismissed', 'true');
+        }}
+        onOpenTour={() => setShowOnboardingTour(true)}
+        onNavigateTab={(tab) => {
+          handleTabSelect(tab);
+          if (tab === 'locations') {
+            setSelectedLocation(null);
+            setCurrentFolderId(null);
+          } else if (tab === 'collections') {
+            setSelectedCol(null);
+          }
+        }}
+        onOpenImport={(mode) => {
+          setImportMode(mode || 'url');
+          setShowAiImport(true);
+        }}
+      />
     </div>
   );
 }

@@ -294,7 +294,7 @@ function SearchableCurrencySelect({ value, onChange }) {
   );
 }
 
-export default function SettingsComponent({ token, userId, onLogout, onResumeMarkdown }) {
+export default function SettingsComponent({ token, userId, onLogout, onResumeMarkdown, onRestartTour, onShowChecklist }) {
   // Dexie live queries
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const customCategories = useLiveQuery(() => db.custom_categories.toArray()) || [];
@@ -359,6 +359,11 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
   const [resetNewPassword, setResetNewPassword] = useState('');
   const [selectedDeleteUser, setSelectedDeleteUser] = useState(null);
   const [adminActionLoading, setAdminActionLoading] = useState(false);
+  
+  // Telemetry Admin State
+  const [telemetryStatus, setTelemetryStatus] = useState(null);
+  const [showPayloadModal, setShowPayloadModal] = useState(false);
+  const [telemetryActionLoading, setTelemetryActionLoading] = useState(false);
 
   const fetchAdminUsers = async () => {
     if (!isAdmin) return;
@@ -378,9 +383,25 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
     }
   };
 
+  const fetchTelemetryStatus = async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await fetch('/api/admin/telemetry/status', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTelemetryStatus(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch telemetry status:', e);
+    }
+  };
+
   useEffect(() => {
     if (isAdmin) {
       fetchAdminUsers();
+      fetchTelemetryStatus();
     }
   }, [isAdmin, token]);
 
@@ -436,6 +457,48 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
       alert('Failed to delete user');
     } finally {
       setAdminActionLoading(false);
+    }
+  };
+
+  const handleToggleTelemetry = async (enabled) => {
+    setTelemetryActionLoading(true);
+    try {
+      const res = await fetch('/api/admin/telemetry/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ enabled })
+      });
+      if (res.ok) {
+        await fetchTelemetryStatus();
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setTelemetryActionLoading(false);
+    }
+  };
+
+  const handlePingTelemetry = async () => {
+    setTelemetryActionLoading(true);
+    try {
+      const res = await fetch('/api/admin/telemetry/ping', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        alert('Test ping dispatched successfully!');
+        await fetchTelemetryStatus();
+      } else {
+        const err = await res.json();
+        alert(`Ping failed: ${err.error}`);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setTelemetryActionLoading(false);
     }
   };
 
@@ -1498,6 +1561,41 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
             )}
           </div>
 
+          {/* SECTION: GUIDED ONBOARDING & HELP */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+              <Sparkles size={22} style={{ color: 'var(--accent-primary-hover)' }} />
+              <h3 style={{ margin: 0 }}>Help & Guided Onboarding</h3>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              Relaunch the interactive spotlight tour to revisit key UI areas, or re-open the Getting Started checklist to track your setup progress.
+            </p>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  if (onRestartTour) onRestartTour();
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+              >
+                <Sparkles size={16} style={{ color: 'var(--accent-primary)' }} />
+                <span>Re-start Guided Tour</span>
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  if (onShowChecklist) onShowChecklist();
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+              >
+                <Check size={16} style={{ color: '#10b981' }} />
+                <span>Show Getting Started Checklist</span>
+              </button>
+            </div>
+          </div>
+
           {/* SECTION 5: OWNTRACKS INTEGRATION */}
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
             <h4 style={{ color: 'var(--accent-secondary)', fontSize: '0.9rem', marginBottom: '12px' }}>OwnTracks Integration</h4>
@@ -1801,6 +1899,83 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* PRIVACY & TELEMETRY CARD (Admin Only) */}
+          {isAdmin && (
+            <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Server size={22} style={{ color: 'var(--accent-primary-hover)' }} />
+                  <h3 style={{ margin: 0 }}>Privacy & Telemetry</h3>
+                </div>
+                <span style={{ background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.4)', padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                  ★ Admin Only
+                </span>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                Help improve TravelBuff by sending 100% anonymous system and usage statistics (like node version, generic feature usage, and rough bucket scale). <br/>
+                <strong>Zero personal data, IPs, or location details are ever collected.</strong> Read our <a href="https://travelbuff.app/#privacy" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary-hover)' }}>Privacy Policy</a>.
+              </p>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={telemetryStatus?.enabled || false}
+                    onChange={(e) => handleToggleTelemetry(e.target.checked)}
+                    disabled={telemetryActionLoading || (telemetryStatus?.enabled === false && !telemetryStatus)}
+                    style={{ width: '18px', height: '18px', accentColor: 'var(--accent-primary)' }}
+                  />
+                  <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>
+                    Enable Anonymous Telemetry
+                  </span>
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowPayloadModal(true)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 12px' }}
+                >
+                  <Search size={14} /> View Current Payload
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handlePingTelemetry}
+                  disabled={!telemetryStatus?.enabled || telemetryActionLoading}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 12px' }}
+                >
+                  <RefreshCw size={14} className={telemetryActionLoading ? 'sync-spinner' : ''} /> Send Test Ping
+                </button>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  Last Reported: {telemetryStatus?.last_reported ? new Date(telemetryStatus.last_reported).toLocaleString() : 'Never'}
+                </span>
+              </div>
+
+              {/* PAYLOAD PREVIEW MODAL */}
+              {showPayloadModal && telemetryStatus && (
+                <div className="modal-overlay" style={{ zIndex: 1000 }}>
+                  <div className="modal-container" style={{ maxWidth: '600px', width: '90%', padding: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Telemetry Payload Preview</h3>
+                      <button type="button" className="btn-icon" onClick={() => setShowPayloadModal(false)}>
+                        <X size={18} />
+                      </button>
+                    </div>
+                    <pre style={{ background: '#121217', color: '#a8c7fa', padding: '16px', borderRadius: '8px', fontSize: '0.8rem', overflowX: 'auto', border: '1px solid var(--border-glass)' }}>
+                      {JSON.stringify(telemetryStatus.preview_payload, null, 2)}
+                    </pre>
+                    <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                      <button type="button" className="btn btn-primary" onClick={() => setShowPayloadModal(false)}>Close</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
