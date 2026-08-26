@@ -1551,6 +1551,97 @@ app.get('/api/import/geocode', authenticateToken, async (req, res) => {
   }
 });
 
+async function callAiProvider({ provider = 'Gemini', apiKey = '', model = 'gemini-1.5-pro', endpoint = '', systemPrompt = '', userMessage = '' }) {
+  const cleanKey = (apiKey || '').trim();
+  const cleanModel = (model || '').trim();
+
+  if (!cleanKey && ['Gemini', 'OpenAI', 'Claude'].includes(provider)) {
+    throw new Error(`API Key is missing for provider ${provider}.`);
+  }
+
+  let responseText = '';
+
+  try {
+    if (provider === 'Gemini') {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+      const response = await axios.post(
+        url,
+        {
+          contents: [{
+            parts: [{
+              text: `${systemPrompt}\n\n${userMessage}`
+            }]
+          }]
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': cleanKey
+          }
+        }
+      );
+      responseText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    } else if (provider === 'OpenAI') {
+      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: cleanModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ]
+      }, {
+        headers: { 
+          'Authorization': `Bearer ${cleanKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      responseText = response.data?.choices?.[0]?.message?.content || '';
+    } else if (provider === 'Claude') {
+      const response = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: cleanModel,
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }]
+      }, {
+        headers: {
+          'x-api-key': cleanKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        }
+      });
+      responseText = response.data?.content?.[0]?.text || '';
+    } else {
+      const targetUrl = endpoint || 'http://localhost:11434/api/generate';
+      const response = await axios.post(targetUrl, {
+        model: cleanModel,
+        prompt: `${systemPrompt}\n\n${userMessage}`,
+        stream: false
+      });
+      responseText = response.data?.response || response.data?.choices?.[0]?.message?.content || '';
+    }
+  } catch (err) {
+    const errorMsg = err.response?.data?.error?.message || err.response?.data?.message || err.message || 'AI request failed';
+    throw new Error(errorMsg);
+  }
+
+  let cleanedText = responseText.trim();
+  if (cleanedText.startsWith('```json')) {
+    cleanedText = cleanedText.substring(7);
+  }
+  if (cleanedText.startsWith('```')) {
+    cleanedText = cleanedText.substring(3);
+  }
+  if (cleanedText.endsWith('```')) {
+    cleanedText = cleanedText.substring(0, cleanedText.length - 3);
+  }
+  cleanedText = cleanedText.trim();
+
+  try {
+    return JSON.parse(cleanedText);
+  } catch (e) {
+    throw new Error('AI returned invalid JSON: ' + responseText.substring(0, 300));
+  }
+}
+
 app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
   const { places, markdown, city, state, country, prompt, homeCoords } = req.body;
   if (!places || !Array.isArray(places)) {
@@ -1568,10 +1659,6 @@ app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
     const apiKey = aiSettings.apiKey || '';
     const model = aiSettings.model || 'gemini-1.5-pro';
     const endpoint = aiSettings.endpointUrl || '';
-
-    if (!apiKey && ['Gemini', 'OpenAI', 'Claude'].includes(provider)) {
-      return res.status(400).json({ error: `API Key is missing for provider ${provider}.` });
-    }
 
     const homeLat = homeCoords?.lat;
     const homeLng = homeCoords?.lng || homeCoords?.lon;
@@ -1608,75 +1695,19 @@ Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`
 
     const userMessage = `${prompt || 'Extract geocoding details, categories, and day-wise itinerary for these places.'}${markdownContext}\n\nPlaces Input:\n${JSON.stringify(places.map(p => ({ id: p.id, name: p.name, description: p.description || '', day: p.day || null, type: p.type || 'place' })), null, 2)}`;
 
-    let responseText = '';
+    const parsedResults = await callAiProvider({
+      provider,
+      apiKey,
+      model,
+      endpoint,
+      systemPrompt,
+      userMessage
+    });
 
-    if (provider === 'Gemini') {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      const response = await axios.post(url, {
-        contents: [{
-          parts: [{
-            text: `${systemPrompt}\n\n${userMessage}`
-          }]
-        }]
-      });
-      responseText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } else if (provider === 'OpenAI') {
-      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ]
-      }, {
-        headers: { 'Authorization': `Bearer ${apiKey}` }
-      });
-      responseText = response.data?.choices?.[0]?.message?.content || '';
-    } else if (provider === 'Claude') {
-      const response = await axios.post('https://api.anthropic.com/v1/messages', {
-        model: model,
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }]
-      }, {
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
-        }
-      });
-      responseText = response.data?.content?.[0]?.text || '';
-    } else {
-      const targetUrl = endpoint || 'http://localhost:11434/api/generate';
-      const response = await axios.post(targetUrl, {
-        model: model,
-        prompt: `${systemPrompt}\n\n${userMessage}`,
-        stream: false
-      });
-      responseText = response.data?.response || response.data?.choices?.[0]?.message?.content || '';
-    }
-
-    let cleanedText = responseText.trim();
-    if (cleanedText.startsWith('```json')) {
-      cleanedText = cleanedText.substring(7);
-    }
-    if (cleanedText.startsWith('```')) {
-      cleanedText = cleanedText.substring(3);
-    }
-    if (cleanedText.endsWith('```')) {
-      cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-    }
-    cleanedText = cleanedText.trim();
-
-    try {
-      const parsedResults = JSON.parse(cleanedText);
-      res.json(parsedResults);
-    } catch (e) {
-      console.error('Failed to parse AI output', responseText);
-      res.status(500).json({ error: 'AI returned invalid JSON format. Raw output: ' + responseText });
-    }
+    res.json(parsedResults);
   } catch (err) {
-    console.error('AI extraction API error:', err.response?.data || err.message);
-    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+    console.error('AI extraction API error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -1698,14 +1729,12 @@ app.post('/api/ai/generate-trip', authenticateToken, async (req, res) => {
     const model = aiSettings.model || 'gemini-1.5-pro';
     const endpoint = aiSettings.endpointUrl || '';
 
-    if (!apiKey && ['Gemini', 'OpenAI', 'Claude'].includes(provider)) {
-      return res.status(400).json({ error: `API Key is missing for provider ${provider}.` });
-    }
-
     const systemPrompt = `You are a travel planning assistant. Generate a day-wise itinerary for a trip.
-You are given a list of existing places of visit (with their names and geocoordinates/locations).
+You are given a list of existing places of visit (with their names, ratings, and geocoordinates/locations).
 Trip Length: ${lengthDays || 3} days.
 The activities returned MUST only be assignments of the existing place names provided in the list. Do not invent new places or write descriptions.
+If any day specifies an assigned location constraint, you must ONLY assign places belonging to that assigned location for that day.
+If not all places can fit in the trip itinerary, then only choose the important ones and ones which have >4 star ratings.
 
 Your response MUST be a JSON array of objects representing days. Each day object must contain:
 - day: number (e.g. 1, 2)
@@ -1719,68 +1748,18 @@ Places List: ${JSON.stringify(placesList || [])}
 Locations: ${JSON.stringify(locations || [])}
 Collections: ${JSON.stringify(collections || [])}`;
 
-    let responseText = '';
+    const parsedJson = await callAiProvider({
+      provider,
+      apiKey,
+      model,
+      endpoint,
+      systemPrompt,
+      userMessage
+    });
 
-    if (provider === 'Gemini') {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      const response = await axios.post(url, {
-        contents: [{
-          parts: [{
-            text: `${systemPrompt}\n\n${userMessage}`
-          }]
-        }]
-      });
-      responseText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } else if (provider === 'OpenAI') {
-      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ]
-      }, {
-        headers: { 'Authorization': `Bearer ${apiKey}` }
-      });
-      responseText = response.data?.choices?.[0]?.message?.content || '';
-    } else if (provider === 'Claude') {
-      const response = await axios.post('https://api.anthropic.com/v1/messages', {
-        model: model,
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }]
-      }, {
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
-        }
-      });
-      responseText = response.data?.content?.[0]?.text || '';
-    } else {
-      const targetUrl = endpoint || 'http://localhost:11434/api/generate';
-      const response = await axios.post(targetUrl, {
-        model: model,
-        prompt: `${systemPrompt}\n\n${userMessage}`,
-        stream: false
-      });
-      responseText = response.data?.response || response.data?.choices?.[0]?.message?.content || '';
-    }
-
-    let cleanedText = responseText.trim();
-    if (cleanedText.startsWith('```json')) {
-      cleanedText = cleanedText.substring(7);
-    }
-    if (cleanedText.startsWith('```')) {
-      cleanedText = cleanedText.substring(3);
-    }
-    if (cleanedText.endsWith('```')) {
-      cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-    }
-
-    const parsedJson = JSON.parse(cleanedText.trim());
     res.json(parsedJson);
   } catch (err) {
-    console.error('AI itinerary generation error:', err);
+    console.error('AI itinerary generation error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

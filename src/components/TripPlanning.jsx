@@ -346,7 +346,12 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
       if (matched) {
         setSelectedTrip(matched);
       }
-    } else if (!selectedTripId) {
+    } else if (selectedTrip && trips && trips.length > 0) {
+      const matched = trips.find(t => t.id === selectedTrip.id);
+      if (matched && (matched.name !== selectedTrip.name || matched.start_date !== selectedTrip.start_date || matched.length !== selectedTrip.length || matched.notes !== selectedTrip.notes || matched.start_address_id !== selectedTrip.start_address_id || matched.stop_address_id !== selectedTrip.stop_address_id)) {
+        setSelectedTrip(matched);
+      }
+    } else if (!selectedTripId && !selectedTrip) {
       setSelectedTrip(null);
     }
   }, [selectedTripId, trips]);
@@ -502,11 +507,21 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
   const [editTripName, setEditTripName] = useState('');
   const [editTripStartDate, setEditTripStartDate] = useState('');
   const [editTripLength, setEditTripLength] = useState(1);
+  const [editTripStartAddressId, setEditTripStartAddressId] = useState('');
+  const [editTripStopAddressId, setEditTripStopAddressId] = useState('');
   const [showTravelersModal, setShowTravelersModal] = useState(false);
   const [travelerSearch, setTravelerSearch] = useState('');
   const [travelerTab, setTravelerTab] = useState('local'); // 'local' | 'immich'
   const [immichPeople, setImmichPeople] = useState([]);
   const [loadingImmichPeople, setLoadingImmichPeople] = useState(false);
+
+  // Places Bank AI Planner states
+  const [showBankAiModal, setShowBankAiModal] = useState(false);
+  const [bankAiPrompt, setBankAiPrompt] = useState('');
+  const [bankAiArrivalTime, setBankAiArrivalTime] = useState('morning');
+  const [isGeneratingBankAi, setIsGeneratingBankAi] = useState(false);
+  const [bankAiError, setBankAiError] = useState('');
+  const [selectedMapDay, setSelectedMapDay] = useState(null);
 
   const fetchImmichPeople = async () => {
     if (immichPeople.length > 0) return;
@@ -533,6 +548,8 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     setEditTripName(selectedTrip.name);
     setEditTripStartDate(selectedTrip.start_date || '');
     setEditTripLength(selectedTrip.length || 1);
+    setEditTripStartAddressId(selectedTrip.start_address_id || '');
+    setEditTripStopAddressId(selectedTrip.stop_address_id || '');
     setIsEditingTripMeta(true);
   };
 
@@ -662,7 +679,10 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     }
     if (!Array.isArray(filterLocIds)) filterLocIds = [];
 
-    const tripItineraries = itineraries.filter(i => i.trip_id === selectedTrip.id);
+    let tripItineraries = itineraries.filter(i => i.trip_id === selectedTrip.id);
+    if (selectedMapDay) {
+      tripItineraries = tripItineraries.filter(i => i.date === selectedMapDay);
+    }
     const pointsList = [];
 
     // 1. Append itinerary stops
@@ -671,18 +691,21 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
       if (place && (filterLocIds.length === 0 || !place.location_id || filterLocIds.includes(place.location_id))) {
         const dayIdx = itineraryDays.findIndex(d => d.date === item.date);
         const dayLabelText = dayIdx !== -1 ? `D${dayIdx + 1}` : item.date;
+        const placeIdx = allPlacesSorted.findIndex(x => x.id === place.id);
+        const placeNum = placeIdx !== -1 ? placeIdx + 1 : (place.is_home ? '🏠' : item.sequence_order);
         pointsList.push({
           ...place,
+          id: `${place.id}_${item.id}`,
           dayLabel: dayLabelText,
           sequenceOrder: item.sequence_order,
-          sequenceLabel: item.sequence_order,
+          sequenceLabel: placeNum,
           date: item.date
         });
       }
     });
 
     return pointsList;
-  }, [itineraries, combinedPlaces, selectedTrip, itineraryDays, stopFilterLocationIds]);
+  }, [itineraries, combinedPlaces, selectedTrip, itineraryDays, stopFilterLocationIds, allPlacesSorted, selectedMapDay]);
 
   // Base configurations and Trip configuration states
   const [baseCurrency, setBaseCurrency] = useState('USD');
@@ -898,10 +921,11 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     });
 
     const placeLines = selectedPlacesList.map((p, i) => 
-      `Place of Visit ${i + 1}: ${p.name} (Lat: ${p.latitude || 'N/A'}, Lon: ${p.longitude || 'N/A'}, Address: ${p.address || 'N/A'})`
+      `Place of Visit ${i + 1}: ${p.name} (Rating: ${p.rating || 'N/A'} stars, Lat: ${p.latitude || 'N/A'}, Lon: ${p.longitude || 'N/A'}, Address: ${p.address || 'N/A'})`
     );
 
     return `You are a trip planning specialist. You are planning a trip to the locations below along with their geo-codes. Review the locations and geocodes and plan a trip for these locations so that maximum number of places can be covered. Expect to spend sometime in each of these place for sightseeing.
+If not all places can be visited in the trip itinerary, then only choose the important ones and ones which have >4 star ratings.
 
 Trip Days: ${tripLength || 3} days
 Arrival time on Day 1: ${arrivalTime || 'Morning'}
@@ -910,6 +934,171 @@ ${locLines.join('\n')}
 ${placeLines.join('\n')}
 
 Only return the places to visit for each day in the itinerary.`;
+  };
+
+  const getBankAiPromptText = () => {
+    const activeTripObj = selectedTrip || currentTrip;
+    if (!activeTripObj) return '';
+
+    let filterLocs = stopFilterLocationIds;
+    if (filterLocs.length === 0 && activeTripObj.notes) {
+      const parsedNotes = safeParseNotes(activeTripObj.notes);
+      if (Array.isArray(parsedNotes.locationIds)) {
+        filterLocs = parsedNotes.locationIds;
+      }
+    }
+
+    const bankPlaces = places.filter(p => p.is_folder !== 1 && (filterLocs.length === 0 || filterLocs.includes(p.location_id)));
+    const locMap = {};
+    locations.forEach(l => { locMap[l.id] = l.name; });
+
+    const formattedPlaces = bankPlaces.map((p, i) => ({
+      name: p.name,
+      rating: p.rating || null,
+      folder_location: locMap[p.location_id] || '',
+      category: p.category || '',
+      address: p.address || '',
+      latitude: p.latitude || '',
+      longitude: p.longitude || ''
+    }));
+
+    const notesObj = safeParseNotes(activeTripObj.notes);
+    const dayLocations = notesObj.dayLocations || {};
+    const dayConstraints = itineraryDays.map((d, i) => {
+      const locId = dayLocations[d.date];
+      const locName = locMap[locId];
+      return locName ? `Day ${i + 1} (${d.date}): Assigned Location is "${locName}". ONLY schedule places belonging to "${locName}".` : `Day ${i + 1} (${d.date}): Any location.`;
+    });
+
+    return `You are a trip planning specialist. Plan an optimized ${itineraryDays.length || activeTripObj.length || 3}-day itinerary using the places in the Places Bank.
+Arrival time on Day 1: ${bankAiArrivalTime || 'Morning'}.
+If not all places can be visited in the trip itinerary, then only choose the important ones and ones which have >4 star ratings.
+
+Per-Day Assigned Locations:
+${dayConstraints.join('\n')}
+
+Places Bank List (${bankPlaces.length} places):
+${JSON.stringify(formattedPlaces, null, 2)}
+
+Only return the places to visit for each day in the itinerary.`;
+  };
+
+  const handleOpenBankAiModal = () => {
+    setBankAiError('');
+    setBankAiPrompt(getBankAiPromptText());
+    setShowBankAiModal(true);
+  };
+
+  const handleRunBankAiPlan = async (e) => {
+    e.preventDefault();
+    const activeTripObj = selectedTrip || currentTrip;
+    if (!activeTripObj) return;
+
+    setIsGeneratingBankAi(true);
+    setBankAiError('');
+
+    try {
+      let filterLocs = stopFilterLocationIds;
+      if (filterLocs.length === 0 && activeTripObj.notes) {
+        const parsedNotes = safeParseNotes(activeTripObj.notes);
+        if (Array.isArray(parsedNotes.locationIds)) {
+          filterLocs = parsedNotes.locationIds;
+        }
+      }
+
+      const bankPlaces = places.filter(p => p.is_folder !== 1 && (filterLocs.length === 0 || filterLocs.includes(p.location_id)));
+      const locMap = {};
+      locations.forEach(l => { locMap[l.id] = l.name; });
+
+      const formattedPlaces = bankPlaces.map(p => ({
+        name: p.name,
+        rating: p.rating || null,
+        folder_location: locMap[p.location_id] || '',
+        category: p.category || '',
+        address: p.address || '',
+        latitude: p.latitude || '',
+        longitude: p.longitude || ''
+      }));
+
+      trackApiCall('AI Assistant');
+      const aiRes = await fetch('/api/ai/generate-trip', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          locations: locations.filter(l => filterLocs.includes(l.id)).map(l => l.name),
+          collections: [],
+          lengthDays: itineraryDays.length || activeTripObj.length || 1,
+          prompt: bankAiPrompt,
+          placesList: formattedPlaces
+        })
+      });
+
+      if (!aiRes.ok) {
+        const errorData = await aiRes.json();
+        throw new Error(errorData.error || 'AI itinerary generation failed');
+      }
+
+      const days = await aiRes.json();
+
+      // Clear existing non-hotel itinerary items for this trip
+      const existingItems = itineraries.filter(i => i.trip_id === activeTripObj.id);
+      for (const it of existingItems) {
+        await queueSyncAction('itinerary_items', 'delete', it);
+      }
+
+      const unmappedList = [];
+      for (const day of days) {
+        let dayDateStr = `Day ${day.day}`;
+        if (activeTripObj.start_date) {
+          const d = new Date(activeTripObj.start_date);
+          d.setDate(d.getDate() + (day.day - 1));
+          dayDateStr = d.toISOString().split('T')[0];
+        } else if (itineraryDays[day.day - 1]) {
+          dayDateStr = itineraryDays[day.day - 1].date;
+        }
+
+        for (let idx = 0; idx < (day.activities || []).length; idx++) {
+          const activityText = day.activities[idx];
+          const matchedPlace = places.find(p => {
+            return p.name.toLowerCase() === activityText.toLowerCase() ||
+              activityText.toLowerCase().includes(p.name.toLowerCase()) ||
+              p.name.toLowerCase().includes(activityText.toLowerCase());
+          });
+
+          if (!matchedPlace) {
+            unmappedList.push({
+              name: activityText.substring(0, 100),
+              suggestedDay: dayDateStr
+            });
+          } else {
+            const newItem = {
+              id: generateUUID(),
+              trip_id: activeTripObj.id,
+              date: dayDateStr,
+              place_id: matchedPlace.id,
+              sequence_order: idx + 1,
+              distance_from_prev: null,
+              duration_from_prev: null
+            };
+            await queueSyncAction('itinerary_items', 'insert', newItem);
+          }
+        }
+      }
+
+      if (unmappedList.length > 0) {
+        setUnmappedRecommendations(unmappedList);
+      }
+
+      setShowBankAiModal(false);
+    } catch (err) {
+      console.error('Bank AI planning error:', err);
+      setBankAiError(err.message || 'Failed to generate itinerary with AI.');
+    } finally {
+      setIsGeneratingBankAi(false);
+    }
   };
 
   useEffect(() => {
@@ -2039,6 +2228,41 @@ Only return the places to visit for each day in the itinerary.`;
                   </div>
                 </div>
 
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Start Trip (Home Address)</label>
+                    <select
+                      className="form-control"
+                      value={tripStartAddressId}
+                      onChange={(e) => setTripStartAddressId(e.target.value)}
+                      style={{ height: '38px' }}
+                    >
+                      <option value="">-- None / Unspecified --</option>
+                      {userAddresses.map(addr => (
+                        <option key={addr.id} value={addr.id}>
+                          🏠 {addr.label} {addr.address ? `(${addr.address})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>End Trip (Home Address)</label>
+                    <select
+                      className="form-control"
+                      value={tripStopAddressId}
+                      onChange={(e) => setTripStopAddressId(e.target.value)}
+                      style={{ height: '38px' }}
+                    >
+                      <option value="">-- None / Unspecified --</option>
+                      {userAddresses.map(addr => (
+                        <option key={addr.id} value={addr.id}>
+                          🏠 {addr.label} {addr.address ? `(${addr.address})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
 
 
                 <div className="form-group">
@@ -2513,7 +2737,7 @@ Only return the places to visit for each day in the itinerary.`;
                       value={editTripName}
                       onChange={(e) => setEditTripName(e.target.value)}
                     />
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                       <input 
                         type="date" 
                         className="form-control" 
@@ -2524,7 +2748,7 @@ Only return the places to visit for each day in the itinerary.`;
                       />
                       <input 
                         type="number" 
-                        min="1"
+                        min="1" 
                         placeholder="Length"
                         className="form-control" 
                         style={{ width: '90px', fontSize: '0.8rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)' }}
@@ -2534,6 +2758,28 @@ Only return the places to visit for each day in the itinerary.`;
                           setEditTripLength(val === '' ? '' : parseInt(val, 10));
                         }}
                       />
+                      <select
+                        className="form-control"
+                        style={{ fontSize: '0.78rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)', flex: 1, minWidth: '130px' }}
+                        value={editTripStartAddressId}
+                        onChange={(e) => setEditTripStartAddressId(e.target.value)}
+                      >
+                        <option value="">Start: -- None --</option>
+                        {userAddresses.map(addr => (
+                          <option key={addr.id} value={addr.id}>Start: 🏠 {addr.label}</option>
+                        ))}
+                      </select>
+                      <select
+                        className="form-control"
+                        style={{ fontSize: '0.78rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)', flex: 1, minWidth: '130px' }}
+                        value={editTripStopAddressId}
+                        onChange={(e) => setEditTripStopAddressId(e.target.value)}
+                      >
+                        <option value="">End: -- None --</option>
+                        {userAddresses.map(addr => (
+                          <option key={addr.id} value={addr.id}>End: 🏠 {addr.label}</option>
+                        ))}
+                      </select>
                       <button 
                         className="btn btn-primary"
                         style={{ width: 'auto', height: '30px', padding: '4px 12px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }}
@@ -2550,7 +2796,9 @@ Only return the places to visit for each day in the itinerary.`;
                             name: editTripName,
                             start_date: editTripStartDate || null,
                             end_date: calculatedEndDate,
-                            length: len
+                            length: len,
+                            start_address_id: editTripStartAddressId || null,
+                            stop_address_id: editTripStopAddressId || null
                           };
                           await queueSyncAction('trips', 'update', updated);
                           setSelectedTrip(updated);
@@ -2582,6 +2830,12 @@ Only return the places to visit for each day in the itinerary.`;
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
                       <span>📅 {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})</span>
+                      {currentTrip.start_address_id && (
+                        <span>🏠 Start: {userAddresses.find(a => a.id === currentTrip.start_address_id)?.label || 'Home'}</span>
+                      )}
+                      {currentTrip.stop_address_id && (
+                        <span>🏁 End: {userAddresses.find(a => a.id === currentTrip.stop_address_id)?.label || 'Home'}</span>
+                      )}
                       
                       {/* Companion / Traveler Thumbnails */}
                       {(() => {
@@ -2949,6 +3203,7 @@ Only return the places to visit for each day in the itinerary.`;
                       sortedActivePlaces={sortedActivePlaces}
                       dayColor={getDayColor(dIdx)}
                       userAddresses={userAddresses}
+                      locations={locations}
                     />
                   );
                 })}
@@ -3740,15 +3995,41 @@ Only return the places to visit for each day in the itinerary.`;
               height: '100%',
               position: 'relative'
             }}>
-              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-glass)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>Trip Map</h3>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setShowNavigationLines(prev => !prev)}
-                  style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0 }}
-                >
-                  {showNavigationLines ? '🗺️ Hide Routes' : '🚗 Generate Navigation'}
-                </button>
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-glass)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>Trip Map</h3>
+                  {selectedMapDay && (
+                    <span style={{ fontSize: '0.75rem', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', padding: '2px 8px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                      👁️ {itineraryDays.find(d => d.date === selectedMapDay)?.label || selectedMapDay}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMapDay(null)}
+                        style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: 0, fontSize: '0.8rem', marginLeft: '4px', lineHeight: 1 }}
+                        title="Show all days on map"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  {selectedMapDay && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setSelectedMapDay(null)}
+                      style={{ width: 'auto', padding: '4px 8px', fontSize: '0.75rem', height: '28px', margin: 0 }}
+                    >
+                      Show All Days
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowNavigationLines(prev => !prev)}
+                    style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0 }}
+                  >
+                    {showNavigationLines ? '🗺️ Hide Routes' : '🚗 Generate Navigation'}
+                  </button>
+                </div>
               </div>
               <div style={{ flexGrow: 1, position: 'relative' }}>
                 <MapView 
@@ -3885,20 +4166,76 @@ Only return the places to visit for each day in the itinerary.`;
                       }}
                       style={{
                         background: 'var(--bg-surface-elevated)',
-                        border: `2px dashed ${color}`,
+                        border: selectedMapDay === day.date ? `2px solid ${color}` : `2px dashed ${color}`,
+                        boxShadow: selectedMapDay === day.date ? `0 0 14px ${color}40` : 'none',
                         borderRadius: '6px',
-                        padding: '12px'
+                        padding: '12px',
+                        transition: 'border 0.2s ease, box-shadow 0.2s ease'
                       }}
                     >
-                      <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', color: color, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <h4 
+                        onClick={() => setSelectedMapDay(prev => prev === day.date ? null : day.date)}
+                        style={{ 
+                          margin: '0 0 12px 0', 
+                          fontSize: '0.9rem', 
+                          color: color, 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          padding: '4px 6px',
+                          borderRadius: '4px',
+                          background: selectedMapDay === day.date ? 'rgba(255,255,255,0.08)' : 'transparent',
+                          transition: 'background 0.2s ease'
+                        }}
+                        title={selectedMapDay === day.date ? 'Click to show all days on map' : 'Click to view this day on the map'}
+                      >
                         <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: color, display: 'inline-block' }} />
-                          {day.label}
+                          <span style={{ fontWeight: 600 }}>{day.label}</span>
+                          {selectedMapDay === day.date && (
+                            <span style={{ fontSize: '0.68rem', color: '#fff', background: color, padding: '1px 6px', borderRadius: '3px', fontWeight: 'bold' }}>
+                              👁️ On Map
+                            </span>
+                          )}
                         </span>
                         <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
                           Total: {dayTotalDistance} km
                         </span>
                       </h4>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '6px 10px' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>📍 Location:</span>
+                        <select
+                          className="form-control"
+                          value={(() => {
+                            const notesObj = safeParseNotes(selectedTrip?.notes);
+                            return notesObj.dayLocations ? notesObj.dayLocations[day.date] || '' : '';
+                          })()}
+                          onChange={async (e) => {
+                            const locVal = e.target.value;
+                            const notesObj = safeParseNotes(selectedTrip?.notes);
+                            notesObj.dayLocations = notesObj.dayLocations || {};
+                            if (locVal) {
+                              notesObj.dayLocations[day.date] = locVal;
+                            } else {
+                              delete notesObj.dayLocations[day.date];
+                            }
+                            const updated = {
+                              ...selectedTrip,
+                              notes: JSON.stringify(notesObj)
+                            };
+                            await queueSyncAction('trips', 'update', updated);
+                            setSelectedTrip(updated);
+                          }}
+                          style={{ flexGrow: 1, height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0 }}
+                        >
+                          <option value="" style={{ background: 'var(--bg-surface)' }}>-- All / Any Location --</option>
+                          {locations.filter(l => l.is_folder !== 1 && (stopFilterLocationIds.length === 0 || stopFilterLocationIds.includes(l.id))).map(loc => (
+                            <option key={loc.id} value={loc.id} style={{ background: 'var(--bg-surface)' }}>📁 {loc.name}</option>
+                          ))}
+                        </select>
+                      </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '6px 10px' }}>
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>🏠 Stay:</span>
@@ -3913,30 +4250,13 @@ Only return the places to visit for each day in the itinerary.`;
                         >
                           <option value="" style={{ background: 'var(--bg-surface)' }}>-- Unassigned --</option>
                           {(() => {
-                            const dayPlaces = dayItems.map(item => combinedPlaces.find(p => p.id === item.place_id)).filter(Boolean);
-                            let dayLocIds = [...new Set(dayPlaces.map(p => p.location_id))];
-                            
-                            if (dayLocIds.length === 0 && selectedTrip) {
-                              const sortedDays = [...itineraryDays].sort((a, b) => a.date.localeCompare(b.date));
-                              const currentDayIdx = sortedDays.findIndex(d => d.date === day.date);
-                              if (currentDayIdx > 0) {
-                                for (let i = currentDayIdx - 1; i >= 0; i--) {
-                                  const prevDayDate = sortedDays[i].date;
-                                  const prevDayItems = itineraries.filter(item => item.trip_id === selectedTrip.id && item.date === prevDayDate);
-                                  const prevPlaces = prevDayItems.map(item => combinedPlaces.find(p => p.id === item.place_id)).filter(Boolean);
-                                  if (prevPlaces.length > 0) {
-                                    dayLocIds = [prevPlaces[prevPlaces.length - 1].location_id];
-                                    break;
-                                  }
-                                }
-                              }
-                            }
-                            
-                            const targetLocIds = dayLocIds.length > 0 ? dayLocIds : stopFilterLocationIds;
+                            const assignedDayLocId = notesObj.dayLocations ? notesObj.dayLocations[day.date] : null;
+                            const targetLocIds = assignedDayLocId 
+                              ? [assignedDayLocId] 
+                              : (stopFilterLocationIds.length > 0 ? stopFilterLocationIds : []);
 
                             return places.filter(p => {
-                              const cat = p.category?.toLowerCase() || '';
-                              const isHotel = cat.includes('hotel') || cat.includes('stay') || cat.includes('resort');
+                              const isHotel = isStayPlace(p);
                               if (!isHotel) return false;
                               return targetLocIds.length === 0 || targetLocIds.includes(p.location_id);
                             }).map(p => (
@@ -3963,8 +4283,13 @@ Only return the places to visit for each day in the itinerary.`;
                                   fontSize: '0.8rem',
                                   fontWeight: 500
                                 }}>
-                                  <span style={{ color: 'var(--text-primary)' }}>
-                                    {el.label}: {place.name}
+                                  <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                    <span>{el.label}: {place.name}</span>
+                                    {place.category && (
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
+                                        ({place.category})
+                                      </span>
+                                    )}
                                   </span>
                                 </div>
                               ) : (
@@ -3986,15 +4311,16 @@ Only return the places to visit for each day in the itinerary.`;
                                 >
                                   {(() => {
                                     const placeIdx = allPlacesSorted.findIndex(x => x.id === place.id);
-                                    const placeNum = placeIdx !== -1 ? placeIdx + 1 : (dayItems.indexOf(el.itemObj) + 1);
+                                    const isHome = place.is_home === true;
+                                    const placeNum = isHome ? '🏠' : (placeIdx !== -1 ? placeIdx + 1 : (dayItems.indexOf(el.itemObj) + 1));
                                     return (
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', flexWrap: 'wrap' }}>
                                         <span style={{
                                           width: '20px',
                                           height: '20px',
                                           borderRadius: '50%',
-                                          background: color,
-                                          color: '#fff',
+                                          background: isHome ? '#4ade80' : color,
+                                          color: isHome ? '#000' : '#fff',
                                           fontSize: '0.7rem',
                                           fontWeight: 'bold',
                                           display: 'inline-flex',
@@ -4007,6 +4333,11 @@ Only return the places to visit for each day in the itinerary.`;
                                         <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                                           {place.name}
                                         </span>
+                                        {place.category && (
+                                          <span style={{ fontSize: '0.68rem', color: isHome ? '#4ade80' : 'var(--text-secondary)', fontWeight: 'normal' }}>
+                                            ({place.category})
+                                          </span>
+                                        )}
                                       </div>
                                     );
                                   })()}
@@ -4113,13 +4444,23 @@ Only return the places to visit for each day in the itinerary.`;
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border-glass)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>Places Bank</h3>
-                  <button 
-                    className="btn btn-secondary"
-                    onClick={() => setShowAddLocationDropdown(!showAddLocationDropdown)}
-                    style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0 }}
-                  >
-                    ➕ Add Folder
-                  </button>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <button 
+                      className="btn btn-primary"
+                      onClick={() => handleOpenBankAiModal()}
+                      style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      title="Plan Trip using AI from all places in Places Bank"
+                    >
+                      ✨ AI Plan
+                    </button>
+                    <button 
+                      className="btn btn-secondary"
+                      onClick={() => setShowAddLocationDropdown(!showAddLocationDropdown)}
+                      style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0 }}
+                    >
+                      ➕ Add Folder
+                    </button>
+                  </div>
                 </div>
 
                 {showAddLocationDropdown && (
@@ -4180,84 +4521,200 @@ Only return the places to visit for each day in the itinerary.`;
               </div>
 
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {/* Saved Home Addresses Folder in Places Bank */}
-                {userAddresses.length > 0 && (
-                  <div style={{ border: '1px solid rgba(74, 222, 128, 0.3)', borderRadius: '6px', padding: '10px', background: 'rgba(74, 222, 128, 0.05)', marginBottom: '4px' }}>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', color: '#4ade80', marginBottom: '8px' }}>
-                      🏠 <span>Saved Home Addresses</span>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '14px' }}>
-                      {userAddresses
-                        .filter(addr => !stopPlaceSearch || addr.label.toLowerCase().includes(stopPlaceSearch.toLowerCase()) || (addr.address && addr.address.toLowerCase().includes(stopPlaceSearch.toLowerCase())))
-                        .map(addr => {
-                          const homeId = `home_${addr.id}`;
-                          const homePlace = { id: homeId, is_home: true, name: `🏠 ${addr.label}`, category: 'Home Address', latitude: parseFloat(addr.latitude), longitude: parseFloat(addr.longitude), address: addr.address };
-                          return (
-                            <div 
-                              key={homeId}
-                              draggable={true}
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'place', id: homeId }));
-                              }}
-                              style={{
-                                background: 'var(--bg-app)',
-                                border: '1px solid rgba(74, 222, 128, 0.3)',
-                                padding: '6px 10px',
-                                borderRadius: '4px',
-                                cursor: 'grab',
-                                fontSize: '0.75rem',
-                                display: 'flex',
-                                justifyContent: 'space-between',
+                {/* Start & Stop Addresses in Places Bank */}
+                {(() => {
+                  const startAddrObj = userAddresses.find(a => a.id === selectedTrip?.start_address_id);
+                  const stopAddrObj = userAddresses.find(a => a.id === selectedTrip?.stop_address_id);
+
+                  if (!startAddrObj && !stopAddrObj) return null;
+
+                  return (
+                    <div style={{ border: '1px solid rgba(74, 222, 128, 0.3)', borderRadius: '6px', padding: '10px', background: 'rgba(74, 222, 128, 0.05)', marginBottom: '4px' }}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', color: '#4ade80', marginBottom: '8px' }}>
+                        🏠 <span>Trip Endpoints</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '4px' }}>
+                        {startAddrObj && (
+                          <div 
+                            key={`start_${startAddrObj.id}`}
+                            draggable={true}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'place', id: `home_${startAddrObj.id}` }));
+                            }}
+                            style={{
+                              background: 'var(--bg-app)',
+                              border: '1px solid rgba(74, 222, 128, 0.3)',
+                              padding: '6px 10px',
+                              borderRadius: '4px',
+                              cursor: 'grab',
+                              fontSize: '0.75rem',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              color: 'var(--text-primary)'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                              <span style={{
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '50%',
+                                background: '#4ade80',
+                                color: '#000',
+                                fontSize: '0.7rem',
+                                fontWeight: 'bold',
+                                display: 'inline-flex',
                                 alignItems: 'center',
-                                color: 'var(--text-primary)'
-                              }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                                <span style={{
-                                  width: '20px',
-                                  height: '20px',
-                                  borderRadius: '50%',
-                                  background: '#4ade80',
-                                  color: '#000',
-                                  fontSize: '0.7rem',
-                                  fontWeight: 'bold',
+                                justifyContent: 'center',
+                                flexShrink: 0
+                              }}>
+                                🏠
+                              </span>
+                              <span style={{ fontWeight: 500 }}>Start Address: {startAddrObj.label}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const updatedTrip = { ...selectedTrip, start_address_id: null };
+                                  await queueSyncAction('trips', 'update', updatedTrip);
+                                  setSelectedTrip(updatedTrip);
+                                }}
+                                className="btn btn-secondary"
+                                title="Remove Start Address from Trip"
+                                style={{
+                                  width: '22px',
+                                  height: '22px',
+                                  padding: 0,
+                                  margin: 0,
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  flexShrink: 0
-                                }}>
-                                  🏠
-                                </span>
-                                <span style={{ fontWeight: 500 }}>{addr.label}</span>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontSize: '0.65rem', color: '#4ade80' }}>(Home)</span>
+                                  fontSize: '0.9rem',
+                                  borderRadius: '4px',
+                                  color: 'var(--danger)',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                −
+                              </button>
+                              {isMobile && (
                                 <button
                                   type="button"
-                                  onClick={() => handleMobileAddStop(homePlace)}
+                                  onClick={() => handleMobileAddStop({ id: `home_${startAddrObj.id}`, is_home: true, name: `🏠 ${startAddrObj.label}`, category: 'Home Address', latitude: parseFloat(startAddrObj.latitude), longitude: parseFloat(startAddrObj.longitude), address: startAddrObj.address })}
                                   className="btn btn-primary"
                                   title="Add to Itinerary"
                                   style={{
                                     width: '22px',
                                     height: '22px',
                                     padding: 0,
-                                    display: 'flex',
+                                    margin: 0,
+                                    display: 'inline-flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
                                     fontSize: '0.85rem',
-                                    borderRadius: '4px',
-                                    cursor: 'pointer'
+                                    borderRadius: '4px'
                                   }}
                                 >
                                   +
                                 </button>
-                              </div>
+                              )}
                             </div>
-                          );
-                        })}
+                          </div>
+                        )}
+
+                        {stopAddrObj && (
+                          <div 
+                            key={`stop_${stopAddrObj.id}`}
+                            draggable={true}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'place', id: `home_${stopAddrObj.id}` }));
+                            }}
+                            style={{
+                              background: 'var(--bg-app)',
+                              border: '1px solid rgba(74, 222, 128, 0.3)',
+                              padding: '6px 10px',
+                              borderRadius: '4px',
+                              cursor: 'grab',
+                              fontSize: '0.75rem',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              color: 'var(--text-primary)'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                              <span style={{
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '50%',
+                                background: '#4ade80',
+                                color: '#000',
+                                fontSize: '0.7rem',
+                                fontWeight: 'bold',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0
+                              }}>
+                                🏁
+                              </span>
+                              <span style={{ fontWeight: 500 }}>Stop Address: {stopAddrObj.label}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const updatedTrip = { ...selectedTrip, stop_address_id: null };
+                                  await queueSyncAction('trips', 'update', updatedTrip);
+                                  setSelectedTrip(updatedTrip);
+                                }}
+                                className="btn btn-secondary"
+                                title="Remove Stop Address from Trip"
+                                style={{
+                                  width: '22px',
+                                  height: '22px',
+                                  padding: 0,
+                                  margin: 0,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: '0.9rem',
+                                  borderRadius: '4px',
+                                  color: 'var(--danger)',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                −
+                              </button>
+                              {isMobile && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleMobileAddStop({ id: `home_${stopAddrObj.id}`, is_home: true, name: `🏠 ${stopAddrObj.label}`, category: 'Home Address', latitude: parseFloat(stopAddrObj.latitude), longitude: parseFloat(stopAddrObj.longitude), address: stopAddrObj.address })}
+                                  className="btn btn-primary"
+                                  title="Add to Itinerary"
+                                  style={{
+                                    width: '22px',
+                                    height: '22px',
+                                    padding: 0,
+                                    margin: 0,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '0.85rem',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  +
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
                 {locations
                   .filter(l => l.is_folder !== 1 && stopFilterLocationIds.includes(l.id))
                   .map(loc => {
@@ -4396,6 +4853,124 @@ Only return the places to visit for each day in the itinerary.`;
           />
         </div>
       )}
+      {showBankAiModal && (
+        <div className="modal-backdrop" style={{ zIndex: 1300, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="modal-content" style={{ maxWidth: '650px', width: '90%', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="dialog-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                ✨ <span>AI Trip Planner (Places Bank)</span>
+              </h3>
+              <button 
+                onClick={() => !isGeneratingBankAi && setShowBankAiModal(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-primary)', cursor: isGeneratingBankAi ? 'not-allowed' : 'pointer' }}
+                disabled={isGeneratingBankAi}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Generate an optimal daily itinerary schedule across your {itineraryDays.length || selectedTrip?.length || 1} trip days using all places from the Places Bank. You can review and edit the prompt below before generating.
+              </p>
+
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                  <label style={{ fontSize: '0.78rem', marginBottom: '4px' }}>Arrival Time (Day 1)</label>
+                  <select
+                    className="form-control"
+                    value={bankAiArrivalTime}
+                    onChange={(e) => {
+                      const newTime = e.target.value;
+                      setBankAiArrivalTime(newTime);
+                      setBankAiPrompt(prev => prev.replace(/Arrival time on Day 1: [^\n]+/i, `Arrival time on Day 1: ${newTime}.`));
+                    }}
+                    style={{ height: '34px', fontSize: '0.85rem' }}
+                    disabled={isGeneratingBankAi}
+                  >
+                    <option value="morning">Morning</option>
+                    <option value="afternoon">Afternoon</option>
+                    <option value="evening">Evening</option>
+                    <option value="night">Night</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setBankAiPrompt(getBankAiPromptText())}
+                  disabled={isGeneratingBankAi}
+                  style={{ width: 'auto', height: '34px', fontSize: '0.75rem', marginTop: '18px', padding: '0 12px' }}
+                  title="Reset prompt to default"
+                >
+                  ↺ Reset Prompt
+                </button>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: '0.78rem', marginBottom: '4px' }}>AI Prompt (Editable)</label>
+                <textarea
+                  className="form-control"
+                  rows="9"
+                  value={bankAiPrompt}
+                  onChange={(e) => setBankAiPrompt(e.target.value)}
+                  disabled={isGeneratingBankAi}
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: '0.78rem',
+                    lineHeight: '1.4',
+                    background: 'var(--bg-app)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-glass)'
+                  }}
+                />
+              </div>
+
+              {bankAiError && (
+                <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--danger)', borderRadius: '4px', color: 'var(--danger)', fontSize: '0.8rem' }}>
+                  ⚠️ {bankAiError}
+                </div>
+              )}
+
+              {isGeneratingBankAi && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: 'var(--bg-app)', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
+                  <Compass size={20} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>
+                    <b>Generating itinerary with AI...</b>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Analyzing coordinates, ratings, and day constraints.</div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border-glass)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowBankAiModal(false)}
+                disabled={isGeneratingBankAi}
+                style={{ width: 'auto', padding: '6px 14px', fontSize: '0.85rem' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleRunBankAiPlan}
+                disabled={isGeneratingBankAi || !bankAiPrompt.trim()}
+                style={{ width: 'auto', padding: '6px 16px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                {isGeneratingBankAi ? (
+                  <>
+                    <RefreshCw size={14} className="spin" /> Generating...
+                  </>
+                ) : (
+                  '✨ Generate & Apply Itinerary'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4416,7 +4991,8 @@ const ItineraryDay = ({
   getHaversine,
   sortedActivePlaces = [],
   dayColor,
-  userAddresses = []
+  userAddresses = [],
+  locations = []
 }) => {
   const combinedPlaces = useMemo(() => {
     const homePlaces = (userAddresses || []).map(addr => ({
@@ -4465,11 +5041,22 @@ const ItineraryDay = ({
   const stayRes = dayReservations.find(r => r.type === 'stay' || r.type === 'hotel');
   const stayLocation = stayRes ? stayRes.title : '';
 
+  const assignedDayLocId = (() => {
+    const notesObj = safeParseNotes(selectedTrip?.notes);
+    return notesObj.dayLocations ? notesObj.dayLocations[date] || '' : '';
+  })();
+  const assignedDayLocName = (locations || []).find(l => l.id === assignedDayLocId)?.name || '';
+
   return (
     <div style={{ marginBottom: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '6px', marginBottom: '8px' }}>
         <h4 style={{ margin: 0, color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           🗓️ {date} 
+          {assignedDayLocName && (
+            <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', background: 'rgba(139, 92, 246, 0.15)', padding: '2px 8px', borderRadius: '4px', fontWeight: '500' }}>
+              📍 {assignedDayLocName}
+            </span>
+          )}
           {stayLocation && (
             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'normal' }}>
               🏡 Stay: {stayLocation}

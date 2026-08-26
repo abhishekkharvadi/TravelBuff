@@ -15,12 +15,6 @@ const loadGoogleMapsScript = (apiKey) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ errorMsg, context: 'MapView' })
       }).catch(e => console.error('Failed to log error to backend:', e));
-
-      // Alert the user first
-      alert('⚠️ Google Maps API Error: Authentication failed (invalid key or blocked API targets). The application is reverting to OpenStreetMap.');
-
-      localStorage.setItem('google_maps_enabled', 'false');
-      window.location.reload();
     };
 
     if (window.google && window.google.maps) {
@@ -37,9 +31,10 @@ const loadGoogleMapsScript = (apiKey) => {
     // Google Bootstrap dynamic async script loading pattern
     window.gmpSelfLoop = () => { resolve(); };
 
+    const cleanKey = (apiKey || '').trim();
     const script = document.createElement('script');
     script.id = 'google-maps-script';
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry&loading=async&callback=gmpSelfLoop&v=weekly`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${cleanKey}&libraries=places,geometry&loading=async&callback=gmpSelfLoop&v=weekly`;
     script.async = true;
     script.defer = true;
     script.setAttribute('loading', 'async');
@@ -64,11 +59,15 @@ export default function MapView({ points = [], drawLine = false }) {
   const prevPointsSigRef = useRef('');
 
   const [isGoogleMapsReady, setIsGoogleMapsReady] = useState(false);
-  const apiKey = localStorage.getItem('google_maps_api_key');
+  const apiKey = (localStorage.getItem('google_maps_api_key') || '').trim();
   const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
 
   useEffect(() => {
-    if (apiKey && googleMapsEnabled) {
+    if (apiKey && (googleMapsEnabled || localStorage.getItem('google_maps_api_key'))) {
+      // Clear legacy lockout flag if key exists
+      if (localStorage.getItem('google_maps_enabled') === 'false' && apiKey) {
+        localStorage.setItem('google_maps_enabled', 'true');
+      }
       loadGoogleMapsScript(apiKey)
         .then(() => {
           trackApiCall('Google Maps JavaScript');
@@ -154,14 +153,17 @@ export default function MapView({ points = [], drawLine = false }) {
           if (!mapContainerRef.current) return;
 
           let isJustInitialized = false;
-          // Initialize Google Map if not created yet
-          if (!googleMapInstanceRef.current) {
+          // Initialize Google Map if not created yet or if container was remounted
+          const needsNewMap = !googleMapInstanceRef.current || (googleMapInstanceRef.current.getDiv && !mapContainerRef.current.contains(googleMapInstanceRef.current.getDiv()));
+          if (needsNewMap) {
             googleMapInstanceRef.current = new Map(mapContainerRef.current, {
               center: { lat: 20, lng: 0 },
               zoom: 2,
               disableDefaultUI: false,
               mapId: 'DEMO_MAP_ID' // Required map ID for AdvancedMarkerElement
             });
+            googleMarkersRef.current = {};
+            googlePolylinesRef.current = [];
             isJustInitialized = true;
           }
 
@@ -316,8 +318,7 @@ export default function MapView({ points = [], drawLine = false }) {
             }
           }
         } catch (initErr) {
-          console.error('Google Maps initialization failed, falling back to OSM:', initErr);
-          setIsGoogleMapsReady(false);
+          console.error('Google Maps update error:', initErr);
         }
       };
 
@@ -338,24 +339,18 @@ export default function MapView({ points = [], drawLine = false }) {
         const L = window.L;
         if (!L) return;
 
-        const isLightTheme = document.body.classList.contains('light-theme');
-        const tileUrl = isLightTheme 
-          ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
-          : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+        const tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
         const map = L.map(mapContainerRef.current).setView([20, 0], 2);
         tileLayerRef.current = L.tileLayer(tileUrl, {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxZoom: 19
         }).addTo(map);
 
         mapInstanceRef.current = map;
         isLeafletJustInitialized = true;
       } else if (mapInstanceRef.current && tileLayerRef.current) {
-        const isLightTheme = document.body.classList.contains('light-theme');
-        const tileUrl = isLightTheme 
-          ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
-          : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-        tileLayerRef.current.setUrl(tileUrl);
+        tileLayerRef.current.setUrl('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
       }
 
       const map = mapInstanceRef.current;

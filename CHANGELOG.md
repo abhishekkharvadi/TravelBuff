@@ -2,6 +2,21 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.2.1] - 2026-08-27
+
+### 🛠️ Bug Fixes & Workspace Enhancements
+- **Places Bank AI Trip Planner**: Added a dedicated `✨ AI Plan` assistant button directly inside the Places Bank column within the Planning Workspace. Allows users to preview and edit custom AI prompts before generating day itineraries, with automatic prioritization of >4-star rated locations and high-importance attractions when schedule capacity is limited.
+- **Centralized AI Dispatcher & Authentication Resilience**: Unified all backend AI calls (`/api/ai/generate-trip`, `/api/import/extract-ai`) into a centralized `callAiProvider` helper. Sanitizes API keys, adds standard `x-goog-api-key` headers for Gemini, and surfaces exact upstream error diagnostics rather than generic 401 statuses.
+- **Trip Map Pin Numbering Consistency**: Synchronized map pin numbers with the exact badge sequence numbering displayed in "Itinerary Days" and "Places Bank".
+- **Interactive Day-Wise Trip Map Filtering**: Made itinerary days (Day 1, Day 2, etc.) clickable. Selecting a day isolates and zooms the Trip Map and driving route strictly to that day's scheduled stops, complete with an active day indicator badge and a single-click reset to restore all days.
+- **Start Trip & End Trip Home Address Endpoints**: Added dedicated dropdown selectors in both the New Trip Wizard and Trip Metadata editor to specify Home Addresses as starting and ending points for trips.
+- **Places Bank Start & Stop Address Management**: Replaced generic home address lists with dedicated Start Address and Stop Address cards featuring a minus (`−`) button to unassign them from the trip with one click.
+- **Dynamic Folder Places Synchronization**: Improved live reactivity between IndexedDB collections/folders and active trips so newly created, imported, or moved places immediately appear inside their parent folders in the Places Bank without requiring a trip re-select.
+- **Day-Specific Location Constraints & Stay Filtering**: Added a per-day location assignment dropdown to each day card in Itinerary Days. The AI generator strictly schedules places from the designated location for that day, and the "Stay" dropdown strictly filters to hotels and resorts belonging to that specific location.
+- **Itinerary Days Category Display**: Added lowercase category tags (e.g. `(Attraction)`, `(Dining)`, `(Hotel)`) next to landmark titles in the Itinerary Days list to match Places Bank styling.
+- **Pure OpenStreetMap Tile Server**: Replaced legacy CARTO basemap URLs in Leaflet fallback with the official OpenStreetMap tile server (`tile.openstreetmap.org`), completely eliminating the "API KEY REQUIRED" watermark.
+- **Google Maps Persistence & Recovery**: Fixed Google Maps container remount retention and removed destructive `localStorage` lockout flags upon transient errors, ensuring Google Maps loads automatically whenever an API key is present.
+
 ## [v7.2.0] - 2026-08-21
 
 ### 🛠️ Fixes & Architectural Improvements

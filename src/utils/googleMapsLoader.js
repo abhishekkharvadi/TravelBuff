@@ -31,14 +31,6 @@ export const loadGoogleMaps = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ errorMsg, context: 'GoogleMapsLoader' })
       }).catch(e => console.error('Failed to log error to backend:', e));
-
-      // Alert the user first
-      alert('⚠️ Google Maps API Error: Authentication failed (invalid key or blocked API targets). The application is reverting to OpenStreetMap.');
-      
-      // Remove local storage enablement flag so we fallback to OSM
-      localStorage.setItem('google_maps_enabled', 'false');
-      // Trigger dynamic page reload to clean up and boot OSM
-      window.location.reload();
     };
 
     if (window.google && window.google.maps) {
