@@ -596,8 +596,8 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
     setEditingAddressId(addr.id);
     setAddressLabel(addr.label || 'Home');
     setAddressText(addr.address || '');
-    setAddressLat(addr.latitude !== null && addr.latitude !== undefined ? addr.latitude.toString() : '');
-    setAddressLon(addr.longitude !== null && addr.longitude !== undefined ? addr.longitude.toString() : '');
+    setAddressLat(addr.latitude !== null && addr.latitude !== undefined && addr.latitude !== '' ? addr.latitude.toString() : '');
+    setAddressLon(addr.longitude !== null && addr.longitude !== undefined && addr.longitude !== '' ? addr.longitude.toString() : '');
     setIsDefaultHome(addr.is_default === 1);
   };
 
@@ -616,13 +616,16 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
     e.preventDefault();
     if (!addressLabel.trim()) return;
 
+    const parsedLat = addressLat !== '' && addressLat !== null && !isNaN(Number(addressLat)) ? parseFloat(addressLat) : null;
+    const parsedLon = addressLon !== '' && addressLon !== null && !isNaN(Number(addressLon)) ? parseFloat(addressLon) : null;
+
     if (editingAddressId) {
       const updated = {
         id: editingAddressId,
         label: addressLabel.trim(),
-        address: addressText.trim(),
-        latitude: addressLat ? parseFloat(addressLat) : null,
-        longitude: addressLon ? parseFloat(addressLon) : null,
+        address: addressText.trim() || '',
+        latitude: parsedLat,
+        longitude: parsedLon,
         is_default: isDefaultHome ? 1 : 0
       };
       await queueSyncAction('user_addresses', 'update', updated);
@@ -631,9 +634,9 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
       const newAddr = {
         id: generateUUID(),
         label: addressLabel.trim(),
-        address: addressText.trim(),
-        latitude: addressLat ? parseFloat(addressLat) : null,
-        longitude: addressLon ? parseFloat(addressLon) : null,
+        address: addressText.trim() || '',
+        latitude: parsedLat,
+        longitude: parsedLon,
         is_default: isDefaultHome ? 1 : (userAddresses.length === 0 ? 1 : 0)
       };
       await queueSyncAction('user_addresses', 'insert', newAddr);
@@ -2009,9 +2012,11 @@ export default function SettingsComponent({ token, userId, onLogout, onResumeMar
                           )}
                         </div>
                         {addr.address && <p style={{ margin: '2px 0 0 0', fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{addr.address}</p>}
-                        {(addr.latitude && addr.longitude) && (
+                        {(addr.latitude !== null && addr.latitude !== undefined && addr.latitude !== '' &&
+                          addr.longitude !== null && addr.longitude !== undefined && addr.longitude !== '' &&
+                          !isNaN(Number(addr.latitude)) && !isNaN(Number(addr.longitude))) && (
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                            📍 Coords: {addr.latitude.toFixed(4)}, {addr.longitude.toFixed(4)}
+                            📍 Coords: {Number(addr.latitude).toFixed(4)}, {Number(addr.longitude).toFixed(4)}
                           </div>
                         )}
                       </div>

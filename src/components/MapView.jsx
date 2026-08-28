@@ -43,7 +43,7 @@ const loadGoogleMapsScript = (apiKey) => {
   });
 };
 
-export default function MapView({ points = [], drawLine = false }) {
+export default function MapView({ points = [], drawLine = false, isVisible = true }) {
   const mapContainerRef = useRef(null);
   
   // Leaflet refs
@@ -61,6 +61,58 @@ export default function MapView({ points = [], drawLine = false }) {
   const [isGoogleMapsReady, setIsGoogleMapsReady] = useState(false);
   const apiKey = (localStorage.getItem('google_maps_api_key') || '').trim();
   const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+  const triggerMapResizeAndFitBounds = () => {
+    const validPoints = (points || []).filter(p => {
+      if (!p) return false;
+      const lat = parseFloat(p.latitude);
+      const lng = parseFloat(p.longitude);
+      return !isNaN(lat) && !isNaN(lng);
+    });
+
+    if (mapInstanceRef.current && window.L) {
+      try {
+        mapInstanceRef.current.invalidateSize();
+        const markerArray = Object.values(leafletMarkersRef.current);
+        if (markerArray.length > 0) {
+          if (markerArray.length === 1) {
+            const lat = parseFloat(validPoints[0]?.latitude);
+            const lng = parseFloat(validPoints[0]?.longitude);
+            if (!isNaN(lat) && !isNaN(lng)) {
+              mapInstanceRef.current.setView([lat, lng], 13);
+            }
+          } else {
+            const group = new window.L.featureGroup(markerArray);
+            if (group.getBounds().isValid()) {
+              mapInstanceRef.current.fitBounds(group.getBounds().pad(0.12));
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Leaflet resize/fitBounds error:', err);
+      }
+    }
+
+    if (googleMapInstanceRef.current && window.google?.maps) {
+      try {
+        window.google.maps.event.trigger(googleMapInstanceRef.current, 'resize');
+        if (validPoints.length > 0) {
+          if (validPoints.length === 1) {
+            googleMapInstanceRef.current.setCenter({ lat: parseFloat(validPoints[0].latitude), lng: parseFloat(validPoints[0].longitude) });
+            googleMapInstanceRef.current.setZoom(13);
+          } else {
+            const bounds = new window.google.maps.LatLngBounds();
+            validPoints.forEach(p => {
+              bounds.extend({ lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) });
+            });
+            googleMapInstanceRef.current.fitBounds(bounds, 24);
+          }
+        }
+      } catch (err) {
+        console.warn('Google Maps resize/fitBounds error:', err);
+      }
+    }
+  };
 
   useEffect(() => {
     if (apiKey && (googleMapsEnabled || localStorage.getItem('google_maps_api_key'))) {
@@ -81,6 +133,39 @@ export default function MapView({ points = [], drawLine = false }) {
       setIsGoogleMapsReady(false);
     }
   }, [apiKey, googleMapsEnabled]);
+
+  // Responsive Visibility & ResizeObserver
+  useEffect(() => {
+    if (isVisible) {
+      const timer = setTimeout(() => {
+        triggerMapResizeAndFitBounds();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isVisible, points]);
+
+  useEffect(() => {
+    if (!mapContainerRef.current || typeof ResizeObserver === 'undefined') return;
+
+    let resizeTimer = null;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {
+            triggerMapResizeAndFitBounds();
+          }, 60);
+        }
+      }
+    });
+
+    observer.observe(mapContainerRef.current);
+    return () => {
+      clearTimeout(resizeTimer);
+      observer.disconnect();
+    };
+  }, [points]);
 
   useEffect(() => {
     let active = true;
@@ -174,10 +259,15 @@ export default function MapView({ points = [], drawLine = false }) {
           const labelTextColor = isLightTheme ? '#111111' : '#ffffff';
 
           // Place or update Google advanced markers
+          const placedCoordsByDay = new Set();
           validPoints.forEach(p => {
-             const color = p.dayLabel 
+             const coordKey = `${p.dayLabel || 'all'}_${p.latitude}_${p.longitude}_${p.isHotel ? 'hotel' : p.id}`;
+             if (p.isReturnLeg && placedCoordsByDay.has(coordKey)) return;
+             placedCoordsByDay.add(coordKey);
+
+             const color = p.color || (p.dayLabel 
                ? getDayColor(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1)
-               : '#6b7280';
+               : '#6b7280');
              const seqVal = p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : (p.sequenceOrder !== undefined && p.sequenceOrder !== null ? p.sequenceOrder : null);
              const markerLabel = String(seqVal !== null ? seqVal : getCategoryEmoji(p.category || p.type));
              const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${color}; color: #fff; font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border-glass, rgba(255,255,255,0.15)); font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${p.dayLabel}</span>` : '';
@@ -188,7 +278,7 @@ export default function MapView({ points = [], drawLine = false }) {
              pinContent.style.height = '42px';
              pinContent.innerHTML = `
                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="42" viewBox="0 0 36 42" style="display: block;">
-                 <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${p.visited ? '#10b981' : color}"/>
+                 <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${color}"/>
                  <circle cx="18" cy="18" r="14" fill="${innerColor}"/>
                </svg>
                <div style="position: absolute; top: 0; left: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: ${labelTextColor}; font-size: 11px; font-weight: bold; pointer-events: none; line-height: 1;">
@@ -250,7 +340,8 @@ export default function MapView({ points = [], drawLine = false }) {
             Object.keys(dayGroups).forEach(dayKey => {
               if (dayKey === 'All') return;
               const sortedDayPoints = dayGroups[dayKey].sort((a, b) => (a.sequenceOrder || 0) - (b.sequenceOrder || 0));
-              const color = dayColors[colorIdx % dayColors.length];
+              const firstPoint = sortedDayPoints[0];
+              const color = firstPoint?.color || dayColors[colorIdx % dayColors.length];
               colorIdx++;
 
               for (let i = 1; i < sortedDayPoints.length; i++) {
@@ -258,48 +349,111 @@ export default function MapView({ points = [], drawLine = false }) {
                 const p2 = sortedDayPoints[i];
                 if (p1.latitude === p2.latitude && p1.longitude === p2.longitude) continue;
 
-                const request = {
-                  origin: { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
-                  destination: { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) },
-                  travelMode: window.google.maps.TravelMode.DRIVING
-                };
+                const mode = p2.transportMode || 'drive';
 
-                trackApiCall('Google Maps Directions');
-                directionsService.route(request, (result, status) => {
-                  if (!active) return;
-                  if (status === 'OK') {
-                    const routePolyline = new window.google.maps.Polyline({
-                      path: result.routes[0].overview_path,
-                      geodesic: true,
-                      strokeColor: color,
-                      strokeOpacity: 0.85,
-                      strokeWeight: 4,
-                      map: googleMap
-                    });
-                    if (active) {
-                      googlePolylinesRef.current.push(routePolyline);
-                    } else {
-                      routePolyline.setMap(null);
-                    }
-                  } else {
-                    const routePolyline = new window.google.maps.Polyline({
-                      path: [
-                        { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
-                        { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }
-                      ],
-                      geodesic: true,
-                      strokeColor: color,
-                      strokeOpacity: 0.8,
-                      strokeWeight: 4,
-                      map: googleMap
-                    });
-                    if (active) {
-                      googlePolylinesRef.current.push(routePolyline);
-                    } else {
-                      routePolyline.setMap(null);
-                    }
+                if (mode === 'flight') {
+                  const lat1 = parseFloat(p1.latitude);
+                  const lng1 = parseFloat(p1.longitude);
+                  const lat2 = parseFloat(p2.latitude);
+                  const lng2 = parseFloat(p2.longitude);
+                  const arcPath = [];
+                  const numPts = 30;
+                  const dLat = lat2 - lat1;
+                  const dLng = lng2 - lng1;
+                  const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+                  const arcHeight = Math.min(dist * 0.18, 16);
+
+                  for (let step = 0; step <= numPts; step++) {
+                    const t = step / numPts;
+                    const lat = lat1 + dLat * t + Math.sin(Math.PI * t) * arcHeight;
+                    const lng = lng1 + dLng * t;
+                    arcPath.push({ lat, lng });
                   }
-                });
+
+                  const flightPolyline = new window.google.maps.Polyline({
+                    path: arcPath,
+                    geodesic: true,
+                    strokeColor: color,
+                    strokeOpacity: 0.85,
+                    strokeWeight: 3,
+                    icons: [{
+                      icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                      offset: '0',
+                      repeat: '14px'
+                    }],
+                    map: googleMap
+                  });
+                  if (active) {
+                    googlePolylinesRef.current.push(flightPolyline);
+                  } else {
+                    flightPolyline.setMap(null);
+                  }
+                } else if (mode === 'train' || mode === 'ferry') {
+                  const trackPolyline = new window.google.maps.Polyline({
+                    path: [
+                      { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
+                      { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }
+                    ],
+                    geodesic: true,
+                    strokeColor: color,
+                    strokeOpacity: 0.85,
+                    strokeWeight: 3,
+                    icons: [{
+                      icon: { path: 'M -1,0 1,0', strokeOpacity: 1, scale: 2 },
+                      offset: '0',
+                      repeat: '10px'
+                    }],
+                    map: googleMap
+                  });
+                  if (active) {
+                    googlePolylinesRef.current.push(trackPolyline);
+                  } else {
+                    trackPolyline.setMap(null);
+                  }
+                } else {
+                  const request = {
+                    origin: { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
+                    destination: { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) },
+                    travelMode: mode === 'walk' ? window.google.maps.TravelMode.WALKING : window.google.maps.TravelMode.DRIVING
+                  };
+
+                  trackApiCall('Google Maps Directions');
+                  directionsService.route(request, (result, status) => {
+                    if (!active) return;
+                    if (status === 'OK') {
+                      const routePolyline = new window.google.maps.Polyline({
+                        path: result.routes[0].overview_path,
+                        geodesic: true,
+                        strokeColor: color,
+                        strokeOpacity: 0.85,
+                        strokeWeight: 4,
+                        map: googleMap
+                      });
+                      if (active) {
+                        googlePolylinesRef.current.push(routePolyline);
+                      } else {
+                        routePolyline.setMap(null);
+                      }
+                    } else {
+                      const routePolyline = new window.google.maps.Polyline({
+                        path: [
+                          { lat: parseFloat(p1.latitude), lng: parseFloat(p1.longitude) },
+                          { lat: parseFloat(p2.latitude), lng: parseFloat(p2.longitude) }
+                        ],
+                        geodesic: true,
+                        strokeColor: color,
+                        strokeOpacity: 0.8,
+                        strokeWeight: 4,
+                        map: googleMap
+                      });
+                      if (active) {
+                        googlePolylinesRef.current.push(routePolyline);
+                      } else {
+                        routePolyline.setMap(null);
+                      }
+                    }
+                  });
+                }
               }
             });
           }
@@ -386,13 +540,16 @@ export default function MapView({ points = [], drawLine = false }) {
       const popupSubColor = isLightTheme ? '#666666' : '#9ca3af';
 
       // Place or update Leaflet markers
+      const placedLeafletCoordsByDay = new Set();
       validPoints.forEach(p => {
-        const pinPrimaryColor = p.visited === 1 
-          ? '#10b981' 
-          : (p.dayLabel 
-              ? getDayColor(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1)
-              : (p.location_id ? '#06b6d4' : '#8b5cf6')
-            );
+        const coordKey = `${p.dayLabel || 'all'}_${p.latitude}_${p.longitude}_${p.isHotel ? 'hotel' : p.id}`;
+        if (p.isReturnLeg && placedLeafletCoordsByDay.has(coordKey)) return;
+        placedLeafletCoordsByDay.add(coordKey);
+
+        const pinPrimaryColor = p.color || (p.dayLabel 
+          ? getDayColor(parseInt(p.dayLabel.replace(/\D/g, ''), 10) - 1)
+          : (p.visited === 1 ? '#10b981' : (p.location_id ? '#06b6d4' : '#8b5cf6'))
+        );
 
         const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${pinPrimaryColor}; color: #fff; font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; border: 1px solid #ffffff; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.4);">${p.dayLabel}</span>` : '';
         const leafletSeqVal = p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : (p.sequenceOrder !== undefined && p.sequenceOrder !== null ? p.sequenceOrder : null);
@@ -467,7 +624,8 @@ export default function MapView({ points = [], drawLine = false }) {
           for (const dayKey of Object.keys(dayGroups)) {
             if (dayKey === 'All') continue;
             const sortedDayPoints = dayGroups[dayKey].sort((a, b) => (a.sequenceOrder || 0) - (b.sequenceOrder || 0));
-            const color = getDayColor(colorIdx);
+            const firstPoint = sortedDayPoints[0];
+            const color = firstPoint?.color || getDayColor(colorIdx);
             colorIdx++;
 
             for (let i = 1; i < sortedDayPoints.length; i++) {
@@ -476,29 +634,68 @@ export default function MapView({ points = [], drawLine = false }) {
               const p2 = sortedDayPoints[i];
               if (p1.latitude === p2.latitude && p1.longitude === p2.longitude) continue;
 
-              let routeLatLngs = [[p1.latitude, p1.longitude], [p2.latitude, p2.longitude]];
-              
-              try {
-                trackApiCall('OSRM Routing');
-                const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${p1.longitude},${p1.latitude};${p2.longitude},${p2.latitude}?overview=full&geometries=geojson`);
-                if (!active) return;
-                if (res.ok) {
-                  const data = await res.json();
-                  if (data.routes && data.routes[0] && data.routes[0].geometry) {
-                    routeLatLngs = data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
-                  }
-                }
-              } catch (err) {
-                console.warn('Failed to fetch OSRM route line:', err);
-              }
+              const mode = p2.transportMode || 'drive';
 
-              if (!active) return;
-              const polyline = L.polyline(routeLatLngs, {
-                color: color,
-                weight: 4,
-                opacity: 0.85
-              }).addTo(map);
-              polylines.push(polyline);
+              if (mode === 'flight') {
+                const lat1 = parseFloat(p1.latitude);
+                const lng1 = parseFloat(p1.longitude);
+                const lat2 = parseFloat(p2.latitude);
+                const lng2 = parseFloat(p2.longitude);
+                const arcLatLngs = [];
+                const numPts = 30;
+                const dLat = lat2 - lat1;
+                const dLng = lng2 - lng1;
+                const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+                const arcHeight = Math.min(dist * 0.18, 16);
+
+                for (let step = 0; step <= numPts; step++) {
+                  const t = step / numPts;
+                  const lat = lat1 + dLat * t + Math.sin(Math.PI * t) * arcHeight;
+                  const lng = lng1 + dLng * t;
+                  arcLatLngs.push([lat, lng]);
+                }
+
+                const flightPolyline = L.polyline(arcLatLngs, {
+                  color: color,
+                  weight: 3,
+                  opacity: 0.85,
+                  dashArray: '6, 8'
+                }).addTo(map);
+                polylines.push(flightPolyline);
+              } else if (mode === 'train' || mode === 'ferry') {
+                const trackPolyline = L.polyline([[parseFloat(p1.latitude), parseFloat(p1.longitude)], [parseFloat(p2.latitude), parseFloat(p2.longitude)]], {
+                  color: color,
+                  weight: 3,
+                  opacity: 0.85,
+                  dashArray: '8, 8'
+                }).addTo(map);
+                polylines.push(trackPolyline);
+              } else {
+                let routeLatLngs = [[p1.latitude, p1.longitude], [p2.latitude, p2.longitude]];
+                
+                try {
+                  trackApiCall('OSRM Routing');
+                  const profile = mode === 'walk' ? 'foot' : 'driving';
+                  const res = await fetch(`https://router.project-osrm.org/route/v1/${profile}/${p1.longitude},${p1.latitude};${p2.longitude},${p2.latitude}?overview=full&geometries=geojson`);
+                  if (!active) return;
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.routes && data.routes[0] && data.routes[0].geometry) {
+                      routeLatLngs = data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+                    }
+                  }
+                } catch (err) {
+                  console.warn('Failed to fetch OSRM route line:', err);
+                }
+
+                if (!active) return;
+                const polyline = L.polyline(routeLatLngs, {
+                  color: color,
+                  weight: 4,
+                  opacity: 0.85
+                }).addTo(map);
+                polylines.push(polyline);
+              }
             }
           }
           if (active) {

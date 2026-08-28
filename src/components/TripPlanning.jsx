@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Calendar, MapPin, Plus, Trash2, Tag, Receipt, 
@@ -330,28 +330,44 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
       is_home: true,
       name: `🏠 ${addr.label}`,
       category: 'Home Address',
-      latitude: parseFloat(addr.latitude),
-      longitude: parseFloat(addr.longitude),
-      address: addr.address
+      latitude: (addr.latitude !== null && addr.latitude !== undefined && addr.latitude !== '' && !isNaN(Number(addr.latitude))) ? parseFloat(addr.latitude) : null,
+      longitude: (addr.longitude !== null && addr.longitude !== undefined && addr.longitude !== '' && !isNaN(Number(addr.longitude))) ? parseFloat(addr.longitude) : null,
+      address: addr.address || ''
     }));
     return [...places, ...homePlaces];
   }, [places, userAddresses]);
+
+  const findUserAddress = useCallback((addrId) => {
+    if (!addrId || !Array.isArray(userAddresses)) return null;
+    const strId = String(addrId).trim();
+    return userAddresses.find(a => 
+      String(a.id) === strId || 
+      `home_${a.id}` === strId || 
+      (a.label && a.label.toLowerCase() === strId.toLowerCase()) || 
+      (a.address && a.address.toLowerCase() === strId.toLowerCase())
+    ) || null;
+  }, [userAddresses]);
 
   // Local State
   const [selectedTrip, setSelectedTrip] = useState(null);
 
   useEffect(() => {
     if (selectedTripId && trips && trips.length > 0) {
-      const matched = trips.find(t => t.id === selectedTripId);
+      const matched = trips.find(t => String(t.id) === String(selectedTripId));
       if (matched) {
-        setSelectedTrip(matched);
+        setSelectedTrip(prev => {
+          if (prev && String(prev.id) === String(matched.id) && prev.name === matched.name && prev.start_date === matched.start_date && prev.length === matched.length && prev.notes === matched.notes && String(prev.start_address_id || '') === String(matched.start_address_id || '') && String(prev.stop_address_id || '') === String(matched.stop_address_id || '')) {
+            return prev;
+          }
+          return matched;
+        });
       }
     } else if (selectedTrip && trips && trips.length > 0) {
-      const matched = trips.find(t => t.id === selectedTrip.id);
-      if (matched && (matched.name !== selectedTrip.name || matched.start_date !== selectedTrip.start_date || matched.length !== selectedTrip.length || matched.notes !== selectedTrip.notes || matched.start_address_id !== selectedTrip.start_address_id || matched.stop_address_id !== selectedTrip.stop_address_id)) {
+      const matched = trips.find(t => String(t.id) === String(selectedTrip.id));
+      if (matched && (matched.name !== selectedTrip.name || matched.start_date !== selectedTrip.start_date || matched.length !== selectedTrip.length || matched.notes !== selectedTrip.notes || String(matched.start_address_id || '') !== String(selectedTrip.start_address_id || '') || String(matched.stop_address_id || '') !== String(selectedTrip.stop_address_id || ''))) {
         setSelectedTrip(matched);
       }
-    } else if (!selectedTripId && !selectedTrip) {
+    } else if (!selectedTripId && selectedTrip !== null) {
       setSelectedTrip(null);
     }
   }, [selectedTripId, trips]);
@@ -450,32 +466,6 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
 
   const syncActive = syncQueue.length > 0;
 
-  useEffect(() => {
-    if (aiMode === 'ai') {
-      const selectedPlacesList = places.filter(p => {
-        const belongsToLoc = selectedLocationsForAi.includes(p.location_id);
-        const belongsToCol = collections.some(col => 
-          selectedCollectionsForAi.includes(col.id) && 
-          (typeof col.place_ids === 'string' ? JSON.parse(col.place_ids) : col.place_ids || []).includes(p.id)
-        );
-        return belongsToLoc || belongsToCol;
-      });
-
-      const formattedPlaces = selectedPlacesList.map(p => ({
-        name: p.name,
-        address: p.address || '',
-        latitude: p.latitude || '',
-        longitude: p.longitude || ''
-      }));
-
-      setCustomPromptText(
-        `Assign these ${selectedPlacesList.length} places of visit to a ${tripLength}-day itinerary optimally based on geocoordinates.
-Arrival Time on Day 1: ${arrivalTime}.
-Optimize the itinerary starting from Day 1 based on this arrival time.
-Places to visit list: ${JSON.stringify(formattedPlaces)}`
-      );
-    }
-  }, [selectedLocationsForAi, selectedCollectionsForAi, tripLength, aiMode, arrivalTime, locations, collections, places]);
 
   useEffect(() => {
     const checkAi = async () => {
@@ -521,7 +511,11 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
   const [bankAiArrivalTime, setBankAiArrivalTime] = useState('morning');
   const [isGeneratingBankAi, setIsGeneratingBankAi] = useState(false);
   const [bankAiError, setBankAiError] = useState('');
+  const [bankAiStatusMsg, setBankAiStatusMsg] = useState('');
+  const [wizardAiStatusMsg, setWizardAiStatusMsg] = useState('');
+  const [wizardAiError, setWizardAiError] = useState('');
   const [selectedMapDay, setSelectedMapDay] = useState(null);
+  const [editingSegment, setEditingSegment] = useState(null);
 
   const fetchImmichPeople = async () => {
     if (immichPeople.length > 0) return;
@@ -641,9 +635,13 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
     if (!activeTripObj) return '#6b7280';
     const item = itineraries.find(i => i.trip_id === activeTripObj.id && i.place_id === placeId);
     if (!item) return '#6b7280';
-    const dIdx = itineraryDays.findIndex(d => d.date === item.date);
-    if (dIdx === -1) return '#6b7280';
-    return getDayColor(dIdx);
+    const dayIdx = itineraryDays.findIndex(d => 
+      d.date === item.date || 
+      d.label === item.date || 
+      (typeof item.date === 'string' && item.date.startsWith('Day ') && d.dayNumber === parseInt(item.date.replace('Day ', ''), 10))
+    );
+    const validDayIdx = dayIdx !== -1 ? dayIdx : (typeof item.date === 'string' && item.date.startsWith('Day ') ? parseInt(item.date.replace('Day ', ''), 10) - 1 : 0);
+    return getDayColor(validDayIdx);
   };
 
   const sortedActivePlaces = useMemo(() => {
@@ -666,46 +664,165 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
   }, [places, stopFilterLocationIds, selectedTrip, currentTrip]);
 
   const mapPoints = useMemo(() => {
-    if (!selectedTrip) return [];
+    const activeTripObj = selectedTrip || currentTrip;
+    if (!activeTripObj) return [];
 
     let filterLocIds = [];
     if (stopFilterLocationIds && stopFilterLocationIds.length > 0) {
       filterLocIds = stopFilterLocationIds;
-    } else if (selectedTrip && selectedTrip.notes) {
-      const notesObj = safeParseNotes(selectedTrip.notes);
+    } else if (activeTripObj && activeTripObj.notes) {
+      const notesObj = safeParseNotes(activeTripObj.notes);
       if (notesObj && Array.isArray(notesObj.locationIds)) {
         filterLocIds = notesObj.locationIds;
       }
     }
     if (!Array.isArray(filterLocIds)) filterLocIds = [];
 
-    let tripItineraries = itineraries.filter(i => i.trip_id === selectedTrip.id);
-    if (selectedMapDay) {
-      tripItineraries = tripItineraries.filter(i => i.date === selectedMapDay);
-    }
+    const notesObj = safeParseNotes(activeTripObj.notes);
+    const hotelsObj = notesObj.hotels || {};
+    const dayEndpoints = notesObj.dayEndpoints || {};
+    const dayStayBehaviors = notesObj.dayStayBehaviors || {};
+    const segmentTransport = notesObj.segmentTransport || {};
+
     const pointsList = [];
 
-    // 1. Append itinerary stops
-    tripItineraries.forEach(item => {
-      const place = combinedPlaces.find(p => p.id === item.place_id);
-      if (place && (filterLocIds.length === 0 || !place.location_id || filterLocIds.includes(place.location_id))) {
-        const dayIdx = itineraryDays.findIndex(d => d.date === item.date);
-        const dayLabelText = dayIdx !== -1 ? `D${dayIdx + 1}` : item.date;
-        const placeIdx = allPlacesSorted.findIndex(x => x.id === place.id);
-        const placeNum = placeIdx !== -1 ? placeIdx + 1 : (place.is_home ? '🏠' : item.sequence_order);
+    itineraryDays.forEach((day, dIdx) => {
+      if (selectedMapDay && selectedMapDay !== day.date) return;
+
+      const dayColor = getDayColor(dIdx);
+      const dayLabelText = `D${dIdx + 1}`;
+      const isFirstDay = dIdx === 0;
+      const isLastDay = dIdx === itineraryDays.length - 1;
+
+      const startFromHome = dayEndpoints[day.date]?.startFromHome ?? (isFirstDay && Boolean(activeTripObj.start_address_id));
+      const lastDayGoHome = dayEndpoints[day.date]?.lastDayGoHome ?? (isLastDay && Boolean(activeTripObj.stop_address_id));
+      const stayBehavior = dayStayBehaviors[day.date] || 'stay_night';
+
+      const dayItems = itineraries
+        .filter(i => i.trip_id === activeTripObj.id && (
+          i.date === day.date || 
+          i.date === day.label || 
+          (typeof i.date === 'string' && i.date.startsWith('Day ') && day.dayNumber === parseInt(i.date.replace('Day ', ''), 10))
+        ))
+        .sort((a, b) => (a.sequence_order || 0) - (b.sequence_order || 0));
+
+      const hotelPlaceId = hotelsObj[day.date];
+      const hotelPlace = hotelPlaceId ? combinedPlaces.find(p => String(p.id) === String(hotelPlaceId)) : null;
+
+      let lastAddedPointId = null;
+
+      // 1. Start from Home on Day 1
+      const startAddr = (isFirstDay && activeTripObj.start_address_id && startFromHome) ? findUserAddress(activeTripObj.start_address_id) : null;
+      const isDay1StartingFromHome = Boolean(startAddr);
+      if (isDay1StartingFromHome && startAddr.latitude && startAddr.longitude) {
+        const startPtId = `home_start_${startAddr.id}`;
         pointsList.push({
-          ...place,
-          id: `${place.id}_${item.id}`,
+          id: `start_home_${startAddr.id}_${day.date}`,
+          name: `🏠 Start: ${startAddr.label}`,
+          category: 'Home Address',
+          latitude: parseFloat(startAddr.latitude),
+          longitude: parseFloat(startAddr.longitude),
           dayLabel: dayLabelText,
-          sequenceOrder: item.sequence_order,
-          sequenceLabel: placeNum,
-          date: item.date
+          color: dayColor,
+          sequenceOrder: -1,
+          sequenceLabel: '🏠',
+          isHome: true,
+          date: day.date
         });
+        lastAddedPointId = startPtId;
+      }
+
+      // 2. Day Origin Stay (only for Day 2+ onwards if stay_night or checkout)
+      if (!isFirstDay && hotelPlace && hotelPlace.latitude && hotelPlace.longitude && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+        const firstItemIsHotel = dayItems.length > 0 && dayItems[0].place_id === hotelPlace.id;
+        if (!firstItemIsHotel) {
+          const segKey = lastAddedPointId ? `${day.date}_${lastAddedPointId}_${hotelPlace.id}` : null;
+          const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : 'drive';
+          pointsList.push({
+            ...hotelPlace,
+            id: `stay_origin_${hotelPlace.id}_${day.date}`,
+            name: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`,
+            dayLabel: dayLabelText,
+            color: dayColor,
+            sequenceOrder: 0,
+            sequenceLabel: '🏨',
+            isHotel: true,
+            date: day.date,
+            transportMode: segMode
+          });
+          lastAddedPointId = hotelPlace.id;
+        }
+      }
+
+      // 3. Scheduled stops for the day
+      let currentDaySeq = 1;
+      dayItems.forEach(item => {
+        const place = combinedPlaces.find(p => p.id === item.place_id);
+        if (place && (filterLocIds.length === 0 || !place.location_id || filterLocIds.includes(place.location_id))) {
+          const placeIdx = allPlacesSorted.findIndex(x => x.id === place.id);
+          const placeNum = placeIdx !== -1 ? placeIdx + 1 : (place.is_home ? '🏠' : currentDaySeq);
+          const segKey = lastAddedPointId ? `${day.date}_${lastAddedPointId}_${place.id}` : null;
+          const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : 'drive';
+          pointsList.push({
+            ...place,
+            id: `${place.id}_${item.id}_${day.date}`,
+            dayLabel: dayLabelText,
+            color: dayColor,
+            sequenceOrder: currentDaySeq,
+            sequenceLabel: placeNum,
+            date: day.date,
+            transportMode: segMode
+          });
+          lastAddedPointId = place.id;
+          currentDaySeq++;
+        }
+      });
+
+      // 4. Closing Endpoints (Go Home or Return to Stay)
+      const stopAddr = (isLastDay && lastDayGoHome && activeTripObj.stop_address_id) ? findUserAddress(activeTripObj.stop_address_id) : null;
+      if (stopAddr && stopAddr.latitude && stopAddr.longitude) {
+        const segKey = lastAddedPointId ? `${day.date}_${lastAddedPointId}_home_stop_${stopAddr.id}` : null;
+        const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : 'drive';
+        pointsList.push({
+          id: `stop_home_${stopAddr.id}_${day.date}`,
+          name: `🏠 Stop: ${stopAddr.label}`,
+          category: 'Home Address',
+          latitude: parseFloat(stopAddr.latitude),
+          longitude: parseFloat(stopAddr.longitude),
+          dayLabel: dayLabelText,
+          color: dayColor,
+          sequenceOrder: currentDaySeq + 100,
+          sequenceLabel: '🏠',
+          isHome: true,
+          date: day.date,
+          transportMode: segMode
+        });
+      } else if (hotelPlace && hotelPlace.latitude && hotelPlace.longitude && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
+        const lastItem = dayItems[dayItems.length - 1];
+        const lastItemIsHotel = lastItem && lastItem.place_id === hotelPlace.id;
+        
+        if (!lastItemIsHotel) {
+          const segKey = lastAddedPointId ? `${day.date}_${lastAddedPointId}_${hotelPlace.id}` : null;
+          const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : 'drive';
+          pointsList.push({
+            ...hotelPlace,
+            id: `stay_return_${hotelPlace.id}_${day.date}`,
+            name: stayBehavior === 'late_checkin' ? `🏨 Late Check-in: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`,
+            dayLabel: dayLabelText,
+            color: dayColor,
+            sequenceOrder: currentDaySeq + 100,
+            sequenceLabel: '🏨',
+            isHotel: true,
+            isReturnLeg: !isFirstDay && (stayBehavior === 'stay_night'),
+            date: day.date,
+            transportMode: segMode
+          });
+        }
       }
     });
 
     return pointsList;
-  }, [itineraries, combinedPlaces, selectedTrip, itineraryDays, stopFilterLocationIds, allPlacesSorted, selectedMapDay]);
+  }, [itineraries, combinedPlaces, selectedTrip, currentTrip, itineraryDays, stopFilterLocationIds, allPlacesSorted, selectedMapDay, userAddresses, findUserAddress]);
 
   // Base configurations and Trip configuration states
   const [baseCurrency, setBaseCurrency] = useState('USD');
@@ -912,6 +1029,7 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
       .map((l, i) => `Location ${i + 1}: ${l.name} (Lat: ${l.latitude || 'N/A'}, Lon: ${l.longitude || 'N/A'}, Address: ${l.address || 'N/A'})`);
 
     const selectedPlacesList = places.filter(p => {
+      if (isStayPlace(p)) return false;
       const belongsToLoc = selectedLocationsForAi.includes(p.location_id);
       const belongsToCol = collections.some(col => 
         selectedCollectionsForAi.includes(col.id) && 
@@ -924,16 +1042,14 @@ Places to visit list: ${JSON.stringify(formattedPlaces)}`
       `Place of Visit ${i + 1}: ${p.name} (Rating: ${p.rating || 'N/A'} stars, Lat: ${p.latitude || 'N/A'}, Lon: ${p.longitude || 'N/A'}, Address: ${p.address || 'N/A'})`
     );
 
-    return `You are a trip planning specialist. You are planning a trip to the locations below along with their geo-codes. Review the locations and geocodes and plan a trip for these locations so that maximum number of places can be covered. Expect to spend sometime in each of these place for sightseeing.
-If not all places can be visited in the trip itinerary, then only choose the important ones and ones which have >4 star ratings.
+    return `Plan an optimized ${tripLength || 3}-day itinerary to visit these locations based on geographical proximity and sightseeing time.
+Arrival time on Day 1: ${arrivalTime || 'Morning'}.
+Prioritize important places and places with >4 star ratings when schedule capacity is limited.
 
 Trip Days: ${tripLength || 3} days
-Arrival time on Day 1: ${arrivalTime || 'Morning'}
 
 ${locLines.join('\n')}
-${placeLines.join('\n')}
-
-Only return the places to visit for each day in the itinerary.`;
+${placeLines.join('\n')}`;
   };
 
   const getBankAiPromptText = () => {
@@ -948,7 +1064,7 @@ Only return the places to visit for each day in the itinerary.`;
       }
     }
 
-    const bankPlaces = places.filter(p => p.is_folder !== 1 && (filterLocs.length === 0 || filterLocs.includes(p.location_id)));
+    const bankPlaces = places.filter(p => p.is_folder !== 1 && !isStayPlace(p) && (filterLocs.length === 0 || filterLocs.includes(p.location_id)));
     const locMap = {};
     locations.forEach(l => { locMap[l.id] = l.name; });
 
@@ -964,23 +1080,54 @@ Only return the places to visit for each day in the itinerary.`;
 
     const notesObj = safeParseNotes(activeTripObj.notes);
     const dayLocations = notesObj.dayLocations || {};
+    const hotelsObj = notesObj.hotels || {};
+    const dayStayBehaviors = notesObj.dayStayBehaviors || {};
+    const dayEndpoints = notesObj.dayEndpoints || {};
+
+    const hasStartHome = Boolean(activeTripObj.start_address_id) && (dayEndpoints[itineraryDays[0]?.date]?.startFromHome !== false);
+    const hasStopHome = Boolean(activeTripObj.stop_address_id) && (dayEndpoints[itineraryDays[itineraryDays.length - 1]?.date]?.lastDayGoHome !== false);
+
     const dayConstraints = itineraryDays.map((d, i) => {
       const locId = dayLocations[d.date];
       const locName = locMap[locId];
-      return locName ? `Day ${i + 1} (${d.date}): Assigned Location is "${locName}". ONLY schedule places belonging to "${locName}".` : `Day ${i + 1} (${d.date}): Any location.`;
+      const hotelPlaceId = hotelsObj[d.date];
+      const hotelPlace = hotelPlaceId ? combinedPlaces.find(p => p.id === hotelPlaceId) : null;
+      const behavior = dayStayBehaviors[d.date] || 'stay_night';
+      const isFirst = i === 0;
+      const isLast = i === itineraryDays.length - 1;
+
+      const parts = [];
+      if (locName) parts.push(`Assigned Location: "${locName}" (ONLY schedule places from "${locName}")`);
+      else parts.push(`Location: Any`);
+
+      if (isFirst && hasStartHome) {
+        parts.push(`Origin: Starts from Home (Trip Origin)`);
+      }
+
+      if (hotelPlace) {
+        let flowDesc = 'Stay here at night (morning departure, evening return loop)';
+        if (behavior === 'checkout') flowDesc = 'Checkout from Hotel (morning departure only, day concludes at last stop/moving onward)';
+        else if (behavior === 'late_checkin') flowDesc = 'Late check-in (sightseeing first, arrives at hotel in the evening)';
+        parts.push(`Stay/Accommodation: "${hotelPlace.name}" (${hotelPlace.category || 'Hotel'}) [Flow: ${flowDesc}]`);
+      }
+
+      if (isLast && hasStopHome) {
+        parts.push(`Conclusion: Concludes returning Home (Trip Final Leg)`);
+      }
+
+      return `Day ${i + 1} (${d.date}):\n  - ${parts.join('\n  - ')}`;
     });
 
-    return `You are a trip planning specialist. Plan an optimized ${itineraryDays.length || activeTripObj.length || 3}-day itinerary using the places in the Places Bank.
+    return `Plan an optimized ${itineraryDays.length || activeTripObj.length || 3}-day itinerary using the places in the Places Bank.
 Arrival time on Day 1: ${bankAiArrivalTime || 'Morning'}.
-If not all places can be visited in the trip itinerary, then only choose the important ones and ones which have >4 star ratings.
+Prioritize important places and places with >4 star ratings when schedule capacity is limited.
+Take into account daily departure origins, accommodation check-out/late check-in flows, and evening returns to assigned accommodations when ordering sightseeing stops.
 
-Per-Day Assigned Locations:
-${dayConstraints.join('\n')}
+Per-Day Constraints & Accommodation Plan:
+${dayConstraints.join('\n\n')}
 
 Places Bank List (${bankPlaces.length} places):
-${JSON.stringify(formattedPlaces, null, 2)}
-
-Only return the places to visit for each day in the itinerary.`;
+${JSON.stringify(formattedPlaces, null, 2)}`;
   };
 
   const handleOpenBankAiModal = () => {
@@ -996,6 +1143,19 @@ Only return the places to visit for each day in the itinerary.`;
 
     setIsGeneratingBankAi(true);
     setBankAiError('');
+    setBankAiStatusMsg('📡 Connecting to AI model & packaging place constraints...');
+
+    const timer1 = setTimeout(() => {
+      setBankAiStatusMsg('📍 AI is analyzing geocoordinates, ratings, and day constraints...');
+    }, 2500);
+
+    const timer2 = setTimeout(() => {
+      setBankAiStatusMsg('✨ Optimizing day-by-day route sequence and sightseeing times...');
+    }, 7000);
+
+    const timer3 = setTimeout(() => {
+      setBankAiStatusMsg('⏳ Waiting for AI provider response (model experiencing traffic, please hold on)...');
+    }, 15000);
 
     try {
       let filterLocs = stopFilterLocationIds;
@@ -1006,7 +1166,7 @@ Only return the places to visit for each day in the itinerary.`;
         }
       }
 
-      const bankPlaces = places.filter(p => p.is_folder !== 1 && (filterLocs.length === 0 || filterLocs.includes(p.location_id)));
+      const bankPlaces = places.filter(p => p.is_folder !== 1 && !isStayPlace(p) && (filterLocs.length === 0 || filterLocs.includes(p.location_id)));
       const locMap = {};
       locations.forEach(l => { locMap[l.id] = l.name; });
 
@@ -1036,12 +1196,27 @@ Only return the places to visit for each day in the itinerary.`;
         })
       });
 
-      if (!aiRes.ok) {
-        const errorData = await aiRes.json();
-        throw new Error(errorData.error || 'AI itinerary generation failed');
+      const resText = await aiRes.text();
+      let resData;
+      try {
+        resData = JSON.parse(resText);
+      } catch (e) {
+        if (!aiRes.ok) {
+          throw new Error(`AI generation failed (HTTP ${aiRes.status}): ${resText.slice(0, 150)}`);
+        }
+        throw new Error('AI returned invalid response format. Please retry.');
       }
 
-      const days = await aiRes.json();
+      if (!aiRes.ok) {
+        throw new Error(resData?.error || `AI itinerary generation failed (${aiRes.status})`);
+      }
+
+      const days = Array.isArray(resData) ? resData : (resData.days || resData.itinerary || []);
+      if (!Array.isArray(days) || days.length === 0) {
+        throw new Error('AI did not return any itinerary days. Please retry.');
+      }
+
+      setBankAiStatusMsg('💾 Processing AI response & saving itinerary to trip database...');
 
       // Clear existing non-hotel itinerary items for this trip
       const existingItems = itineraries.filter(i => i.trip_id === activeTripObj.id);
@@ -1097,7 +1272,11 @@ Only return the places to visit for each day in the itinerary.`;
       console.error('Bank AI planning error:', err);
       setBankAiError(err.message || 'Failed to generate itinerary with AI.');
     } finally {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
       setIsGeneratingBankAi(false);
+      setBankAiStatusMsg('');
     }
   };
 
@@ -1105,7 +1284,7 @@ Only return the places to visit for each day in the itinerary.`;
     if (showAddForm && wizardStep === 2) {
       setCustomPromptText(getAiPromptText());
     }
-  }, [selectedLocationsForAi, selectedCollectionsForAi, tripLength, arrivalTime, showAddForm, wizardStep]);
+  }, [selectedLocationsForAi, selectedCollectionsForAi, tripLength, arrivalTime, showAddForm, wizardStep, locations, collections, places]);
 
   // Inline reservation state
   const [activeDateForResForm, setActiveDateForResForm] = useState(null);
@@ -1303,6 +1482,21 @@ Only return the places to visit for each day in the itinerary.`;
     if (!wizardTrip) return;
 
     setIsGeneratingTrip(true);
+    setWizardAiError('');
+    setWizardAiStatusMsg('📡 Packaging trip details and contacting AI model...');
+
+    const timer1 = setTimeout(() => {
+      setWizardAiStatusMsg('📍 AI is analyzing locations, collections, and coordinates...');
+    }, 2500);
+
+    const timer2 = setTimeout(() => {
+      setWizardAiStatusMsg('✨ Generating optimal day-wise itinerary schedule...');
+    }, 7000);
+
+    const timer3 = setTimeout(() => {
+      setWizardAiStatusMsg('⏳ Waiting for AI provider response (model experiencing traffic, please hold on)...');
+    }, 15000);
+
     try {
       const existingNotes = safeParseNotes(wizardTrip.notes);
       const updatedNotes = {
@@ -1349,12 +1543,27 @@ Only return the places to visit for each day in the itinerary.`;
         })
       });
 
-      if (!aiRes.ok) {
-        const errorData = await aiRes.json();
-        throw new Error(errorData.error || 'AI generation failed');
+      const resText = await aiRes.text();
+      let resData;
+      try {
+        resData = JSON.parse(resText);
+      } catch (e) {
+        if (!aiRes.ok) {
+          throw new Error(`AI generation failed (HTTP ${aiRes.status}): ${resText.slice(0, 150)}`);
+        }
+        throw new Error('AI returned invalid response format. Please retry.');
       }
 
-      const days = await aiRes.json();
+      if (!aiRes.ok) {
+        throw new Error(resData?.error || `AI itinerary generation failed (${aiRes.status})`);
+      }
+
+      const days = Array.isArray(resData) ? resData : (resData.days || resData.itinerary || []);
+      if (!Array.isArray(days) || days.length === 0) {
+        throw new Error('AI did not return any itinerary days. Please retry.');
+      }
+
+      setWizardAiStatusMsg('💾 Processing AI response & saving itinerary items...');
 
       const unmappedList = [];
       for (const day of days) {
@@ -1362,7 +1571,7 @@ Only return the places to visit for each day in the itinerary.`;
         if (wizardTrip.start_date) {
           const d = new Date(wizardTrip.start_date);
           d.setDate(d.getDate() + (day.day - 1));
-        dayDateStr = d.toISOString().split('T')[0];
+          dayDateStr = d.toISOString().split('T')[0];
         }
 
         for (let idx = 0; idx < (day.activities || []).length; idx++) {
@@ -1424,10 +1633,14 @@ Only return the places to visit for each day in the itinerary.`;
       setWizardTrip(null);
       setShow3ColumnWorkspace(true);
     } catch (err) {
-      console.error(err);
-      alert('Failed to generate trip with AI: ' + err.message);
+      console.error('Wizard AI error:', err);
+      setWizardAiError(err.message || 'Failed to generate trip with AI.');
     } finally {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
       setIsGeneratingTrip(false);
+      setWizardAiStatusMsg('');
     }
   };
 
@@ -2418,16 +2631,43 @@ Only return the places to visit for each day in the itinerary.`;
                             onChange={(e) => setCustomPromptText(e.target.value)}
                             placeholder="Customize the itinerary generation instructions..."
                             style={{ fontSize: '0.85rem' }}
+                            disabled={isGeneratingTrip}
                           />
                         </div>
 
+                        {wizardAiError && (
+                          <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--danger)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.8rem', marginTop: '12px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                            <span>⚠️</span>
+                            <div style={{ flex: 1 }}>{wizardAiError}</div>
+                          </div>
+                        )}
+
+                        {isGeneratingTrip && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.3)', marginTop: '12px' }}>
+                            <RefreshCw size={20} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                              <div style={{ fontWeight: '600', marginBottom: '2px' }}>Planning Trip with AI...</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{wizardAiStatusMsg || 'Analyzing locations and constraints...'}</div>
+                            </div>
+                          </div>
+                        )}
+
                         <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-                          <button type="button" className="btn btn-secondary" onClick={() => setWizardStep(1)}>
+                          <button type="button" className="btn btn-secondary" onClick={() => setWizardStep(1)} disabled={isGeneratingTrip}>
                             Back
                           </button>
-                          <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <Compass size={16} />
-                            Send to AI
+                          <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }} disabled={isGeneratingTrip}>
+                            {isGeneratingTrip ? (
+                              <>
+                                <RefreshCw size={16} className="spin" />
+                                Planning Trip...
+                              </>
+                            ) : (
+                              <>
+                                <Compass size={16} />
+                                Send to AI
+                              </>
+                            )}
                           </button>
                         </div>
                       </form>
@@ -3182,7 +3422,8 @@ Only return the places to visit for each day in the itinerary.`;
               <div className={!printOptItinerary ? 'no-print' : ''} style={{ background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
                 <h3 style={{ marginBottom: '16px', marginTop: 0 }}>Chronological Daily Itinerary</h3>
                 {itineraryDays.map((day, dIdx) => {
-                  const dayItems = itineraries.filter(i => currentTrip && i.trip_id === currentTrip.id && i.date === day.date)
+                  const activeTrip = selectedTrip || currentTrip;
+                  const dayItems = itineraries.filter(i => activeTrip && i.trip_id === activeTrip.id && i.date === day.date)
                                               .sort((a,b) => a.sequence_order - b.sequence_order);
                   return (
                     <ItineraryDay 
@@ -3193,7 +3434,7 @@ Only return the places to visit for each day in the itinerary.`;
                       places={combinedPlaces}
                       distances={distances}
                       reservations={reservations}
-                      selectedTrip={currentTrip}
+                      selectedTrip={activeTrip}
                       tripModeActive={tripModeActive}
                       handleViewAttachment={handleViewAttachment}
                       handleDeleteReservation={handleDeleteReservation}
@@ -3204,6 +3445,8 @@ Only return the places to visit for each day in the itinerary.`;
                       dayColor={getDayColor(dIdx)}
                       userAddresses={userAddresses}
                       locations={locations}
+                      isFirstDay={dIdx === 0}
+                      isLastDay={dIdx === itineraryDays.length - 1}
                     />
                   );
                 })}
@@ -4031,10 +4274,11 @@ Only return the places to visit for each day in the itinerary.`;
                   </button>
                 </div>
               </div>
-              <div style={{ flexGrow: 1, position: 'relative' }}>
+              <div style={{ flexGrow: 1, position: 'relative', height: isMobile ? 'calc(100vh - 190px)' : 'auto', minHeight: isMobile ? '350px' : '0' }}>
                 <MapView 
                   points={mapPoints} 
                   drawLine={showNavigationLines} 
+                  isVisible={!isMobile || activeMobilePane === 'map'}
                 />
               </div>
             </div>
@@ -4057,18 +4301,94 @@ Only return the places to visit for each day in the itinerary.`;
                     .sort((a,b) => a.sequence_order - b.sequence_order);
                   const color = getDayColor(dIdx);
                   
-                  // Calculate active day itinerary stops & hotels in sequence
-                  const dayElements = [];
-                  
                   const notesObj = safeParseNotes(selectedTrip?.notes);
                   const hotelsObj = notesObj.hotels || {};
+                  const dayEndpoints = notesObj.dayEndpoints || {};
+                  const dayStayBehaviors = notesObj.dayStayBehaviors || {};
+                  const segmentTransport = notesObj.segmentTransport || {};
 
+                  const isFirstDay = dIdx === 0;
+                  const isLastDay = dIdx === itineraryDays.length - 1;
+                  const startFromHome = dayEndpoints[day.date]?.startFromHome ?? (isFirstDay && Boolean(selectedTrip.start_address_id));
+                  const lastDayGoHome = dayEndpoints[day.date]?.lastDayGoHome ?? (isLastDay && Boolean(selectedTrip.stop_address_id));
+                  const stayBehavior = dayStayBehaviors[day.date] || 'stay_night';
+
+                  const hotelPlaceId = hotelsObj[day.date];
+                  const hotelPlace = hotelPlaceId ? combinedPlaces.find(p => String(p.id) === String(hotelPlaceId)) : null;
+                  const startAddrObj = (isFirstDay && selectedTrip.start_address_id && startFromHome) ? findUserAddress(selectedTrip.start_address_id) : null;
+                  const stopAddrObj = (isLastDay && selectedTrip.stop_address_id && lastDayGoHome) ? findUserAddress(selectedTrip.stop_address_id) : null;
+
+                  // Assemble complete day elements in chronological flow
+                  const dayElements = [];
+
+                  // 1. Start from Home (Day 1)
+                  const isDay1StartingFromHome = Boolean(startAddrObj);
+                  if (isDay1StartingFromHome) {
+                    dayElements.push({
+                      place: {
+                        ...startAddrObj,
+                        id: `home_start_${startAddrObj.id}`,
+                        name: `🏠 Start: ${startAddrObj.label}`,
+                        category: 'Home Address',
+                        latitude: (startAddrObj.latitude !== null && startAddrObj.latitude !== undefined && startAddrObj.latitude !== '' && !isNaN(Number(startAddrObj.latitude))) ? parseFloat(startAddrObj.latitude) : null,
+                        longitude: (startAddrObj.longitude !== null && startAddrObj.longitude !== undefined && startAddrObj.longitude !== '' && !isNaN(Number(startAddrObj.longitude))) ? parseFloat(startAddrObj.longitude) : null,
+                        is_home: true
+                      },
+                      isFixedEndpoint: true,
+                      endpointType: 'start_home',
+                      label: `🏠 Start from Home (${startAddrObj.label})`
+                    });
+                  }
+
+                  // 2. Depart Stay (only for Day 2+ onwards if stay_night or checkout)
+                  if (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+                    const firstItemIsHotel = dayItems.length > 0 && String(dayItems[0].place_id) === String(hotelPlace.id);
+                    if (!firstItemIsHotel) {
+                      dayElements.push({
+                        place: hotelPlace,
+                        isFixedEndpoint: true,
+                        endpointType: 'stay_origin',
+                        label: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
+                      });
+                    }
+                  }
+
+                  // 3. Sightseeing Stops
                   dayItems.forEach(item => {
-                    const stopPlace = combinedPlaces.find(p => p.id === item.place_id);
+                    const stopPlace = combinedPlaces.find(p => String(p.id) === String(item.place_id));
                     if (stopPlace) {
                       dayElements.push({ place: stopPlace, itemObj: item, isHotel: false });
                     }
                   });
+
+                  // 4. Closing Endpoints (Go Home or Return to Stay)
+                  if (isLastDay && lastDayGoHome && stopAddrObj) {
+                    dayElements.push({
+                      place: {
+                        ...stopAddrObj,
+                        id: `home_stop_${stopAddrObj.id}`,
+                        name: `🏠 Stop: ${stopAddrObj.label}`,
+                        category: 'Home Address',
+                        latitude: (stopAddrObj.latitude !== null && stopAddrObj.latitude !== undefined && stopAddrObj.latitude !== '' && !isNaN(Number(stopAddrObj.latitude))) ? parseFloat(stopAddrObj.latitude) : null,
+                        longitude: (stopAddrObj.longitude !== null && stopAddrObj.longitude !== undefined && stopAddrObj.longitude !== '' && !isNaN(Number(stopAddrObj.longitude))) ? parseFloat(stopAddrObj.longitude) : null,
+                        is_home: true
+                      },
+                      isFixedEndpoint: true,
+                      endpointType: 'stop_home',
+                      label: `🏠 Last Day (${stopAddrObj.label})`
+                    });
+                  } else if (hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
+                    const lastItem = dayItems[dayItems.length - 1];
+                    const lastItemIsHotel = lastItem && String(lastItem.place_id) === String(hotelPlace.id);
+                    if (!lastItemIsHotel) {
+                      dayElements.push({
+                        place: hotelPlace,
+                        isFixedEndpoint: true,
+                        endpointType: 'stay_return',
+                        label: stayBehavior === 'late_checkin' ? `🏨 Late Check-in: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
+                      });
+                    }
+                  }
 
                   // Calculate distances list for this day
                   const dayDistancesList = [];
@@ -4077,21 +4397,47 @@ Only return the places to visit for each day in the itinerary.`;
                     const p1 = dayElements[i - 1].place;
                     const p2 = dayElements[i].place;
                     if (p1 && p2) {
+                      const segKey = `${day.date}_${p1.id}_${p2.id}`;
+                      const segConfig = segmentTransport[segKey] || {};
+                      const mode = segConfig.mode || 'drive';
+
                       if (p1.latitude === p2.latitude && p1.longitude === p2.longitude) {
-                        dayDistancesList.push({ distance: 0, duration: 0 });
+                        dayDistancesList.push({ distance: 0, duration: 0, mode });
                         continue;
                       }
-                      const key = `${p1.id}-${p2.id}`;
-                      let distObj = distances[key];
-                      if (distObj === undefined) {
-                        fetchOSRMDistance(p1, p2);
-                        const hav = getHaversine(p1, p2);
-                        distObj = { distance: hav, duration: Math.round(hav / 40 * 60) };
+
+                      if (mode === 'flight') {
+                        const hav = Math.round(getHaversine(p1, p2) * 10) / 10;
+                        const customDur = segConfig.durationMinutes ? parseInt(segConfig.durationMinutes, 10) : Math.round(hav / 800 * 60) + 60;
+                        const distObj = { distance: hav, duration: customDur, mode: 'flight', notes: segConfig.notes };
+                        dayDistancesList.push(distObj);
+                        dayTotalDistance += hav;
+                      } else if (mode === 'train' || mode === 'ferry') {
+                        const hav = Math.round(getHaversine(p1, p2) * 10) / 10;
+                        const customDur = segConfig.durationMinutes ? parseInt(segConfig.durationMinutes, 10) : Math.round(hav / (mode === 'train' ? 100 : 30) * 60);
+                        const distObj = { distance: hav, duration: customDur, mode, notes: segConfig.notes };
+                        dayDistancesList.push(distObj);
+                        dayTotalDistance += hav;
+                      } else {
+                        const key = `${p1.id}-${p2.id}`;
+                        let distObj = distances[key];
+                        if (distObj === undefined) {
+                          fetchOSRMDistance(p1, p2);
+                          const hav = getHaversine(p1, p2);
+                          distObj = { distance: hav, duration: Math.round(hav / 40 * 60), mode };
+                        } else if (typeof distObj === 'object') {
+                          distObj = { ...distObj, mode };
+                        } else {
+                          distObj = { distance: distObj, duration: 0, mode };
+                        }
+                        if (segConfig.durationMinutes) {
+                          distObj = { ...distObj, duration: parseInt(segConfig.durationMinutes, 10), notes: segConfig.notes };
+                        }
+                        dayDistancesList.push(distObj);
+                        dayTotalDistance += (typeof distObj === 'object' ? distObj.distance : distObj);
                       }
-                      dayDistancesList.push(distObj);
-                      dayTotalDistance += (typeof distObj === 'object' ? distObj.distance : distObj);
                     } else {
-                      dayDistancesList.push({ distance: 0, duration: 0 });
+                      dayDistancesList.push({ distance: 0, duration: 0, mode: 'drive' });
                     }
                   }
                   dayTotalDistance = Math.round(dayTotalDistance * 10) / 10;
@@ -4204,8 +4550,8 @@ Only return the places to visit for each day in the itinerary.`;
                         </span>
                       </h4>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '6px 10px' }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>📍 Location:</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '4px 10px', height: '36px', boxSizing: 'border-box' }}>
+                        <span style={{ width: '140px', minWidth: '140px', flexShrink: 0, whiteSpace: 'nowrap', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>📍 Location:</span>
                         <select
                           className="form-control"
                           value={(() => {
@@ -4228,7 +4574,7 @@ Only return the places to visit for each day in the itinerary.`;
                             await queueSyncAction('trips', 'update', updated);
                             setSelectedTrip(updated);
                           }}
-                          style={{ flexGrow: 1, height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0 }}
+                          style={{ flex: 1, minWidth: 0, width: '100%', height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0, outline: 'none' }}
                         >
                           <option value="" style={{ background: 'var(--bg-surface)' }}>-- All / Any Location --</option>
                           {locations.filter(l => l.is_folder !== 1 && (stopFilterLocationIds.length === 0 || stopFilterLocationIds.includes(l.id))).map(loc => (
@@ -4237,27 +4583,33 @@ Only return the places to visit for each day in the itinerary.`;
                         </select>
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '6px 10px' }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>🏠 Stay:</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '4px 10px', height: '36px', boxSizing: 'border-box' }}>
+                        <span style={{ width: '140px', minWidth: '140px', flexShrink: 0, whiteSpace: 'nowrap', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>🏨 Stay:</span>
                         <select
                           className="form-control"
                           value={(() => {
                             const notesObj = safeParseNotes(selectedTrip?.notes);
-                            return notesObj.hotels ? notesObj.hotels[day.date] || '' : '';
+                            const savedHotelId = notesObj.hotels ? notesObj.hotels[day.date] : '';
+                            if (!savedHotelId) return '';
+                            const matched = places.find(p => String(p.id) === String(savedHotelId));
+                            return matched ? matched.id : savedHotelId;
                           })()}
                           onChange={(e) => handleSelectHotel(day.date, e.target.value)}
-                          style={{ flexGrow: 1, height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0 }}
+                          style={{ flex: 1, minWidth: 0, width: '100%', height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0, outline: 'none' }}
                         >
                           <option value="" style={{ background: 'var(--bg-surface)' }}>-- Unassigned --</option>
                           {(() => {
+                            const notesObj = safeParseNotes(selectedTrip?.notes);
                             const assignedDayLocId = notesObj.dayLocations ? notesObj.dayLocations[day.date] : null;
                             const targetLocIds = assignedDayLocId 
                               ? [assignedDayLocId] 
                               : (stopFilterLocationIds.length > 0 ? stopFilterLocationIds : []);
+                            const currentHotelId = notesObj.hotels ? notesObj.hotels[day.date] : null;
 
                             return places.filter(p => {
                               const isHotel = isStayPlace(p);
                               if (!isHotel) return false;
+                              if (currentHotelId && String(p.id) === String(currentHotelId)) return true; // ALWAYS preserve selected hotel
                               return targetLocIds.length === 0 || targetLocIds.includes(p.location_id);
                             }).map(p => (
                               <option key={p.id} value={p.id} style={{ background: 'var(--bg-surface)' }}>{p.name} ({p.category})</option>
@@ -4266,15 +4618,104 @@ Only return the places to visit for each day in the itinerary.`;
                         </select>
                       </div>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {/* Day 1: Start from Home row */}
+                      {isFirstDay && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '4px 10px', height: '36px', boxSizing: 'border-box' }}>
+                          <span style={{ width: '140px', minWidth: '140px', flexShrink: 0, whiteSpace: 'nowrap', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>🏠 Start From Home:</span>
+                          <select
+                            className="form-control"
+                            value={(() => {
+                              const matched = findUserAddress(selectedTrip.start_address_id);
+                              return matched ? matched.id : (selectedTrip.start_address_id || '');
+                            })()}
+                            onChange={async (e) => {
+                              const val = e.target.value;
+                              const curNotes = safeParseNotes(selectedTrip.notes);
+                              curNotes.dayEndpoints = curNotes.dayEndpoints || {};
+                              curNotes.dayEndpoints[day.date] = { ...(curNotes.dayEndpoints[day.date] || {}), startFromHome: Boolean(val) };
+                              const updated = { ...selectedTrip, start_address_id: val || null, notes: JSON.stringify(curNotes) };
+                              await queueSyncAction('trips', 'update', updated);
+                              setSelectedTrip(updated);
+                            }}
+                            style={{ flex: 1, minWidth: 0, width: '100%', height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0, outline: 'none' }}
+                          >
+                            <option value="" style={{ background: 'var(--bg-surface)' }}>-- None / Start at First Stop --</option>
+                            {userAddresses.map(addr => (
+                              <option key={addr.id} value={addr.id} style={{ background: 'var(--bg-surface)' }}>🏠 {addr.label} {addr.address ? `(${addr.address})` : ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Stay Behavior Radio Selector */}
+                      {hotelPlace && (
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '0 0 10px 0', padding: '6px 8px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                          {[
+                            { id: 'stay_night', label: '🔄 Stay here at night' },
+                            { id: 'checkout', label: '➡️ Checkout from Hotel' },
+                            { id: 'late_checkin', label: '🏁 Late check-in' }
+                          ].map(opt => {
+                            const isSel = stayBehavior === opt.id;
+                            return (
+                              <label key={opt.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', cursor: 'pointer', margin: 0, color: isSel ? 'var(--accent-primary)' : 'var(--text-secondary)', fontWeight: isSel ? 600 : 'normal' }}>
+                                <input 
+                                  type="radio" 
+                                  name={`stay_behavior_${day.date}`}
+                                  checked={isSel}
+                                  onChange={async () => {
+                                    const curNotes = safeParseNotes(selectedTrip.notes);
+                                    curNotes.dayStayBehaviors = curNotes.dayStayBehaviors || {};
+                                    curNotes.dayStayBehaviors[day.date] = opt.id;
+                                    const updated = { ...selectedTrip, notes: JSON.stringify(curNotes) };
+                                    await queueSyncAction('trips', 'update', updated);
+                                    setSelectedTrip(updated);
+                                  }}
+                                />
+                                <span>{opt.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Final Day: Last Day, Go Home row */}
+                      {isLastDay && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '4px 10px', height: '36px', boxSizing: 'border-box' }}>
+                          <span style={{ width: '140px', minWidth: '140px', flexShrink: 0, whiteSpace: 'nowrap', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>🏠 Last Day?:</span>
+                          <select
+                            className="form-control"
+                            value={(() => {
+                              const matched = findUserAddress(selectedTrip.stop_address_id);
+                              return matched ? matched.id : (selectedTrip.stop_address_id || '');
+                            })()}
+                            onChange={async (e) => {
+                              const val = e.target.value;
+                              const curNotes = safeParseNotes(selectedTrip.notes);
+                              curNotes.dayEndpoints = curNotes.dayEndpoints || {};
+                              curNotes.dayEndpoints[day.date] = { ...(curNotes.dayEndpoints[day.date] || {}), lastDayGoHome: Boolean(val) };
+                              const updated = { ...selectedTrip, stop_address_id: val || null, notes: JSON.stringify(curNotes) };
+                              await queueSyncAction('trips', 'update', updated);
+                              setSelectedTrip(updated);
+                            }}
+                            style={{ flex: 1, minWidth: 0, width: '100%', height: '26px', fontSize: '0.75rem', padding: '0 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0, outline: 'none' }}
+                          >
+                            <option value="" style={{ background: 'var(--bg-surface)' }}>-- None / End at Last Stop --</option>
+                            {userAddresses.map(addr => (
+                              <option key={addr.id} value={addr.id} style={{ background: 'var(--bg-surface)' }}>🏠 {addr.label} {addr.address ? `(${addr.address})` : ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         {dayElements.map((el, idx) => {
                           const place = el.place;
                           return (
                             <React.Fragment key={`${place.id}-${idx}`}>
-                              {el.isHotel ? (
+                              {el.isFixedEndpoint ? (
                                 <div style={{
-                                  background: 'rgba(139, 92, 246, 0.08)',
-                                  border: `1px solid ${color}`,
+                                  background: el.endpointType?.includes('home') ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' : 'rgba(139, 92, 246, 0.08)',
+                                  border: el.endpointType?.includes('home') ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' : `1px solid ${color}`,
                                   padding: '8px 12px',
                                   borderRadius: '4px',
                                   display: 'flex',
@@ -4284,7 +4725,7 @@ Only return the places to visit for each day in the itinerary.`;
                                   fontWeight: 500
                                 }}>
                                   <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                    <span>{el.label}: {place.name}</span>
+                                    <span style={{ color: el.endpointType?.includes('home') ? 'var(--endpoint-color, #4ade80)' : 'inherit', fontWeight: 600 }}>{el.label || place.name}</span>
                                     {place.category && (
                                       <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
                                         ({place.category})
@@ -4382,42 +4823,75 @@ Only return the places to visit for each day in the itinerary.`;
                                 </div>
                               )}
 
-                              {idx < dayElements.length - 1 && (
-                                <div style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '0.75rem',
-                                  color: 'var(--text-secondary)',
-                                  background: 'rgba(255,255,255,0.03)',
-                                  borderRadius: '4px',
-                                  padding: '4px 8px',
-                                  margin: '4px 16px',
-                                  borderLeft: `2px solid ${color}`,
-                                  gap: '6px'
-                                }}>
-                                  {(() => {
-                                    const isUsingGmaps = typeof window !== 'undefined' && 
-                                      window.google && 
-                                      window.google.maps && 
-                                      localStorage.getItem('google_maps_api_key') && 
-                                      localStorage.getItem('google_maps_enabled') !== 'false';
-                                    return (
-                                      <>
-                                        <img 
-                                          src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
-                                          style={{ width: 12, height: 12, objectFit: 'contain' }} 
-                                          alt={isUsingGmaps ? "GMaps" : "OSM"}
-                                          title={isUsingGmaps ? "Route calculated via Google Maps" : "Route calculated via OpenStreetMap (OSRM)"}
-                                        />
-                                        <span>
-                                          {dayDistancesList[idx] && typeof dayDistancesList[idx] === 'object' ? `${dayDistancesList[idx].distance} km (${formatDuration(dayDistancesList[idx].duration)})` : `${dayDistancesList[idx] || 0} km`} to next stop
+                              {idx < dayElements.length - 1 && (() => {
+                                const p1 = dayElements[idx].place;
+                                const p2 = dayElements[idx + 1].place;
+                                const segKey = `${day.date}_${p1.id}_${p2.id}`;
+                                const segConfig = segmentTransport[segKey] || {};
+                                const currentMode = segConfig.mode || 'drive';
+                                const modeIconMap = { drive: '🚗', flight: '✈️', train: '🚆', walk: '🚶', ferry: '⛴️' };
+                                const modeIcon = modeIconMap[currentMode] || '🚗';
+                                const distInfo = dayDistancesList[idx] || { distance: 0, duration: 0 };
+                                const distKm = typeof distInfo === 'object' ? distInfo.distance : distInfo;
+                                const durMins = typeof distInfo === 'object' ? distInfo.duration : 0;
+
+                                return (
+                                  <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    fontSize: '0.72rem',
+                                    color: 'var(--text-secondary)',
+                                    background: 'rgba(255,255,255,0.03)',
+                                    borderRadius: '4px',
+                                    padding: '4px 8px',
+                                    margin: '2px 8px',
+                                    borderLeft: `2px solid ${color}`,
+                                    gap: '8px'
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                                      <span>
+                                        {distKm} km {durMins > 0 ? `(${formatDuration(durMins)})` : ''}
+                                      </span>
+                                      {segConfig.notes && (
+                                        <span style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontStyle: 'italic', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                                          • {segConfig.notes}
                                         </span>
-                                      </>
-                                    );
-                                  })()}
-                                </div>
-                              )}
+                                      )}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingSegment({
+                                        dayDate: day.date,
+                                        fromName: p1.name,
+                                        toName: p2.name,
+                                        segKey,
+                                        mode: currentMode,
+                                        durationMinutes: segConfig.durationMinutes || (durMins > 0 ? durMins : ''),
+                                        notes: segConfig.notes || ''
+                                      })}
+                                      style={{
+                                        background: 'var(--bg-app)',
+                                        border: '1px solid var(--border-glass)',
+                                        borderRadius: '4px',
+                                        padding: '2px 6px',
+                                        fontSize: '0.7rem',
+                                        color: 'var(--text-primary)',
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        flexShrink: 0
+                                      }}
+                                      title="Change travel mode or custom duration"
+                                    >
+                                      <span>{modeIcon}</span>
+                                      <span style={{ textTransform: 'capitalize' }}>{currentMode}</span>
+                                      <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>⚙️</span>
+                                    </button>
+                                  </div>
+                                );
+                              })()}
                             </React.Fragment>
                           );
                         })}
@@ -4521,200 +4995,6 @@ Only return the places to visit for each day in the itinerary.`;
               </div>
 
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {/* Start & Stop Addresses in Places Bank */}
-                {(() => {
-                  const startAddrObj = userAddresses.find(a => a.id === selectedTrip?.start_address_id);
-                  const stopAddrObj = userAddresses.find(a => a.id === selectedTrip?.stop_address_id);
-
-                  if (!startAddrObj && !stopAddrObj) return null;
-
-                  return (
-                    <div style={{ border: '1px solid rgba(74, 222, 128, 0.3)', borderRadius: '6px', padding: '10px', background: 'rgba(74, 222, 128, 0.05)', marginBottom: '4px' }}>
-                      <div style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', color: '#4ade80', marginBottom: '8px' }}>
-                        🏠 <span>Trip Endpoints</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '4px' }}>
-                        {startAddrObj && (
-                          <div 
-                            key={`start_${startAddrObj.id}`}
-                            draggable={true}
-                            onDragStart={(e) => {
-                              e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'place', id: `home_${startAddrObj.id}` }));
-                            }}
-                            style={{
-                              background: 'var(--bg-app)',
-                              border: '1px solid rgba(74, 222, 128, 0.3)',
-                              padding: '6px 10px',
-                              borderRadius: '4px',
-                              cursor: 'grab',
-                              fontSize: '0.75rem',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              color: 'var(--text-primary)'
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                              <span style={{
-                                width: '20px',
-                                height: '20px',
-                                borderRadius: '50%',
-                                background: '#4ade80',
-                                color: '#000',
-                                fontSize: '0.7rem',
-                                fontWeight: 'bold',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0
-                              }}>
-                                🏠
-                              </span>
-                              <span style={{ fontWeight: 500 }}>Start Address: {startAddrObj.label}</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const updatedTrip = { ...selectedTrip, start_address_id: null };
-                                  await queueSyncAction('trips', 'update', updatedTrip);
-                                  setSelectedTrip(updatedTrip);
-                                }}
-                                className="btn btn-secondary"
-                                title="Remove Start Address from Trip"
-                                style={{
-                                  width: '22px',
-                                  height: '22px',
-                                  padding: 0,
-                                  margin: 0,
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '0.9rem',
-                                  borderRadius: '4px',
-                                  color: 'var(--danger)',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                −
-                              </button>
-                              {isMobile && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleMobileAddStop({ id: `home_${startAddrObj.id}`, is_home: true, name: `🏠 ${startAddrObj.label}`, category: 'Home Address', latitude: parseFloat(startAddrObj.latitude), longitude: parseFloat(startAddrObj.longitude), address: startAddrObj.address })}
-                                  className="btn btn-primary"
-                                  title="Add to Itinerary"
-                                  style={{
-                                    width: '22px',
-                                    height: '22px',
-                                    padding: 0,
-                                    margin: 0,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    fontSize: '0.85rem',
-                                    borderRadius: '4px'
-                                  }}
-                                >
-                                  +
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {stopAddrObj && (
-                          <div 
-                            key={`stop_${stopAddrObj.id}`}
-                            draggable={true}
-                            onDragStart={(e) => {
-                              e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'place', id: `home_${stopAddrObj.id}` }));
-                            }}
-                            style={{
-                              background: 'var(--bg-app)',
-                              border: '1px solid rgba(74, 222, 128, 0.3)',
-                              padding: '6px 10px',
-                              borderRadius: '4px',
-                              cursor: 'grab',
-                              fontSize: '0.75rem',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              color: 'var(--text-primary)'
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                              <span style={{
-                                width: '20px',
-                                height: '20px',
-                                borderRadius: '50%',
-                                background: '#4ade80',
-                                color: '#000',
-                                fontSize: '0.7rem',
-                                fontWeight: 'bold',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0
-                              }}>
-                                🏁
-                              </span>
-                              <span style={{ fontWeight: 500 }}>Stop Address: {stopAddrObj.label}</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const updatedTrip = { ...selectedTrip, stop_address_id: null };
-                                  await queueSyncAction('trips', 'update', updatedTrip);
-                                  setSelectedTrip(updatedTrip);
-                                }}
-                                className="btn btn-secondary"
-                                title="Remove Stop Address from Trip"
-                                style={{
-                                  width: '22px',
-                                  height: '22px',
-                                  padding: 0,
-                                  margin: 0,
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '0.9rem',
-                                  borderRadius: '4px',
-                                  color: 'var(--danger)',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                −
-                              </button>
-                              {isMobile && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleMobileAddStop({ id: `home_${stopAddrObj.id}`, is_home: true, name: `🏠 ${stopAddrObj.label}`, category: 'Home Address', latitude: parseFloat(stopAddrObj.latitude), longitude: parseFloat(stopAddrObj.longitude), address: stopAddrObj.address })}
-                                  className="btn btn-primary"
-                                  title="Add to Itinerary"
-                                  style={{
-                                    width: '22px',
-                                    height: '22px',
-                                    padding: 0,
-                                    margin: 0,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    fontSize: '0.85rem',
-                                    borderRadius: '4px'
-                                  }}
-                                >
-                                  +
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
                 {locations
                   .filter(l => l.is_folder !== 1 && stopFilterLocationIds.includes(l.id))
                   .map(loc => {
@@ -4925,18 +5205,36 @@ Only return the places to visit for each day in the itinerary.`;
                 />
               </div>
 
+              <div style={{
+                padding: '8px 12px',
+                background: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.25)',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '0.75rem',
+                color: 'var(--text-secondary)'
+              }}>
+                <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>🔒</span>
+                <span>
+                  <strong style={{ color: 'var(--text-primary)' }}>Privacy Notice:</strong> No personal information, home addresses, or private geocodes are sent to the AI in the prompt.
+                </span>
+              </div>
+
               {bankAiError && (
-                <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--danger)', borderRadius: '4px', color: 'var(--danger)', fontSize: '0.8rem' }}>
-                  ⚠️ {bankAiError}
+                <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--danger)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.8rem', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                  <span>⚠️</span>
+                  <div style={{ flex: 1 }}>{bankAiError}</div>
                 </div>
               )}
 
               {isGeneratingBankAi && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: 'var(--bg-app)', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
-                  <Compass size={20} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>
-                    <b>Generating itinerary with AI...</b>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Analyzing coordinates, ratings, and day constraints.</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                  <RefreshCw size={20} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                    <div style={{ fontWeight: '600', marginBottom: '2px' }}>Generating Itinerary with AI...</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{bankAiStatusMsg || 'Analyzing places, coordinates, and constraints...'}</div>
                   </div>
                 </div>
               )}
@@ -4971,6 +5269,102 @@ Only return the places to visit for each day in the itinerary.`;
           </div>
         </div>
       )}
+      {editingSegment && (
+        <div className="modal-backdrop" style={{ zIndex: 1400, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="modal-content" style={{ maxWidth: '440px', width: '90%', padding: '20px' }}>
+            <div className="dialog-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>🚀 Travel Mode & Duration</span>
+              </h3>
+              <button 
+                onClick={() => setEditingSegment(null)} 
+                style={{ background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1.2rem' }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', background: 'var(--bg-app)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                <div style={{ marginBottom: '2px' }}><strong>From:</strong> {editingSegment.fromName}</div>
+                <div><strong>To:</strong> {editingSegment.toName}</div>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Transport Mode</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' }}>
+                  {[
+                    { id: 'drive', label: '🚗 Drive' },
+                    { id: 'flight', label: '✈️ Flight' },
+                    { id: 'train', label: '🚆 Train' },
+                    { id: 'walk', label: '🚶 Walk' },
+                    { id: 'ferry', label: '⛴️ Ferry' }
+                  ].map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className={`btn ${editingSegment.mode === m.id ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ padding: '6px 2px', fontSize: '0.75rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}
+                      onClick={() => setEditingSegment(prev => ({ ...prev, mode: m.id }))}
+                    >
+                      <span>{m.label.split(' ')[0]}</span>
+                      <span style={{ fontSize: '0.65rem' }}>{m.label.split(' ')[1]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Custom Duration (Minutes, Optional)</label>
+                <input
+                  type="number"
+                  className="form-control"
+                  placeholder="e.g. 90 (1h 30m)"
+                  value={editingSegment.durationMinutes || ''}
+                  onChange={(e) => setEditingSegment(prev => ({ ...prev, durationMinutes: e.target.value ? parseInt(e.target.value, 10) : '' }))}
+                  style={{ fontSize: '0.85rem' }}
+                />
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Transit / Flight Notes (Optional)</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Flight UA875 / Eurostar #9012"
+                  value={editingSegment.notes || ''}
+                  onChange={(e) => setEditingSegment(prev => ({ ...prev, notes: e.target.value }))}
+                  style={{ fontSize: '0.85rem' }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setEditingSegment(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const curNotes = safeParseNotes(selectedTrip.notes);
+                    curNotes.segmentTransport = curNotes.segmentTransport || {};
+                    curNotes.segmentTransport[editingSegment.segKey] = {
+                      mode: editingSegment.mode,
+                      durationMinutes: editingSegment.durationMinutes ? parseInt(editingSegment.durationMinutes, 10) : null,
+                      notes: editingSegment.notes || ''
+                    };
+                    const updated = { ...selectedTrip, notes: JSON.stringify(curNotes) };
+                    await queueSyncAction('trips', 'update', updated);
+                    setSelectedTrip(updated);
+                    setEditingSegment(null);
+                  }}
+                >
+                  Save Travel Mode
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4992,41 +5386,172 @@ const ItineraryDay = ({
   sortedActivePlaces = [],
   dayColor,
   userAddresses = [],
-  locations = []
+  locations = [],
+  isFirstDay = false,
+  isLastDay = false
 }) => {
   const combinedPlaces = useMemo(() => {
     const homePlaces = (userAddresses || []).map(addr => ({
       id: `home_${addr.id}`,
+      address_id: addr.id,
       is_home: true,
       name: `🏠 ${addr.label}`,
       category: 'Home Address',
-      latitude: parseFloat(addr.latitude),
-      longitude: parseFloat(addr.longitude),
-      address: addr.address
+      latitude: (addr.latitude !== null && addr.latitude !== undefined && addr.latitude !== '' && !isNaN(Number(addr.latitude))) ? parseFloat(addr.latitude) : null,
+      longitude: (addr.longitude !== null && addr.longitude !== undefined && addr.longitude !== '' && !isNaN(Number(addr.longitude))) ? parseFloat(addr.longitude) : null,
+      address: addr.address || ''
     }));
     return [...places, ...homePlaces];
   }, [places, userAddresses]);
 
-  const distancesList = useMemo(() => {
-    if (items.length < 2) return [];
-    const computed = [];
-    for (let i = 1; i < items.length; i++) {
-      const p1 = combinedPlaces.find(p => p.id === items[i - 1].place_id);
-      const p2 = combinedPlaces.find(p => p.id === items[i].place_id);
-      if (p1 && p2) {
-        const key = `${p1.id}-${p2.id}`;
-        if (distances[key] !== undefined) {
-          computed.push(distances[key]);
-        } else {
-          fetchOSRMDistance(p1, p2);
-          computed.push(getHaversine(p1, p2));
-        }
-      } else {
-        computed.push(0);
+  const findUserAddress = (addrId) => {
+    if (!addrId || !Array.isArray(userAddresses)) return null;
+    const strId = String(addrId).trim();
+    return userAddresses.find(a => 
+      String(a.id) === strId || 
+      `home_${a.id}` === strId || 
+      (a.label && a.label.toLowerCase() === strId.toLowerCase()) || 
+      (a.address && a.address.toLowerCase() === strId.toLowerCase())
+    ) || null;
+  };
+
+  const notesObj = safeParseNotes(selectedTrip?.notes);
+  const hotelsObj = notesObj.hotels || {};
+  const dayEndpoints = notesObj.dayEndpoints || {};
+  const dayStayBehaviors = notesObj.dayStayBehaviors || {};
+  const segmentTransport = notesObj.segmentTransport || {};
+
+  const startFromHome = dayEndpoints[date]?.startFromHome ?? (isFirstDay && Boolean(selectedTrip?.start_address_id));
+  const lastDayGoHome = dayEndpoints[date]?.lastDayGoHome ?? (isLastDay && Boolean(selectedTrip?.stop_address_id));
+  const stayBehavior = dayStayBehaviors[date] || 'stay_night';
+
+  const hotelPlaceId = hotelsObj[date];
+  const hotelPlace = hotelPlaceId ? combinedPlaces.find(p => String(p.id) === String(hotelPlaceId)) : null;
+  const startAddrObj = (isFirstDay && selectedTrip?.start_address_id && startFromHome) ? findUserAddress(selectedTrip.start_address_id) : null;
+  const stopAddrObj = (isLastDay && selectedTrip?.stop_address_id && lastDayGoHome) ? findUserAddress(selectedTrip.stop_address_id) : null;
+
+  // Assemble complete day elements in chronological flow
+  const dayElements = useMemo(() => {
+    const elems = [];
+
+    // 1. Start from Home (Day 1)
+    if (isFirstDay && startAddrObj) {
+      elems.push({
+        place: {
+          ...startAddrObj,
+          id: `home_start_${startAddrObj.id}`,
+          name: `🏠 Start: ${startAddrObj.label}`,
+          category: 'Home Address',
+          latitude: (startAddrObj.latitude !== null && startAddrObj.latitude !== undefined && startAddrObj.latitude !== '' && !isNaN(Number(startAddrObj.latitude))) ? parseFloat(startAddrObj.latitude) : null,
+          longitude: (startAddrObj.longitude !== null && startAddrObj.longitude !== undefined && startAddrObj.longitude !== '' && !isNaN(Number(startAddrObj.longitude))) ? parseFloat(startAddrObj.longitude) : null,
+          is_home: true
+        },
+        isFixedEndpoint: true,
+        endpointType: 'start_home',
+        label: `🏠 Start from Home (${startAddrObj.label})`
+      });
+    }
+
+    // 2. Depart Stay (only on Day 2+ for stay_night or checkout)
+    if (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+      const firstItemIsHotel = items.length > 0 && items[0].place_id === hotelPlace.id;
+      if (!firstItemIsHotel) {
+        elems.push({
+          place: hotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'stay_origin',
+          label: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
+        });
       }
     }
-    return computed;
-  }, [items, distances, places]);
+
+    // 3. Sightseeing Stops
+    items.forEach(item => {
+      const stopPlace = combinedPlaces.find(p => p.id === item.place_id);
+      if (stopPlace) {
+        elems.push({ place: stopPlace, itemObj: item, isHotel: false });
+      }
+    });
+
+    // 4. Closing Endpoints (Go Home or Return to Stay)
+    if (isLastDay && stopAddrObj) {
+      elems.push({
+        place: {
+          ...stopAddrObj,
+          id: `home_stop_${stopAddrObj.id}`,
+          name: `🏠 Stop: ${stopAddrObj.label}`,
+          category: 'Home Address',
+          latitude: (stopAddrObj.latitude !== null && stopAddrObj.latitude !== undefined && stopAddrObj.latitude !== '' && !isNaN(Number(stopAddrObj.latitude))) ? parseFloat(stopAddrObj.latitude) : null,
+          longitude: (stopAddrObj.longitude !== null && stopAddrObj.longitude !== undefined && stopAddrObj.longitude !== '' && !isNaN(Number(stopAddrObj.longitude))) ? parseFloat(stopAddrObj.longitude) : null,
+          is_home: true
+        },
+        isFixedEndpoint: true,
+        endpointType: 'stop_home',
+        label: `🏠 Last Day (${stopAddrObj.label})`
+      });
+    } else if (hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
+      const lastItem = items[items.length - 1];
+      const lastItemIsHotel = lastItem && lastItem.place_id === hotelPlace.id;
+      if (!lastItemIsHotel) {
+        elems.push({
+          place: hotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'stay_return',
+          label: stayBehavior === 'late_checkin' ? `🏨 Late Check-in: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
+        });
+      }
+    }
+
+    return elems;
+  }, [isFirstDay, isLastDay, startAddrObj, stopAddrObj, hotelPlace, stayBehavior, items, combinedPlaces]);
+
+  // Compute segment distances
+  const dayDistancesList = useMemo(() => {
+    const list = [];
+    for (let i = 1; i < dayElements.length; i++) {
+      const p1 = dayElements[i - 1].place;
+      const p2 = dayElements[i].place;
+      if (p1 && p2) {
+        const segKey = `${date}_${p1.id}_${p2.id}`;
+        const segConfig = segmentTransport[segKey] || {};
+        const mode = segConfig.mode || 'drive';
+
+        if (p1.latitude === p2.latitude && p1.longitude === p2.longitude) {
+          list.push({ distance: 0, duration: 0, mode });
+          continue;
+        }
+
+        if (mode === 'flight') {
+          const hav = Math.round(getHaversine(p1, p2) * 10) / 10;
+          const customDur = segConfig.durationMinutes ? parseInt(segConfig.durationMinutes, 10) : Math.round(hav / 800 * 60) + 60;
+          list.push({ distance: hav, duration: customDur, mode: 'flight', notes: segConfig.notes });
+        } else if (mode === 'train' || mode === 'ferry') {
+          const hav = Math.round(getHaversine(p1, p2) * 10) / 10;
+          const customDur = segConfig.durationMinutes ? parseInt(segConfig.durationMinutes, 10) : Math.round(hav / (mode === 'train' ? 100 : 30) * 60);
+          list.push({ distance: hav, duration: customDur, mode, notes: segConfig.notes });
+        } else {
+          const key = `${p1.id}-${p2.id}`;
+          let distObj = distances[key];
+          if (distObj === undefined) {
+            fetchOSRMDistance(p1, p2);
+            const hav = getHaversine(p1, p2);
+            distObj = { distance: hav, duration: Math.round(hav / 40 * 60), mode };
+          } else if (typeof distObj === 'object') {
+            distObj = { ...distObj, mode };
+          } else {
+            distObj = { distance: distObj, duration: 0, mode };
+          }
+          if (segConfig.durationMinutes) {
+            distObj = { ...distObj, duration: parseInt(segConfig.durationMinutes, 10), notes: segConfig.notes };
+          }
+          list.push(distObj);
+        }
+      } else {
+        list.push({ distance: 0, duration: 0, mode: 'drive' });
+      }
+    }
+    return list;
+  }, [dayElements, distances, segmentTransport, date, fetchOSRMDistance, getHaversine]);
 
   const dayReservations = reservations.filter(r => {
     if (r.trip_id !== selectedTrip?.id) return false;
@@ -5039,7 +5564,7 @@ const ItineraryDay = ({
   });
 
   const stayRes = dayReservations.find(r => r.type === 'stay' || r.type === 'hotel');
-  const stayLocation = stayRes ? stayRes.title : '';
+  const stayLocation = hotelPlace ? hotelPlace.name : (stayRes ? stayRes.title : '');
 
   const assignedDayLocId = (() => {
     const notesObj = safeParseNotes(selectedTrip?.notes);
@@ -5059,7 +5584,7 @@ const ItineraryDay = ({
           )}
           {stayLocation && (
             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'normal' }}>
-              🏡 Stay: {stayLocation}
+              🏨 Stay: {stayLocation}
             </span>
           )}
         </h4>
@@ -5114,29 +5639,33 @@ const ItineraryDay = ({
         </div>
       )}
       
-      {items.length === 0 ? (
+      {dayElements.length === 0 ? (
         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '8px 0' }}>No stops planned for this day.</p>
       ) : (
         <div className="timeline">
-          {items.map((item, idx) => {
-            const place = combinedPlaces.find(p => p.id === item.place_id);
-            const dist = distancesList[idx - 1];
-            const dbDist = item.distance_from_prev || 0;
-            const dbDur = item.duration_from_prev || 0;
+          {dayElements.map((el, idx) => {
+            const place = el.place;
+            const dist = dayDistancesList[idx - 1];
+            const isHomePlace = el.endpointType?.includes('home') || place?.is_home === true;
 
             const allPlacesSorted = [...places.filter(p => p.is_folder !== 1 && !p.is_home)].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             const placeIdx = allPlacesSorted.findIndex(x => x.id === place?.id);
             const placeNum = placeIdx !== -1 ? placeIdx + 1 : (idx + 1);
-            const isHomePlace = place?.is_home === true;
 
             return (
-              <div key={item.id} className="timeline-item">
-                {idx > 0 && (dbDist > 0 || dist !== undefined) && (() => {
+              <div key={`${place?.id || 'elem'}-${idx}`} className="timeline-item">
+                {idx > 0 && dist !== undefined && (() => {
                   const isUsingGmaps = typeof window !== 'undefined' && 
                     localStorage.getItem('google_maps_api_key') && 
                     localStorage.getItem('google_maps_enabled') !== 'false';
+                  const distVal = typeof dist === 'object' ? dist.distance : dist;
+                  const durVal = typeof dist === 'object' ? dist.duration : 0;
+                  const mode = typeof dist === 'object' ? (dist.mode || 'drive') : 'drive';
+                  const modeIcon = mode === 'walk' ? '🚶' : (mode === 'flight' ? '✈️' : (mode === 'train' ? '🚆' : (mode === 'ferry' ? '⛴️' : '🚗')));
+
                   return (
                     <div className="timeline-distance" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      <span>{modeIcon}</span>
                       <img 
                         src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
                         style={{ width: 12, height: 12, objectFit: 'contain' }} 
@@ -5144,44 +5673,61 @@ const ItineraryDay = ({
                         title={isUsingGmaps ? "Route calculated via Google Maps" : "Route calculated via OpenStreetMap (OSRM)"}
                       />
                       <span>
-                        {dbDist > 0 
-                          ? `${dbDist} km${dbDur > 0 ? ` (${formatDuration(dbDur)})` : ''}` 
-                          : (dist && typeof dist === 'object' ? `${dist.distance} km (${formatDuration(dist.duration)})` : `${dist} km`)} to next stop
+                        {distVal} km{durVal > 0 ? ` (${formatDuration(durVal)})` : ''}
                       </span>
                     </div>
                   );
                 })()}
-                <div className="timeline-card" style={isHomePlace ? { borderLeft: '3px solid #4ade80' } : {}}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{
-                        width: '22px',
-                        height: '22px',
-                        borderRadius: '50%',
-                        background: isHomePlace ? '#4ade80' : (dayColor || 'var(--accent-primary)'),
-                        color: isHomePlace ? '#000' : '#fff',
-                        fontSize: '0.75rem',
-                        fontWeight: 'bold',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0
-                      }}>
-                        {isHomePlace ? '🏠' : placeNum}
-                      </span>
-                      <b style={{ color: 'var(--text-primary)' }}>
-                        {place ? (isHomePlace ? place.name : place.name) : 'Unknown Stop'}
-                      </b>
-                    </div>
-                    {!tripModeActive && (
-                      <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(item.id)}>
-                        <X size={12} />
-                      </button>
-                    )}
+                
+                {el.isFixedEndpoint ? (
+                  <div style={{
+                    background: isHomePlace ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' : 'rgba(139, 92, 246, 0.08)',
+                    border: isHomePlace ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' : `1px solid ${dayColor || 'var(--accent-primary)'}`,
+                    padding: '8px 12px',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: '0.8rem',
+                    color: isHomePlace ? 'var(--endpoint-color, #15803d)' : 'var(--accent-secondary)',
+                    fontWeight: 500,
+                    margin: '4px 0'
+                  }}>
+                    <span>{el.label}</span>
                   </div>
-                  {place && <span style={{ fontSize: '0.75rem', color: isHomePlace ? '#4ade80' : 'var(--text-secondary)' }}>{place.category}</span>}
-                  {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{place.notes}</p>}
-                </div>
+                ) : (
+                  <div className="timeline-card" style={isHomePlace ? { borderLeft: '3px solid #4ade80' } : {}}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{
+                          width: '22px',
+                          height: '22px',
+                          borderRadius: '50%',
+                          background: isHomePlace ? '#4ade80' : (dayColor || 'var(--accent-primary)'),
+                          color: isHomePlace ? '#000' : '#fff',
+                          fontSize: '0.75rem',
+                          fontWeight: 'bold',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}>
+                          {isHomePlace ? '🏠' : placeNum}
+                        </span>
+                        <b style={{ color: 'var(--text-primary)' }}>
+                          {place ? place.name : 'Unknown Stop'}
+                        </b>
+                      </div>
+                      {!tripModeActive && el.itemObj && (
+                        <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(el.itemObj.id)}>
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                    {place && <span style={{ fontSize: '0.75rem', color: isHomePlace ? '#4ade80' : 'var(--text-secondary)' }}>{place.category}</span>}
+                    {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{place.notes}</p>}
+                  </div>
+                )}
               </div>
             );
           })}

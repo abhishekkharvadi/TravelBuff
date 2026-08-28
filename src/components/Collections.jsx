@@ -665,183 +665,196 @@ export default function Collections({ selectedCol, setSelectedCol, onNavigateToL
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000,
-            padding: '20px'
+            padding: '16px'
           }}>
-            <div className="login-card" style={{ maxWidth: '500px', width: '100%', padding: '24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-                <h3>Edit Collection</h3>
+            <div className="login-card" style={{
+              maxWidth: '560px',
+              width: '100%',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: '24px',
+              overflow: 'hidden'
+            }}>
+              {/* Sticky Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexShrink: 0 }}>
+                <h3 style={{ margin: 0 }}>Edit Collection</h3>
                 <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowEditForm(false)} />
               </div>
 
-              <form onSubmit={handleSaveEditCollection}>
-                <div className="form-group">
-                  <label>Collection Name</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    required
-                    placeholder="e.g. Europe 2026, Beach Getaways..."
-                    value={editColName}
-                    onChange={(e) => setEditColName(e.target.value)}
-                  />
-                </div>
-
-                {/* Grouping type */}
-                <div className="form-group">
-                  <label>Classification Method</label>
-                  <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
-                      <input
-                        type="radio"
-                        checked={!editIsAuto}
-                        onChange={() => setEditIsAuto(false)}
-                        style={{ accentColor: 'var(--accent-primary)' }}
-                      />
-                      Manual Selection
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
-                      <input
-                        type="radio"
-                        checked={editIsAuto}
-                        onChange={() => setEditIsAuto(true)}
-                        style={{ accentColor: 'var(--accent-primary)' }}
-                      />
-                      Auto-Group
-                    </label>
-                  </div>
-                </div>
-
-                {editIsAuto ? (
-                  <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
-                    <label style={{ fontWeight: 'bold', marginBottom: '8px', display: 'block' }}>Auto-Classification Rules</label>
-
-                    {/* Quick Search Filter across all checkbox options */}
+              {/* Form with Scrollable Body & Sticky Footer */}
+              <form onSubmit={handleSaveEditCollection} style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0, overflow: 'hidden' }}>
+                <div style={{ flexGrow: 1, overflowY: 'auto', paddingRight: '4px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Collection Name</label>
                     <input
                       type="text"
                       className="form-control"
-                      placeholder="🔍 Quick filter options (locations, categories, tags)..."
-                      value={editAutoFilterSearch}
-                      onChange={(e) => setEditAutoFilterSearch(e.target.value)}
-                      style={{ marginBottom: '12px', fontSize: '0.8rem', height: '32px' }}
-                    />
-
-                    {/* Match Operator */}
-                    <div style={{ display: 'flex', gap: '16px', marginBottom: '14px', background: 'var(--bg-app)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Match Rule Logic:</span>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', cursor: 'pointer' }}>
-                        <input type="radio" checked={editRuleOperator === 'OR'} onChange={() => setEditRuleOperator('OR')} /> Match ANY (OR)
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', cursor: 'pointer' }}>
-                        <input type="radio" checked={editRuleOperator === 'AND'} onChange={() => setEditRuleOperator('AND')} /> Match ALL (AND)
-                      </label>
-                    </div>
-
-                    {/* 4 Criteria Blocks Grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                      {/* 1. Filter by Locations */}
-                      <div>
-                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>📁 Filter by Locations</label>
-                        <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                          {locations.filter(loc => !editAutoFilterSearch.trim() || loc.name.toLowerCase().includes(editAutoFilterSearch.toLowerCase())).map(loc => (
-                            <label key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
-                              <input
-                                type="checkbox"
-                                checked={editSelectedRuleLocIds.includes(loc.id)}
-                                onChange={() => {
-                                  if (editSelectedRuleLocIds.includes(loc.id)) {
-                                    setEditSelectedRuleLocIds(editSelectedRuleLocIds.filter(id => id !== loc.id));
-                                  } else {
-                                    setEditSelectedRuleLocIds([...editSelectedRuleLocIds, loc.id]);
-                                  }
-                                }}
-                              />
-                              {loc.name}
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 2. Filter by Categories */}
-                      <div>
-                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>🏷️ Filter by Categories</label>
-                        <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                          {Array.from(new Set([
-                            'Food', 'Hotel', 'Lodging', 'Dinner', 'Lunch', 'Snacks', 'Transportation', 'Fuel', 'Entertainment', 'Other',
-                            ...customCategories.map(c => c.name)
-                          ])).filter(cat => !editAutoFilterSearch.trim() || cat.toLowerCase().includes(editAutoFilterSearch.toLowerCase())).map(cat => (
-                            <label key={cat} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
-                              <input
-                                type="checkbox"
-                                checked={editSelectedRuleCategoryNames.includes(cat)}
-                                onChange={() => {
-                                  if (editSelectedRuleCategoryNames.includes(cat)) {
-                                    setEditSelectedRuleCategoryNames(editSelectedRuleCategoryNames.filter(c => c !== cat));
-                                  } else {
-                                    setEditSelectedRuleCategoryNames([...editSelectedRuleCategoryNames, cat]);
-                                  }
-                                }}
-                              />
-                              {cat}
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 3. Filter by Tags */}
-                      <div>
-                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>🔖 Filter by Tags</label>
-                        <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                          {tags.filter(t => !editAutoFilterSearch.trim() || t.name.toLowerCase().includes(editAutoFilterSearch.toLowerCase())).map(t => (
-                            <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
-                              <input
-                                type="checkbox"
-                                checked={editSelectedRuleTagIds.includes(t.id)}
-                                onChange={() => {
-                                  if (editSelectedRuleTagIds.includes(t.id)) {
-                                    setEditSelectedRuleTagIds(editSelectedRuleTagIds.filter(id => id !== t.id));
-                                  } else {
-                                    setEditSelectedRuleTagIds([...editSelectedRuleTagIds, t.id]);
-                                  }
-                                }}
-                              />
-                              {t.name}
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 4. Keyword Write-up */}
-                      <div>
-                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>✏️ Filter by Keyword</label>
-                        <div style={{ background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)', height: '120px' }}>
-                          <input
-                            type="text"
-                            className="form-control"
-                            placeholder="e.g. beach, cafe..."
-                            value={editRuleKeyword}
-                            onChange={(e) => setEditRuleKeyword(e.target.value)}
-                            style={{ fontSize: '0.8rem', marginBottom: '6px', height: '30px' }}
-                          />
-                          <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.2 }}>
-                            Search words in name/notes. Separate multiple with commas.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
-                    <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>Manual Selection</label>
-                    <NestedManualSelector 
-                      locations={locations}
-                      places={places}
-                      selectedItems={editSelectedLocs}
-                      onToggleItem={toggleEditLocationSelection}
+                      required
+                      placeholder="e.g. Europe 2026, Beach Getaways..."
+                      value={editColName}
+                      onChange={(e) => setEditColName(e.target.value)}
                     />
                   </div>
-                )}
 
-                <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                  {/* Grouping type */}
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Classification Method</label>
+                    <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                        <input
+                          type="radio"
+                          checked={!editIsAuto}
+                          onChange={() => setEditIsAuto(false)}
+                          style={{ accentColor: 'var(--accent-primary)' }}
+                        />
+                        Manual Selection
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                        <input
+                          type="radio"
+                          checked={editIsAuto}
+                          onChange={() => setEditIsAuto(true)}
+                          style={{ accentColor: 'var(--accent-primary)' }}
+                        />
+                        Auto-Group
+                      </label>
+                    </div>
+                  </div>
+
+                  {editIsAuto ? (
+                    <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginBottom: 0 }}>
+                      <label style={{ fontWeight: 'bold', marginBottom: '8px', display: 'block' }}>Auto-Classification Rules</label>
+
+                      {/* Quick Search Filter across all checkbox options */}
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="🔍 Quick filter options (locations, categories, tags)..."
+                        value={editAutoFilterSearch}
+                        onChange={(e) => setEditAutoFilterSearch(e.target.value)}
+                        style={{ marginBottom: '12px', fontSize: '0.8rem', height: '32px' }}
+                      />
+
+                      {/* Match Operator */}
+                      <div style={{ display: 'flex', gap: '16px', marginBottom: '14px', background: 'var(--bg-app)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Match Rule Logic:</span>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                          <input type="radio" checked={editRuleOperator === 'OR'} onChange={() => setEditRuleOperator('OR')} /> Match ANY (OR)
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                          <input type="radio" checked={editRuleOperator === 'AND'} onChange={() => setEditRuleOperator('AND')} /> Match ALL (AND)
+                        </label>
+                      </div>
+
+                      {/* 4 Criteria Blocks Grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                        {/* 1. Filter by Locations */}
+                        <div>
+                          <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>📁 Filter by Locations</label>
+                          <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                            {locations.filter(loc => !editAutoFilterSearch.trim() || loc.name.toLowerCase().includes(editAutoFilterSearch.toLowerCase())).map(loc => (
+                              <label key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={editSelectedRuleLocIds.includes(loc.id)}
+                                  onChange={() => {
+                                    if (editSelectedRuleLocIds.includes(loc.id)) {
+                                      setEditSelectedRuleLocIds(editSelectedRuleLocIds.filter(id => id !== loc.id));
+                                    } else {
+                                      setEditSelectedRuleLocIds([...editSelectedRuleLocIds, loc.id]);
+                                    }
+                                  }}
+                                />
+                                {loc.name}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 2. Filter by Categories */}
+                        <div>
+                          <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>🏷️ Filter by Categories</label>
+                          <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                            {Array.from(new Set([
+                              'Food', 'Hotel', 'Lodging', 'Dinner', 'Lunch', 'Snacks', 'Transportation', 'Fuel', 'Entertainment', 'Other',
+                              ...customCategories.map(c => c.name)
+                            ])).filter(cat => !editAutoFilterSearch.trim() || cat.toLowerCase().includes(editAutoFilterSearch.toLowerCase())).map(cat => (
+                              <label key={cat} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={editSelectedRuleCategoryNames.includes(cat)}
+                                  onChange={() => {
+                                    if (editSelectedRuleCategoryNames.includes(cat)) {
+                                      setEditSelectedRuleCategoryNames(editSelectedRuleCategoryNames.filter(c => c !== cat));
+                                    } else {
+                                      setEditSelectedRuleCategoryNames([...editSelectedRuleCategoryNames, cat]);
+                                    }
+                                  }}
+                                />
+                                {cat}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 3. Filter by Tags */}
+                        <div>
+                          <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>🔖 Filter by Tags</label>
+                          <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                            {tags.filter(t => !editAutoFilterSearch.trim() || t.name.toLowerCase().includes(editAutoFilterSearch.toLowerCase())).map(t => (
+                              <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={editSelectedRuleTagIds.includes(t.id)}
+                                  onChange={() => {
+                                    if (editSelectedRuleTagIds.includes(t.id)) {
+                                      setEditSelectedRuleTagIds(editSelectedRuleTagIds.filter(id => id !== t.id));
+                                    } else {
+                                      setEditSelectedRuleTagIds([...editSelectedRuleTagIds, t.id]);
+                                    }
+                                  }}
+                                />
+                                {t.name}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 4. Keyword Write-up */}
+                        <div>
+                          <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>✏️ Filter by Keyword</label>
+                          <div style={{ background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)', height: '120px' }}>
+                            <input
+                              type="text"
+                              className="form-control"
+                              placeholder="e.g. beach, cafe..."
+                              value={editRuleKeyword}
+                              onChange={(e) => setEditRuleKeyword(e.target.value)}
+                              style={{ fontSize: '0.8rem', marginBottom: '6px', height: '30px' }}
+                            />
+                            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.2 }}>
+                              Search words in name/notes. Separate multiple with commas.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginBottom: 0 }}>
+                      <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>Manual Selection</label>
+                      <NestedManualSelector 
+                        locations={locations}
+                        places={places}
+                        selectedItems={editSelectedLocs}
+                        onToggleItem={toggleEditLocationSelection}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Sticky Footer Action Bar */}
+                <div style={{ display: 'flex', gap: '12px', marginTop: '16px', paddingTop: '14px', borderTop: '1px solid var(--border-glass)', flexShrink: 0 }}>
                   <button type="button" className="btn btn-secondary" onClick={() => setShowEditForm(false)}>
                     Cancel
                   </button>
@@ -920,183 +933,196 @@ export default function Collections({ selectedCol, setSelectedCol, onNavigateToL
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000,
-          padding: '20px'
+          padding: '16px'
         }}>
-          <div className="login-card" style={{ maxWidth: '500px', width: '100%', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-              <h3>Create New Collection</h3>
+          <div className="login-card" style={{
+            maxWidth: '560px',
+            width: '100%',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '24px',
+            overflow: 'hidden'
+          }}>
+            {/* Sticky Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexShrink: 0 }}>
+              <h3 style={{ margin: 0 }}>Create New Collection</h3>
               <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowAddForm(false)} />
             </div>
 
-            <form onSubmit={handleCreateCollection}>
-              <div className="form-group">
-                <label>Collection Name</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  required
-                  placeholder="e.g. Europe 2026, Beach Getaways..."
-                  value={colName}
-                  onChange={(e) => setColName(e.target.value)}
-                />
-              </div>
-
-              {/* Grouping type */}
-              <div className="form-group">
-                <label>Classification Method</label>
-                <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
-                    <input
-                      type="radio"
-                      checked={!isAuto}
-                      onChange={() => setIsAuto(false)}
-                      style={{ accentColor: 'var(--accent-primary)' }}
-                    />
-                    Manual Selection
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
-                    <input
-                      type="radio"
-                      checked={isAuto}
-                      onChange={() => setIsAuto(true)}
-                      style={{ accentColor: 'var(--accent-primary)' }}
-                    />
-                    Auto-Group
-                  </label>
-                </div>
-              </div>
-
-              {isAuto ? (
-                <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
-                  <label style={{ fontWeight: 'bold', marginBottom: '8px', display: 'block' }}>Auto-Classification Rules</label>
-
-                  {/* Quick Search Filter across all checkbox options */}
+            {/* Form with Scrollable Body & Sticky Footer */}
+            <form onSubmit={handleCreateCollection} style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0, overflow: 'hidden' }}>
+              <div style={{ flexGrow: 1, overflowY: 'auto', paddingRight: '4px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Collection Name</label>
                   <input
                     type="text"
                     className="form-control"
-                    placeholder="🔍 Quick filter options (locations, categories, tags)..."
-                    value={autoFilterSearch}
-                    onChange={(e) => setAutoFilterSearch(e.target.value)}
-                    style={{ marginBottom: '12px', fontSize: '0.8rem', height: '32px' }}
-                  />
-
-                  {/* Match Operator */}
-                  <div style={{ display: 'flex', gap: '16px', marginBottom: '14px', background: 'var(--bg-app)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Match Rule Logic:</span>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', cursor: 'pointer' }}>
-                      <input type="radio" checked={ruleOperator === 'OR'} onChange={() => setRuleOperator('OR')} /> Match ANY (OR)
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', cursor: 'pointer' }}>
-                      <input type="radio" checked={ruleOperator === 'AND'} onChange={() => setRuleOperator('AND')} /> Match ALL (AND)
-                    </label>
-                  </div>
-
-                  {/* 4 Criteria Blocks Grid */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                    {/* 1. Filter by Locations */}
-                    <div>
-                      <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>📁 Filter by Locations</label>
-                      <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                        {locations.filter(loc => !autoFilterSearch.trim() || loc.name.toLowerCase().includes(autoFilterSearch.toLowerCase())).map(loc => (
-                          <label key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
-                            <input
-                              type="checkbox"
-                              checked={selectedRuleLocIds.includes(loc.id)}
-                              onChange={() => {
-                                if (selectedRuleLocIds.includes(loc.id)) {
-                                  setSelectedRuleLocIds(selectedRuleLocIds.filter(id => id !== loc.id));
-                                } else {
-                                  setSelectedRuleLocIds([...selectedRuleLocIds, loc.id]);
-                                }
-                              }}
-                            />
-                            {loc.name}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* 2. Filter by Categories */}
-                    <div>
-                      <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>🏷️ Filter by Categories</label>
-                      <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                        {Array.from(new Set([
-                          'Food', 'Hotel', 'Lodging', 'Dinner', 'Lunch', 'Snacks', 'Transportation', 'Fuel', 'Entertainment', 'Other',
-                          ...customCategories.map(c => c.name)
-                        ])).filter(cat => !autoFilterSearch.trim() || cat.toLowerCase().includes(autoFilterSearch.toLowerCase())).map(cat => (
-                          <label key={cat} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
-                            <input
-                              type="checkbox"
-                              checked={selectedRuleCategoryNames.includes(cat)}
-                              onChange={() => {
-                                if (selectedRuleCategoryNames.includes(cat)) {
-                                  setSelectedRuleCategoryNames(selectedRuleCategoryNames.filter(c => c !== cat));
-                                } else {
-                                  setSelectedRuleCategoryNames([...selectedRuleCategoryNames, cat]);
-                                }
-                              }}
-                            />
-                            {cat}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* 3. Filter by Tags */}
-                    <div>
-                      <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>🔖 Filter by Tags</label>
-                      <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                        {tags.filter(t => !autoFilterSearch.trim() || t.name.toLowerCase().includes(autoFilterSearch.toLowerCase())).map(t => (
-                          <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
-                            <input
-                              type="checkbox"
-                              checked={selectedRuleTagIds.includes(t.id)}
-                              onChange={() => {
-                                if (selectedRuleTagIds.includes(t.id)) {
-                                  setSelectedRuleTagIds(selectedRuleTagIds.filter(id => id !== t.id));
-                                } else {
-                                  setSelectedRuleTagIds([...selectedRuleTagIds, t.id]);
-                                }
-                              }}
-                            />
-                            {t.name}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* 4. Keyword Write-up */}
-                    <div>
-                      <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>✏️ Filter by Keyword</label>
-                      <div style={{ background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)', height: '120px' }}>
-                        <input
-                          type="text"
-                          className="form-control"
-                          placeholder="e.g. beach, cafe..."
-                          value={ruleKeyword}
-                          onChange={(e) => setRuleKeyword(e.target.value)}
-                          style={{ fontSize: '0.8rem', marginBottom: '6px', height: '30px' }}
-                        />
-                        <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.2 }}>
-                          Search words in name/notes. Separate multiple with commas.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
-                  <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>Manual Selection</label>
-                  <NestedManualSelector 
-                    locations={locations}
-                    places={places}
-                    selectedItems={selectedLocs}
-                    onToggleItem={toggleLocationSelection}
+                    required
+                    placeholder="e.g. Europe 2026, Beach Getaways..."
+                    value={colName}
+                    onChange={(e) => setColName(e.target.value)}
                   />
                 </div>
-              )}
 
-              <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                {/* Grouping type */}
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Classification Method</label>
+                  <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                      <input
+                        type="radio"
+                        checked={!isAuto}
+                        onChange={() => setIsAuto(false)}
+                        style={{ accentColor: 'var(--accent-primary)' }}
+                      />
+                      Manual Selection
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                      <input
+                        type="radio"
+                        checked={isAuto}
+                        onChange={() => setIsAuto(true)}
+                        style={{ accentColor: 'var(--accent-primary)' }}
+                      />
+                      Auto-Group
+                    </label>
+                  </div>
+                </div>
+
+                {isAuto ? (
+                  <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginBottom: 0 }}>
+                    <label style={{ fontWeight: 'bold', marginBottom: '8px', display: 'block' }}>Auto-Classification Rules</label>
+
+                    {/* Quick Search Filter across all checkbox options */}
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="🔍 Quick filter options (locations, categories, tags)..."
+                      value={autoFilterSearch}
+                      onChange={(e) => setAutoFilterSearch(e.target.value)}
+                      style={{ marginBottom: '12px', fontSize: '0.8rem', height: '32px' }}
+                    />
+
+                    {/* Match Operator */}
+                    <div style={{ display: 'flex', gap: '16px', marginBottom: '14px', background: 'var(--bg-app)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Match Rule Logic:</span>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                        <input type="radio" checked={ruleOperator === 'OR'} onChange={() => setRuleOperator('OR')} /> Match ANY (OR)
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                        <input type="radio" checked={ruleOperator === 'AND'} onChange={() => setRuleOperator('AND')} /> Match ALL (AND)
+                      </label>
+                    </div>
+
+                    {/* 4 Criteria Blocks Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                      {/* 1. Filter by Locations */}
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>📁 Filter by Locations</label>
+                        <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                          {locations.filter(loc => !autoFilterSearch.trim() || loc.name.toLowerCase().includes(autoFilterSearch.toLowerCase())).map(loc => (
+                            <label key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedRuleLocIds.includes(loc.id)}
+                                onChange={() => {
+                                  if (selectedRuleLocIds.includes(loc.id)) {
+                                    setSelectedRuleLocIds(selectedRuleLocIds.filter(id => id !== loc.id));
+                                  } else {
+                                    setSelectedRuleLocIds([...selectedRuleLocIds, loc.id]);
+                                  }
+                                }}
+                              />
+                              {loc.name}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 2. Filter by Categories */}
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>🏷️ Filter by Categories</label>
+                        <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                          {Array.from(new Set([
+                            'Food', 'Hotel', 'Lodging', 'Dinner', 'Lunch', 'Snacks', 'Transportation', 'Fuel', 'Entertainment', 'Other',
+                            ...customCategories.map(c => c.name)
+                          ])).filter(cat => !autoFilterSearch.trim() || cat.toLowerCase().includes(autoFilterSearch.toLowerCase())).map(cat => (
+                            <label key={cat} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedRuleCategoryNames.includes(cat)}
+                                onChange={() => {
+                                  if (selectedRuleCategoryNames.includes(cat)) {
+                                    setSelectedRuleCategoryNames(selectedRuleCategoryNames.filter(c => c !== cat));
+                                  } else {
+                                    setSelectedRuleCategoryNames([...selectedRuleCategoryNames, cat]);
+                                  }
+                                }}
+                              />
+                              {cat}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 3. Filter by Tags */}
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>🔖 Filter by Tags</label>
+                        <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                          {tags.filter(t => !autoFilterSearch.trim() || t.name.toLowerCase().includes(autoFilterSearch.toLowerCase())).map(t => (
+                            <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedRuleTagIds.includes(t.id)}
+                                onChange={() => {
+                                  if (selectedRuleTagIds.includes(t.id)) {
+                                    setSelectedRuleTagIds(selectedRuleTagIds.filter(id => id !== t.id));
+                                  } else {
+                                    setSelectedRuleTagIds([...selectedRuleTagIds, t.id]);
+                                  }
+                                }}
+                              />
+                              {t.name}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 4. Keyword Write-up */}
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>✏️ Filter by Keyword</label>
+                        <div style={{ background: 'var(--bg-app)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)', height: '120px' }}>
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="e.g. beach, cafe..."
+                            value={ruleKeyword}
+                            onChange={(e) => setRuleKeyword(e.target.value)}
+                            style={{ fontSize: '0.8rem', marginBottom: '6px', height: '30px' }}
+                          />
+                          <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.2 }}>
+                            Search words in name/notes. Separate multiple with commas.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginBottom: 0 }}>
+                    <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>Manual Selection</label>
+                    <NestedManualSelector 
+                      locations={locations}
+                      places={places}
+                      selectedItems={selectedLocs}
+                      onToggleItem={toggleLocationSelection}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Sticky Footer Action Bar */}
+              <div style={{ display: 'flex', gap: '12px', marginTop: '16px', paddingTop: '14px', borderTop: '1px solid var(--border-glass)', flexShrink: 0 }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowAddForm(false)}>
                   Cancel
                 </button>

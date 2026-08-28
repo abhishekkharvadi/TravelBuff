@@ -386,10 +386,14 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
   useEffect(() => {
     if (userAddresses.length > 0 && !homeAddress) {
       const defaultAddr = userAddresses.find(a => a.is_default === 1) || userAddresses[0];
-      if (defaultAddr && defaultAddr.address) {
-        setHomeAddress(defaultAddr.address);
-        if (defaultAddr.latitude && defaultAddr.longitude) {
-          setHomeCoords({ lat: defaultAddr.latitude, lon: defaultAddr.longitude });
+      if (defaultAddr) {
+        if (defaultAddr.address) {
+          setHomeAddress(defaultAddr.address);
+        }
+        if (defaultAddr.latitude !== null && defaultAddr.latitude !== undefined && defaultAddr.latitude !== '' &&
+            defaultAddr.longitude !== null && defaultAddr.longitude !== undefined && defaultAddr.longitude !== '' &&
+            !isNaN(Number(defaultAddr.latitude)) && !isNaN(Number(defaultAddr.longitude))) {
+          setHomeCoords({ lat: parseFloat(defaultAddr.latitude), lon: parseFloat(defaultAddr.longitude) });
         }
       }
     }
@@ -2222,8 +2226,11 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
                             const val = e.target.value;
                             setHomeAddress(val);
                             const selectedObj = userAddresses.find(a => (a.address || a.label) === val || a.id === val);
-                            if (selectedObj && selectedObj.latitude && selectedObj.longitude) {
-                              setHomeCoords({ lat: selectedObj.latitude, lon: selectedObj.longitude });
+                            if (selectedObj &&
+                                selectedObj.latitude !== null && selectedObj.latitude !== undefined && selectedObj.latitude !== '' &&
+                                selectedObj.longitude !== null && selectedObj.longitude !== undefined && selectedObj.longitude !== '' &&
+                                !isNaN(Number(selectedObj.latitude)) && !isNaN(Number(selectedObj.longitude))) {
+                              setHomeCoords({ lat: parseFloat(selectedObj.latitude), lon: parseFloat(selectedObj.longitude) });
                             }
                           }}
                         >

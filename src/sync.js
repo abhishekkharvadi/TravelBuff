@@ -59,16 +59,19 @@ export function connectWebSocket(getToken) {
   }
 
   ws.onopen = async () => {
-    console.log('[WebSocket Sync] Connected. Performing initial pull...');
+    console.log('[WebSocket Sync] Connected. Flushing offline queue before pull...');
     try {
       syncStatusCallback('syncing');
+      // 1. Flush offline changes to server first so server state is up to date
+      await performSync(token);
+      // 2. Perform fresh pull from server
       await populateLocalDb(token);
       syncStatusCallback('synced');
     } catch (err) {
       if (err?.message === 'AUTH_EXPIRED') {
         notifyAuthExpired();
       } else {
-        console.error('[WebSocket Sync] Initial pull failed:', err);
+        console.error('[WebSocket Sync] Initial sync failed:', err);
         syncStatusCallback('error');
       }
     }
@@ -80,6 +83,7 @@ export function connectWebSocket(getToken) {
       if (message.type === 'SYNC_REQUIRED') {
         console.log('[WebSocket Sync] Database update notification received. Refreshing...');
         const activeToken = currentGetToken ? currentGetToken() : localStorage.getItem('tb_token');
+        await performSync(activeToken);
         await populateLocalDb(activeToken);
       }
     } catch (err) {
@@ -163,6 +167,8 @@ export async function performSync(token) {
       await db.sync_queue.bulkDelete(ids);
       syncStatusCallback('synced');
       console.log(`[PWA Sync] Successfully synchronized ${queue.length} offline actions.`);
+      // Pull fresh data from server now that changes have landed
+      await populateLocalDb(activeToken);
     } else if (response.status === 401 || response.status === 403) {
       notifyAuthExpired();
       console.warn('[PWA Sync] Authentication expired or rejected during synchronization.');
@@ -187,12 +193,14 @@ export function initSyncManager(getToken) {
   connectWebSocket(getToken);
 
   // Bind online event listener
-  window.addEventListener('online', () => {
+  window.addEventListener('online', async () => {
     console.log('[PWA Sync] Device is online. Attempting synchronization...');
+    const activeToken = getToken ? getToken() : localStorage.getItem('tb_token');
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectWebSocket(getToken);
     }
-    performSync(getToken());
+    await performSync(activeToken);
+    await populateLocalDb(activeToken);
   });
 
   window.addEventListener('offline', () => {
@@ -201,13 +209,14 @@ export function initSyncManager(getToken) {
   });
 
   // Re-establish socket and trigger sync instantly on app resume / tab visibility focus
-  window.addEventListener('visibilitychange', () => {
+  window.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible') {
       console.log('[PWA Sync] App became visible. Ensuring WebSocket connection and syncing...');
+      const activeToken = getToken ? getToken() : localStorage.getItem('tb_token');
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         connectWebSocket(getToken);
       }
-      performSync(getToken());
+      await performSync(activeToken);
     }
   });
 

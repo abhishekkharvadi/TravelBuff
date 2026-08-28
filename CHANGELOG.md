@@ -2,6 +2,75 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.3.0] - 2026-08-28
+
+### 🚀 Major Features & Itinerary Enhancements
+- **Timeline Endpoint Checkboxes & Daily Accommodation Management**:
+  - **Day 1 Start from Home Checkbox**: Added `[x] Start from Home` toggle on Day 1. When checked, incorporates the starting home address as the origin node in the day's timeline and route navigation.
+  - **Daily Stay Behavior Selectors**: Configurable per-day stay behavior options:
+    - `🔄 Stay here at night` *(Default round-trip loop: departs stay in the morning, returns at night)*
+    - `➡️ Checkout from Hotel` *(Morning departure only; day concludes at the last stop or moving onward to next destination)*
+    - `🏁 Late check-in (sightseeing first)` *(Direct sightseeing during the day, checking in to stay in the evening)*
+  - **Final Day Go Home Checkbox**: Added `[x] Last Day, Go Home` toggle on the final itinerary day to route from the last stop/stay back to the designated stop home address.
+- **Trip Mode Synchronization & Daily Endpoint Flow**:
+  - **Full Chronological Timeline**: Updated `TripMode.jsx` to render the complete daily flow matching the Planning Workspace:
+    - `🏠 Start from Home` origin on Day 1 (with direct navigation button).
+    - Daily accommodation stops (`🏨 Stay: <Hotel Name>`, morning departures on Day 2+, checkout, and late check-in).
+    - `🏠 Last Day: Home` return endpoint on the final day (with direct navigation button).
+  - **Clean Two-Row Header**:
+    - **Row 1**: `Day X` title on the left and the interactive `Day (Date) Selector` dropdown on the right.
+    - **Row 2**: `📍 Location` badge and `🏨 Stay: <Hotel Name>` badge (with responsive CSS ellipsis truncation and full-name tooltip) displayed side-by-side.
+- **Mobile Planning MapView & Responsive Lifecycle Fixes**:
+  - **Collections Modal Sticky Header & Footer (`Collections.jsx`)**: Upgraded both *Edit Collection* and *Create Collection* dialogs with fixed maximum height (`maxHeight: 90vh`), sticky top header, independently scrollable rule/place body, and a pinned sticky action footer (Cancel / Save), ensuring buttons are always accessible on short screens and mobile devices.
+  - **Day 1 Map Stay Pin Rendering**: Fixed MapView marker loop to ensure Day 1 evening accommodation stay pins render on the map, suppressing duplicate pins only when a morning stay origin was already placed at the exact same location on Day 2+.
+  - **ResizeObserver & `isVisible` Propagation (`MapView.jsx`)**: Attached a dynamic `ResizeObserver` and `isVisible` signal to automatically trigger `map.invalidateSize()` (Leaflet) and `google.maps.event.trigger(map, 'resize')` (Google Maps) whenever the map container transitions from `0x0` hidden state (`display: none`) to visible on mobile devices.
+  - **Auto FitBounds on Tab Toggle**: Re-evaluates viewport boundaries (`map.fitBounds`) with mobile-optimized padding when switching to the "Map" pane in Planning Workspace, ensuring all scheduled pins and routes display centered without grey tiles or offset views.
+  - **Mobile Map Container Height Optimization (`TripPlanning.jsx`)**: Standardized mobile map viewport height (`calc(100vh - 190px)`, min-height `350px`) for edge-to-edge touch interactivity.
+- **Offline-to-Online Bidirectional Sync Resilience**:
+  - **SQLite Type-Coercion in Dependent Queries (`server.js`)**: Fixed SQLite query filters (`/api/itineraries/:tripId`, `/api/reservations/:tripId`, `/api/expenses/:tripId`, `/api/trips/:tripId/rates`, and `/api/trips/:tripId/notes`) using `CAST(trip_id AS TEXT) = ? OR trip_id = ?`, preventing SQLite from returning empty sets when queried with string URL parameters.
+  - **Prioritized Itinerary Prefetch (`clientDb.js`)**: Reordered `populateLocalDb` to fetch and store `itinerary_items` immediately before long sequential PDF attachment downloads.
+  - **Fixed `OnboardingChecklist.jsx` Reconnect Crash**: Corrected invalid table accessor (`db.markdowns` -> `db.saved_markdowns`), eliminating uncaught `TypeError: Cannot read properties of undefined (reading 'count')` that interrupted Dexie live query reactivity on server reconnect.
+  - **Resilient Multi-Format `activeDayIndex` & Sightseeing Stop Placeholders (`TripMode.jsx`)**: Guaranteed that `activeDayIndex` always identifies Day 1 without falling back to `-1`, and ensured stops render placeholder items even if place catalog synchronization is momentarily pending.
+- **Offline-First Resilience & IndexedDB Synchronization**:
+  - **Type-Safe ID Matching**: Standardized entity ID matching across `trips`, `user_addresses`, `places`, `hotels`, and `locations` to string-safe comparisons (`String(a.id) === String(b.id)`), resolving integer-vs-string type discrepancies between SQLite and local Dexie/IndexedDB storage.
+  - **Dexie Local Update Fallback**: Enhanced `queueSyncAction` in `clientDb.js` with type-coercion and `put` fallback when `db[table].update` affects 0 rows, guaranteeing immediate offline mutation persistence.
+  - **Stay Selection Dropdown Retention**: Ensured currently selected hotel options are always preserved in `<select>` dropdowns regardless of location filter scope, preventing selections from resetting to `-- Unassigned --` offline.
+- **Itinerary Chronology & UI Refinements**:
+  - **Day 1 Route & Origin Fixes**: Suppressed redundant morning hotel departures on Day 1 (traveler starts from home or directly from the first stop, concluding at the hotel in the evening).
+  - **Standardized Stay Labels**: Simplified accommodation labels to clean `🏨 Stay: <Hotel Name>` across Planning Day Cards, Chronological Daily Itinerary, and Trip Mode.
+- **Multi-Modal Transport Modes & Curved Flight Arcs**:
+  - Added per-segment transport mode configuration (🚗 Drive, ✈️ Flight, 🚆 Train, 🚶 Walk, ⛴️ Ferry).
+  - **Arched Flight Paths**: Generates curved geodesic parabolic flight arcs on both Google Maps and Leaflet for air travel segments.
+  - **Rail & Ferry Tracks**: Renders styled dashed paths for trains and ferries.
+  - **Custom Transit Durations & Notes**: Allows custom duration overrides (in minutes) and optional travel notes (e.g. flight numbers, train booking references) accessible via an interactive segment settings modal.
+- **Dexie & Offline Synchronization Persistence**:
+  - All endpoint selections, stay behaviors, segment transport modes, custom durations, and notes persist into Dexie and sync to SQLite via `trip.notes`. No repeated recalculations upon reopening trips.
+
+## [v7.2.2] - 2026-08-28
+
+### 🛠️ Bug Fixes & Resiliency Improvements
+- **AI Trip Planner JSON Parsing & Response Resilience**:
+  - Fixed `SyntaxError: JSON.parse: unexpected character at line 1 column 1...` by reading AI endpoint responses as text before parsing and displaying friendly error diagnostics on HTTP/server failures.
+  - Upgraded backend `callAiProvider` with heuristic JSON extraction (automatically extracting `[...]` or `{...}` blocks and stripping markdown fences or conversational preambles).
+  - Enabled native **`responseMimeType: 'application/json'`** mode for Gemini API to enforce strict JSON structure at the model level.
+  - Refined AI prompt construction in Planning Workspace by providing explicit few-shot JSON templates and removing ambiguous phrasing that prompted plain-text bullet lists.
+  - Added live staged progress indicators (`📡 Connecting...`, `📍 Analyzing...`, `✨ Scheduling...`, `💾 Saving...`) to both the Places Bank AI modal and the New Trip AI wizard to provide real-time backend status transparency.
+  - Surfaced clear, actionable guidance on AI high demand / 503 / 429 rate limit errors (suggesting a retry or choosing a different model in Settings -> AI Settings without hardcoded model references).
+- **Workspace Infinite Render Loop Fix**:
+  - Resolved `Warning: Maximum update depth exceeded` in `TripPlanning.jsx` by checking previous selection state before calling `setSelectedTrip(null)`.
+- **Workspace Pin Coloring & Day-Move Transition Fix**:
+  - Resolved inconsistent pin coloring in Planning Workspace (where Day 3 pins displayed green rather than purple) by adopting flexible day index matching across ISO date strings and day numbers.
+  - Added explicit `color` attributes and date-scoped point IDs (`${place.id}_${item.id}_${item.date}`) to map points, ensuring moving a stop from one day to another instantly updates pin colors and route paths on both Google Maps and Leaflet.
+- **Comprehensive Start, Stay, and Stop Daily Route Navigation**:
+  - Connected daily navigation routing across **Start Address**, **Stay (Hotel/Accommodation)**, intermediate sightseeing stops, and **Stop Address (Home/Airport)**.
+  - Automatically structures round-trip loops for intermediate days ($Stay \rightarrow Stops \rightarrow Stay$) and point-to-point journeys on Day 1 ($Start \rightarrow Stay \rightarrow Stops \rightarrow Stay$) and Final Day ($Stay \rightarrow Stops \rightarrow Stop\ Address$).
+  - Fixed route disappearance when selecting Stays by integrating accommodation coordinates into daily route points and handling non-geocoded places smoothly.
+- **Home Address Blank Fields & `toFixed` TypeError Fix**:
+  - Fixed `TypeError: e.latitude.toFixed is not a function` when editing and saving saved home addresses without coordinates.
+  - Full support for optional/blank values in `Address` and `Latitude / Longitude` fields (only `Label` is mandatory).
+  - Added defensive numeric validation (`Number(addr.latitude).toFixed(4)`) to the Saved Home Addresses card in Settings.
+  - Guarded `homePlaces` coordinate mapping in Planning Workspace and Trip Mode to prevent `NaN` coordinates when addresses do not have latitude/longitude set.
+
 ## [v7.2.1] - 2026-08-27
 
 ### 🛠️ Bug Fixes & Workspace Enhancements

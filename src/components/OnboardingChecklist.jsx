@@ -5,18 +5,19 @@ import { CheckCircle2, Circle, ChevronDown, ChevronUp, Sparkles, MapPin, Compass
 
 export default function OnboardingChecklist({ onOpenTour, onNavigateTab, onOpenImport, isVisible, onClose, userId }) {
   // Dexie live queries for dynamic reactive milestone tracking
-  const locationsCount = useLiveQuery(() => db.locations.count(), []) || 0;
+  const locationsCount = useLiveQuery(() => db.locations ? db.locations.count() : 0, []) || 0;
   const customCollectionsCount = useLiveQuery(async () => {
     try {
+      if (!db.collections) return 0;
       const cols = await db.collections.toArray();
       return cols.filter(c => !c.isSystem && !c.id?.startsWith('system-')).length;
     } catch (_) {
       return 0;
     }
   }, []) || 0;
-  const markdownsCount = useLiveQuery(() => db.markdowns ? db.markdowns.count() : 0, []) || 0;
-  const tripsCount = useLiveQuery(() => db.trips.count(), []) || 0;
-  const homeAddressesCount = useLiveQuery(() => db.homeAddresses ? db.homeAddresses.count() : db.user_addresses ? db.user_addresses.count() : 0, []) || 0;
+  const markdownsCount = useLiveQuery(() => db.saved_markdowns ? db.saved_markdowns.count() : 0, []) || 0;
+  const tripsCount = useLiveQuery(() => db.trips ? db.trips.count() : 0, []) || 0;
+  const homeAddressesCount = useLiveQuery(() => db.user_addresses ? db.user_addresses.count() : 0, []) || 0;
 
   const collapsedKey = userId ? `tb_checklist_collapsed_${userId}` : 'tb_checklist_collapsed';
 

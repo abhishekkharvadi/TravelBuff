@@ -1571,7 +1571,10 @@ async function callAiProvider({ provider = 'Gemini', apiKey = '', model = 'gemin
             parts: [{
               text: `${systemPrompt}\n\n${userMessage}`
             }]
-          }]
+          }],
+          generationConfig: {
+            responseMimeType: 'application/json'
+          }
         },
         {
           headers: {
@@ -1614,32 +1617,72 @@ async function callAiProvider({ provider = 'Gemini', apiKey = '', model = 'gemin
       const response = await axios.post(targetUrl, {
         model: cleanModel,
         prompt: `${systemPrompt}\n\n${userMessage}`,
+        format: 'json',
         stream: false
       });
       responseText = response.data?.response || response.data?.choices?.[0]?.message?.content || '';
     }
   } catch (err) {
-    const errorMsg = err.response?.data?.error?.message || err.response?.data?.message || err.message || 'AI request failed';
+    let errorMsg = err.response?.data?.error?.message || err.response?.data?.message || err.message || 'AI request failed';
+    if (typeof errorMsg === 'string' && (errorMsg.includes('high demand') || errorMsg.includes('spikes in demand') || errorMsg.includes('Resource has been exhausted') || err.response?.status === 503 || err.response?.status === 429)) {
+      errorMsg = 'The AI model is currently experiencing temporary high demand from upstream providers. Please retry in a few moments or select a different model in Settings -> AI Settings.';
+    }
     throw new Error(errorMsg);
   }
 
-  let cleanedText = responseText.trim();
-  if (cleanedText.startsWith('```json')) {
-    cleanedText = cleanedText.substring(7);
-  }
-  if (cleanedText.startsWith('```')) {
-    cleanedText = cleanedText.substring(3);
-  }
-  if (cleanedText.endsWith('```')) {
-    cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-  }
-  cleanedText = cleanedText.trim();
+  // Defensive JSON parsing
+  function extractJson(text) {
+    if (!text || typeof text !== 'string') throw new Error('Empty AI response');
+    let str = text.trim();
 
-  try {
-    return JSON.parse(cleanedText);
-  } catch (e) {
-    throw new Error('AI returned invalid JSON: ' + responseText.substring(0, 300));
+    // 1. Strip markdown code block fences if present
+    const codeBlockMatch = str.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (codeBlockMatch && codeBlockMatch[1]) {
+      str = codeBlockMatch[1].trim();
+    } else {
+      if (str.startsWith('```json')) str = str.substring(7);
+      if (str.startsWith('```')) str = str.substring(3);
+      if (str.endsWith('```')) str = str.substring(0, str.length - 3);
+      str = str.trim();
+    }
+
+    // 2. Direct parse attempt
+    try {
+      return JSON.parse(str);
+    } catch (e) {
+      // Continue to heuristic extraction
+    }
+
+    // 3. Find outermost [ ... ] or { ... }
+    const firstBracket = str.indexOf('[');
+    const lastBracket = str.lastIndexOf(']');
+    const firstBrace = str.indexOf('{');
+    const lastBrace = str.lastIndexOf('}');
+
+    let candidate = '';
+    if (firstBracket !== -1 && lastBracket > firstBracket && (firstBrace === -1 || firstBracket < firstBrace)) {
+      candidate = str.substring(firstBracket, lastBracket + 1);
+    } else if (firstBrace !== -1 && lastBrace > firstBrace) {
+      candidate = str.substring(firstBrace, lastBrace + 1);
+    }
+
+    if (candidate) {
+      try {
+        return JSON.parse(candidate);
+      } catch (e) {
+        const fixedCandidate = candidate.replace(/,\s*([}\]])/g, '$1');
+        try {
+          return JSON.parse(fixedCandidate);
+        } catch (err2) {
+          // Fall through
+        }
+      }
+    }
+
+    throw new Error('AI returned invalid JSON: ' + text.substring(0, 300));
   }
+
+  return extractJson(responseText);
 }
 
 app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
@@ -1660,40 +1703,39 @@ app.post('/api/import/extract-ai', authenticateToken, async (req, res) => {
     const model = aiSettings.model || 'gemini-1.5-pro';
     const endpoint = aiSettings.endpointUrl || '';
 
-    const homeLat = homeCoords?.lat;
-    const homeLng = homeCoords?.lng || homeCoords?.lon;
-    const homeContext = (homeLat && homeLng) 
-      ? `Starting and Ending Home Waypoint Coordinates: Latitude = ${homeLat}, Longitude = ${homeLng}. Use this home coordinate as the starting and ending point when planning the day-wise itinerary starting in the morning.`
-      : '';
+    const systemPrompt = `You are a travel planning and geocoding specialist. Your task is to accurately resolve a list of travel places extracted from a travel guide or itinerary.
+For each place in the list, determine:
+- exact place name (cleaned of extraneous text)
+- category (e.g. Attraction, Dining, Lodging, Transit, Shopping, Nature, Museum, Landmark, etc.)
+- approximate or exact address (using the context of the city, state, country, and guide content)
+- estimated latitude and longitude coordinates if confident
+- concise 1-2 sentence description
+- day number (assign places to sequential days 1, 2, 3... based on geographical proximity and morning start from home coordinates if provided)
 
-    const markdownContext = markdown ? `\n\nFull Travel Guide Document Context:\n\"\"\"\n${markdown.slice(0, 12000)}\n\"\"\"` : '';
+You MUST respond ONLY with a JSON array of resolved place objects matching this structure:
+[
+  {
+    "name": "Eiffel Tower",
+    "category": "Attraction",
+    "address": "Champ de Mars, 5 Av. Anatole France, 75007 Paris, France",
+    "latitude": 48.8584,
+    "longitude": 2.2945,
+    "description": "Iconic wrought-iron lattice tower on the Champ de Mars.",
+    "day": 1
+  }
+]
+Do not output markdown code fences or conversational text. Return only valid raw JSON.`;
 
-    const systemPrompt = `You are a travel geocoding, landmark cleaning, and itinerary extraction assistant. Refine the input list of places and create an optimized day-wise itinerary using both the place list and full guide document context.
-Context: City = "${city || ''}", State = "${state || ''}", Country = "${country || ''}".
-${homeContext}
+    const userMessage = `${prompt ? `User instructions: ${prompt}\n\n` : ''}Context:
+City: ${city || 'Not specified'}
+State: ${state || 'Not specified'}
+Country: ${country || 'Not specified'}
+Home Coordinates: ${homeCoords ? `Lat: ${homeCoords.lat}, Lon: ${homeCoords.lon}` : 'Not specified'}
 
-Instructions:
-1. Parse the full guide document context (if provided) to extract exact Day assignments (e.g. Day 1, Day 2 from headings like "# Day 1: Old City") and appropriate categories for each place.
-2. Clean and normalize place names (e.g. convert conversational or action phrases like "Get a bird's eye view from Golconda Fort" to clean landmark titles like "Golconda Fort").
-3. Extract geocoding details (latitude, longitude, formatted address, category, short 1-2 sentence description) for each place.
-4. Assign day numbers (1, 2, 3, etc.) based on markdown Day headings if present, or geographical proximity.
-5. Classify the item type: set "type": "place" for places of visit, or "type": "location" if the item represents a top-level city/region folder.
+Places to resolve (${places.length} items):
+${JSON.stringify(places, null, 2)}
 
-Expected Output Format: JSON array of objects (or JSON object containing a "places" array), where each place object contains:
-- id: match the place's input id exactly
-- name: clean landmark place name
-- address: full formatted address
-- latitude: number (e.g. 17.3850)
-- longitude: number (e.g. 78.4867)
-- category: one of 'Attraction', 'Dining', 'Lodging', 'Transit', 'Shopping', 'Other'
-- description: a short 1-2 sentence description summarizing what this place is
-- day: integer number representing the day of visit (1, 2, 3, etc.)
-- type: 'place' or 'location'
-- isRelevant: boolean (true if valid visitable place, false if header or general advice)
-
-Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`\`\`json).`;
-
-    const userMessage = `${prompt || 'Extract geocoding details, categories, and day-wise itinerary for these places.'}${markdownContext}\n\nPlaces Input:\n${JSON.stringify(places.map(p => ({ id: p.id, name: p.name, description: p.description || '', day: p.day || null, type: p.type || 'place' })), null, 2)}`;
+${markdown ? `Travel Guide Reference Context (excerpt):\n${markdown.substring(0, 4000)}` : ''}`;
 
     const parsedResults = await callAiProvider({
       provider,
@@ -1706,7 +1748,7 @@ Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`
 
     res.json(parsedResults);
   } catch (err) {
-    console.error('AI extraction API error:', err.message);
+    console.error('AI extract error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1729,24 +1771,35 @@ app.post('/api/ai/generate-trip', authenticateToken, async (req, res) => {
     const model = aiSettings.model || 'gemini-1.5-pro';
     const endpoint = aiSettings.endpointUrl || '';
 
-    const systemPrompt = `You are a travel planning assistant. Generate a day-wise itinerary for a trip.
+    const systemPrompt = `You are a travel planning assistant. Generate an optimal day-wise itinerary for a ${lengthDays || 3}-day trip.
 You are given a list of existing places of visit (with their names, ratings, and geocoordinates/locations).
-Trip Length: ${lengthDays || 3} days.
-The activities returned MUST only be assignments of the existing place names provided in the list. Do not invent new places or write descriptions.
-If any day specifies an assigned location constraint, you must ONLY assign places belonging to that assigned location for that day.
-If not all places can fit in the trip itinerary, then only choose the important ones and ones which have >4 star ratings.
 
-Your response MUST be a JSON array of objects representing days. Each day object must contain:
-- day: number (e.g. 1, 2)
-- title: day title or highlight (e.g. "Exploring the Historic Center")
-- activities: an array of strings representing the names of the places of visit to cover on this day (exact matches from the provided list, ordered optimally by geocoordinates).
+Rules:
+1. The activities returned MUST only be assignments of the existing place names provided in the list. Do not invent new places or write descriptions.
+2. If any day specifies an assigned location constraint, you must ONLY assign places belonging to that assigned location for that day.
+3. If not all places can fit in the trip itinerary, choose the most important ones and ones which have >4 star ratings.
+4. Order activities within each day optimally based on geographical proximity.
 
-Respond ONLY with valid JSON. Do not include markdown code block syntax (like \`\`\`json).`;
+Your response MUST be a JSON array of objects representing days. Example format:
+[
+  {
+    "day": 1,
+    "title": "Exploring the Historic Center",
+    "activities": ["Louvre Museum", "Notre-Dame Cathedral", "Sainte-Chapelle"]
+  },
+  {
+    "day": 2,
+    "title": "Iconic Landmarks & Eiffel Tower",
+    "activities": ["Arc de Triomphe", "Eiffel Tower", "Champ de Mars"]
+  }
+]
+
+CRITICAL: Respond ONLY with valid JSON. Do NOT include markdown code block syntax, preamble, or conversational commentary.`;
 
     const userMessage = `${prompt ? prompt : `Assign these places of visit to a ${lengthDays}-day itinerary based on their locations and coordinates:`}
-Places List: ${JSON.stringify(placesList || [])}
-Locations: ${JSON.stringify(locations || [])}
-Collections: ${JSON.stringify(collections || [])}`;
+${placesList && placesList.length > 0 && !prompt?.includes('Places Bank List') ? `\nPlaces List: ${JSON.stringify(placesList)}` : ''}
+${locations && locations.length > 0 ? `\nLocations: ${JSON.stringify(locations)}` : ''}
+${collections && collections.length > 0 ? `\nCollections: ${JSON.stringify(collections)}` : ''}`;
 
     const parsedJson = await callAiProvider({
       provider,
@@ -2318,7 +2371,8 @@ app.delete('/api/trips/:id', authenticateToken, async (req, res) => {
 // Trip Currency Rates
 app.get('/api/trips/:tripId/rates', authenticateToken, async (req, res) => {
   try {
-    const list = await db.all('SELECT * FROM trip_currency_rates WHERE trip_id = ?', [req.params.tripId]);
+    const strTripId = String(req.params.tripId);
+    const list = await db.all('SELECT * FROM trip_currency_rates WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?', [strTripId, req.params.tripId]);
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2328,7 +2382,8 @@ app.get('/api/trips/:tripId/rates', authenticateToken, async (req, res) => {
 // Trip Notes
 app.get('/api/trips/:tripId/notes', authenticateToken, async (req, res) => {
   try {
-    const list = await db.all('SELECT * FROM trip_notes WHERE trip_id = ? ORDER BY created_at ASC', [req.params.tripId]);
+    const strTripId = String(req.params.tripId);
+    const list = await db.all('SELECT * FROM trip_notes WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ? ORDER BY created_at ASC', [strTripId, req.params.tripId]);
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2338,27 +2393,30 @@ app.get('/api/trips/:tripId/notes', authenticateToken, async (req, res) => {
 // Helper: Tag propagation on completed trip
 async function autoPropagateVisited(tripId, userId) {
   // Find all places associated with this trip's itinerary
+  const strTripId = String(tripId);
   const items = await db.all(
-    `SELECT DISTINCT place_id FROM itinerary_items WHERE trip_id = ?`,
-    [tripId]
+    `SELECT DISTINCT place_id FROM itinerary_items WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?`,
+    [strTripId, tripId]
   );
   
   const placeIds = items.map(i => i.place_id);
 
   if (placeIds.length === 0) return;
 
-  // Find all location IDs for these places
+  // Mark places as visited
   const placeholders = placeIds.map(() => '?').join(',');
-  const placesRows = await db.all(
-    `SELECT DISTINCT location_id FROM places WHERE id IN (${placeholders})`,
+  await db.run(
+    `UPDATE places SET visited = 1 WHERE id IN (${placeholders})`,
     placeIds
   );
-  const locationIds = placesRows.map(p => p.location_id);
 
-  // Propagate visited status in batch (no tags)
-  for (const pId of placeIds) {
-    await db.run(`UPDATE places SET visited = 1 WHERE id = ?`, [pId]);
-  }
+  // Mark parent locations as visited
+  const locationRows = await db.all(
+    `SELECT DISTINCT location_id FROM places WHERE id IN (${placeholders}) AND location_id IS NOT NULL`,
+    placeIds
+  );
+
+  const locationIds = locationRows.map(r => r.location_id);
 
   for (const locId of locationIds) {
     await db.run(`UPDATE locations SET visited = 1 WHERE id = ?`, [locId]);
@@ -2368,11 +2426,12 @@ async function autoPropagateVisited(tripId, userId) {
 // Trip Reservations
 app.get('/api/reservations/:tripId', authenticateToken, async (req, res) => {
   try {
+    const strTripId = String(req.params.tripId);
     const list = await db.all(
       `SELECT r.* FROM reservations r 
-       JOIN trips t ON r.trip_id = t.id 
-       WHERE r.trip_id = ? AND t.user_id = ?`,
-      [req.params.tripId, req.user.id]
+       JOIN trips t ON CAST(r.trip_id AS TEXT) = CAST(t.id AS TEXT) 
+       WHERE (CAST(r.trip_id AS TEXT) = ? OR r.trip_id = ?) AND t.user_id = ?`,
+      [strTripId, req.params.tripId, req.user.id]
     );
     res.json(list);
   } catch (err) {
@@ -2408,12 +2467,13 @@ app.delete('/api/reservations/:id', authenticateToken, async (req, res) => {
 // Trip Itinerary Items
 app.get('/api/itineraries/:tripId', authenticateToken, async (req, res) => {
   try {
+    const strTripId = String(req.params.tripId);
     const list = await db.all(
       `SELECT i.* FROM itinerary_items i 
-       JOIN trips t ON i.trip_id = t.id 
-       WHERE i.trip_id = ? AND t.user_id = ?
+       JOIN trips t ON CAST(i.trip_id AS TEXT) = CAST(t.id AS TEXT) 
+       WHERE (CAST(i.trip_id AS TEXT) = ? OR i.trip_id = ?) AND t.user_id = ?
        ORDER BY i.date ASC, i.sequence_order ASC`,
-      [req.params.tripId, req.user.id]
+      [strTripId, req.params.tripId, req.user.id]
     );
     res.json(list);
   } catch (err) {
@@ -2449,12 +2509,13 @@ app.delete('/api/itineraries/:id', authenticateToken, async (req, res) => {
 // Trip Expenses & Budgets
 app.get('/api/expenses/:tripId', authenticateToken, async (req, res) => {
   try {
+    const strTripId = String(req.params.tripId);
     const list = await db.all(
       `SELECT e.* FROM expenses e 
-       JOIN trips t ON e.trip_id = t.id 
-       WHERE e.trip_id = ? AND t.user_id = ?
+       JOIN trips t ON CAST(e.trip_id AS TEXT) = CAST(t.id AS TEXT) 
+       WHERE (CAST(e.trip_id AS TEXT) = ? OR e.trip_id = ?) AND t.user_id = ?
        ORDER BY e.date ASC`,
-      [req.params.tripId, req.user.id]
+      [strTripId, req.params.tripId, req.user.id]
     );
     res.json(list);
   } catch (err) {

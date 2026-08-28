@@ -76,7 +76,18 @@ export async function queueSyncAction(table, action, data) {
     if (action === 'insert') {
       await db[table].put(data);
     } else if (action === 'update') {
-      await db[table].update(data.id, data);
+      const updatedCount = await db[table].update(data.id, data);
+      if (updatedCount === 0) {
+        // Fallback in case ID types differ (e.g. number vs string) or record needs to be inserted/replaced
+        const numId = Number(data.id);
+        let numUpdated = 0;
+        if (!isNaN(numId)) {
+          numUpdated = await db[table].update(numId, data);
+        }
+        if (numUpdated === 0) {
+          await db[table].put(data);
+        }
+      }
     } else if (action === 'delete_folder') {
       if (table === 'locations') {
         const deleteContents = data.deleteContents;
@@ -230,7 +241,28 @@ export async function populateLocalDb(token) {
   try {
     const trips = await db.trips.toArray();
     for (const t of trips) {
-      // Reservations
+      // 1. Itinerary items (High priority for immediate view rendering)
+      const itinRes = await fetch(`/api/itineraries/${t.id}`, { headers });
+      checkResponseAuth(itinRes);
+      if (itinRes.status === 401 || itinRes.status === 403) {
+        throw new Error('AUTH_EXPIRED');
+      }
+      if (itinRes.ok) {
+        const rows = await itinRes.json();
+        await db.transaction('rw', [db.itinerary_items], async () => {
+          const localItinRows = (await db.itinerary_items.toArray()).filter(i => String(i.trip_id) === String(t.id));
+          const serverItinIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
+          const itinIdsToDelete = localItinRows.map(r => r.id).filter(id => id && !serverItinIds.has(id.toString()) && !pendingIds.has(id.toString()));
+          const itinRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
+
+          await db.itinerary_items.bulkPut(itinRowsToPut);
+          if (itinIdsToDelete.length > 0) {
+            await db.itinerary_items.bulkDelete(itinIdsToDelete);
+          }
+        });
+      }
+
+      // 2. Reservations
       const resRes = await fetch(`/api/reservations/${t.id}`, { headers });
       checkResponseAuth(resRes);
       if (resRes.status === 401 || resRes.status === 403) {
@@ -267,7 +299,7 @@ export async function populateLocalDb(token) {
         }
 
         await db.transaction('rw', [db.reservations], async () => {
-          const localResRows = await db.reservations.where({ trip_id: t.id }).toArray();
+          const localResRows = (await db.reservations.toArray()).filter(r => String(r.trip_id) === String(t.id));
           const serverResIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
           const resIdsToDelete = localResRows.map(r => r.id).filter(id => id && !serverResIds.has(id.toString()) && !pendingIds.has(id.toString()));
           const resRowsToPut = parsedRows.filter(r => !pendingIds.has(r.id.toString()));
@@ -275,27 +307,6 @@ export async function populateLocalDb(token) {
           await db.reservations.bulkPut(resRowsToPut);
           if (resIdsToDelete.length > 0) {
             await db.reservations.bulkDelete(resIdsToDelete);
-          }
-        });
-      }
-      
-      // Itinerary items
-      const itinRes = await fetch(`/api/itineraries/${t.id}`, { headers });
-      checkResponseAuth(itinRes);
-      if (itinRes.status === 401 || itinRes.status === 403) {
-        throw new Error('AUTH_EXPIRED');
-      }
-      if (itinRes.ok) {
-        const rows = await itinRes.json();
-        await db.transaction('rw', [db.itinerary_items], async () => {
-          const localItinRows = await db.itinerary_items.where({ trip_id: t.id }).toArray();
-          const serverItinIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
-          const itinIdsToDelete = localItinRows.map(r => r.id).filter(id => id && !serverItinIds.has(id.toString()) && !pendingIds.has(id.toString()));
-          const itinRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
-
-          await db.itinerary_items.bulkPut(itinRowsToPut);
-          if (itinIdsToDelete.length > 0) {
-            await db.itinerary_items.bulkDelete(itinIdsToDelete);
           }
         });
       }
@@ -309,7 +320,7 @@ export async function populateLocalDb(token) {
       if (expRes.ok) {
         const rows = await expRes.json();
         await db.transaction('rw', [db.expenses], async () => {
-          const localExpRows = await db.expenses.where({ trip_id: t.id }).toArray();
+          const localExpRows = (await db.expenses.toArray()).filter(e => String(e.trip_id) === String(t.id));
           const serverExpIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
           const expIdsToDelete = localExpRows.map(r => r.id).filter(id => id && !serverExpIds.has(id.toString()) && !pendingIds.has(id.toString()));
           const expRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
@@ -330,7 +341,7 @@ export async function populateLocalDb(token) {
       if (rateRes.ok) {
         const rows = await rateRes.json();
         await db.transaction('rw', [db.trip_currency_rates], async () => {
-          const localRateRows = await db.trip_currency_rates.where({ trip_id: t.id }).toArray();
+          const localRateRows = (await db.trip_currency_rates.toArray()).filter(r => String(r.trip_id) === String(t.id));
           const serverRateIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
           const rateIdsToDelete = localRateRows.map(r => r.id).filter(id => id && !serverRateIds.has(id.toString()) && !pendingIds.has(id.toString()));
           const rateRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
