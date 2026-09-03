@@ -57,6 +57,12 @@ db.version(9).stores({
   user_addresses: 'id, user_id, label, is_default'
 });
 
+db.version(10).stores({
+  locations: 'id, name, visited, immich_album_id, source_urls, parent_id, is_folder, is_archived',
+  places: 'id, location_id, name, category, visited, address, is_archived',
+  itinerary_items: 'id, trip_id, date, place_id, custom_name'
+});
+
 // Safe UUID generator supporting non-secure contexts
 export function generateUUID() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -87,6 +93,167 @@ export async function queueSyncAction(table, action, data) {
         if (numUpdated === 0) {
           await db[table].put(data);
         }
+      }
+    } else if (action === 'archive_location') {
+      const locId = data.id;
+      const allLocs = await db.locations.toArray();
+      const loc = allLocs.find(l => String(l.id) === String(locId));
+      if (loc && (loc.is_folder === 1 || loc.is_folder === true || loc.is_folder === '1')) {
+        const archiveRecursively = async (pid) => {
+          const children = (await db.locations.toArray()).filter(l => String(l.parent_id) === String(pid));
+          for (const ch of children) {
+            await db.locations.update(ch.id, { is_archived: 1 });
+            const childPlaces = (await db.places.toArray()).filter(p => String(p.location_id) === String(ch.id));
+            for (const cp of childPlaces) {
+              await db.places.update(cp.id, { is_archived: 1 });
+            }
+            await archiveRecursively(ch.id);
+          }
+        };
+        await db.locations.update(loc.id, { is_archived: 1 });
+        const directPlaces = (await db.places.toArray()).filter(p => String(p.location_id) === String(loc.id));
+        for (const dp of directPlaces) {
+          await db.places.update(dp.id, { is_archived: 1 });
+        }
+        await archiveRecursively(loc.id);
+      } else if (loc) {
+        await db.locations.update(loc.id, { is_archived: 1 });
+        const directPlaces = (await db.places.toArray()).filter(p => String(p.location_id) === String(loc.id));
+        for (const dp of directPlaces) {
+          await db.places.update(dp.id, { is_archived: 1 });
+        }
+      }
+    } else if (action === 'unarchive_location') {
+      const locId = data.id;
+      const allLocs = await db.locations.toArray();
+      const loc = allLocs.find(l => String(l.id) === String(locId));
+      if (loc) {
+        const unarchiveRecursively = async (pid) => {
+          const children = (await db.locations.toArray()).filter(l => String(l.parent_id) === String(pid));
+          for (const ch of children) {
+            await db.locations.update(ch.id, { is_archived: 0 });
+            const childPlaces = (await db.places.toArray()).filter(p => String(p.location_id) === String(ch.id));
+            for (const cp of childPlaces) {
+              await db.places.update(cp.id, { is_archived: 0 });
+            }
+            await unarchiveRecursively(ch.id);
+          }
+        };
+        const isFolder = Number(loc.is_folder) === 1 || loc.is_folder === true || loc.is_folder === '1';
+        const updates = { is_archived: 0 };
+        if (!isFolder && loc.parent_id && loc.parent_id !== 'null' && loc.parent_id !== 'undefined') {
+          const parent = allLocs.find(p => String(p.id) === String(loc.parent_id));
+          if (parent && Number(parent.is_archived) === 1) {
+            updates.parent_id = null;
+          }
+        }
+        await db.locations.update(loc.id, updates);
+        const directPlaces = (await db.places.toArray()).filter(p => String(p.location_id) === String(loc.id));
+        for (const dp of directPlaces) {
+          await db.places.update(dp.id, { is_archived: 0 });
+        }
+        await unarchiveRecursively(loc.id);
+      }
+    } else if (action === 'archive_place') {
+      await db.places.update(data.id, { is_archived: 1 });
+    } else if (action === 'unarchive_place') {
+      const upd = { is_archived: 0 };
+      if (data.location_id) upd.location_id = data.location_id;
+      await db.places.update(data.id, upd);
+    } else if (action === 'delete_archived_folder') {
+      const folderId = data.id;
+      const retainLocations = data.retainLocations;
+      const allLocs = await db.locations.toArray();
+      if (retainLocations) {
+        const children = allLocs.filter(l => String(l.parent_id) === String(folderId));
+        for (const ch of children) {
+          await db.locations.update(ch.id, { parent_id: null });
+        }
+        const photos = (await db.entity_photos.toArray()).filter(p => String(p.entity_id) === String(folderId));
+        for (const ph of photos) {
+          await db.entity_photos.delete(ph.id);
+        }
+        await db.locations.delete(folderId);
+      } else {
+        const deleteRecursively = async (pid) => {
+          const childLocs = (await db.locations.toArray()).filter(l => String(l.parent_id) === String(pid));
+          for (const cl of childLocs) {
+            await deleteRecursively(cl.id);
+          }
+          const childPlaces = (await db.places.toArray()).filter(p => String(p.location_id) === String(pid));
+          for (const cp of childPlaces) {
+            const cpPhotos = (await db.entity_photos.toArray()).filter(ph => String(ph.entity_id) === String(cp.id));
+            for (const ph of cpPhotos) await db.entity_photos.delete(ph.id);
+            await db.places.delete(cp.id);
+          }
+          const pPhotos = (await db.entity_photos.toArray()).filter(ph => String(ph.entity_id) === String(pid));
+          for (const ph of pPhotos) await db.entity_photos.delete(ph.id);
+          await db.locations.delete(pid);
+        };
+        await deleteRecursively(folderId);
+      }
+    } else if (action === 'delete_archived_location') {
+      const locId = data.id;
+      const retainPlaces = data.retainPlaces;
+      const childPlaces = (await db.places.toArray()).filter(p => String(p.location_id) === String(locId));
+      if (retainPlaces) {
+        for (const cp of childPlaces) {
+          await db.places.update(cp.id, { location_id: '__orphaned__', is_archived: 1 });
+        }
+        const photos = (await db.entity_photos.toArray()).filter(ph => String(ph.entity_id) === String(locId));
+        for (const ph of photos) await db.entity_photos.delete(ph.id);
+        await db.locations.delete(locId);
+      } else {
+        for (const cp of childPlaces) {
+          // Snapshot completed trip itinerary items before deleting places
+          const trips = (await db.trips.toArray()).filter(t => Number(t.visited) === 1);
+          const tripIds = new Set(trips.map(t => String(t.id)));
+          const items = (await db.itinerary_items.toArray()).filter(i => String(i.place_id) === String(cp.id));
+          for (const it of items) {
+            if (tripIds.has(String(it.trip_id))) {
+              await db.itinerary_items.update(it.id, {
+                custom_name: cp.name,
+                custom_category: cp.category,
+                custom_lat: cp.latitude || null,
+                custom_lng: cp.longitude || null,
+                place_id: null
+              });
+            } else {
+              await db.itinerary_items.delete(it.id);
+            }
+          }
+          const cpPhotos = (await db.entity_photos.toArray()).filter(ph => String(ph.entity_id) === String(cp.id));
+          for (const ph of cpPhotos) await db.entity_photos.delete(ph.id);
+          await db.places.delete(cp.id);
+        }
+        const photos = (await db.entity_photos.toArray()).filter(ph => String(ph.entity_id) === String(locId));
+        for (const ph of photos) await db.entity_photos.delete(ph.id);
+        await db.locations.delete(locId);
+      }
+    } else if (action === 'delete_archived_place') {
+      const placeId = data.id;
+      const allP = await db.places.toArray();
+      const place = allP.find(p => String(p.id) === String(placeId));
+      if (place) {
+        const trips = (await db.trips.toArray()).filter(t => Number(t.visited) === 1);
+        const tripIds = new Set(trips.map(t => String(t.id)));
+        const items = (await db.itinerary_items.toArray()).filter(i => String(i.place_id) === String(placeId));
+        for (const it of items) {
+          if (tripIds.has(String(it.trip_id))) {
+            await db.itinerary_items.update(it.id, {
+              custom_name: place.name,
+              custom_category: place.category,
+              custom_lat: place.latitude || null,
+              custom_lng: place.longitude || null,
+              place_id: null
+            });
+          } else {
+            await db.itinerary_items.delete(it.id);
+          }
+        }
+        const photos = (await db.entity_photos.toArray()).filter(ph => String(ph.entity_id) === String(placeId));
+        for (const ph of photos) await db.entity_photos.delete(ph.id);
+        await db.places.delete(place.id);
       }
     } else if (action === 'delete_folder') {
       if (table === 'locations') {

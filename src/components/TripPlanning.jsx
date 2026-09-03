@@ -3,7 +3,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Calendar, MapPin, Plus, Trash2, Tag, Receipt, 
   ChevronRight, Printer, AlertTriangle, FileText, 
-  Map, Edit, CheckSquare, X, DollarSign, RefreshCw, Star, Compass 
+  Map, Edit, CheckSquare, X, DollarSign, RefreshCw, Star, Compass,
+  Search, Folder
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
@@ -311,17 +312,21 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
       tripNotes: await db.trip_notes.toArray(),
       people: await (db.people ? db.people.toArray() : Promise.resolve([])),
       userAddresses: await (db.user_addresses ? db.user_addresses.toArray() : Promise.resolve([])),
+      customCategories: await (db.custom_categories ? db.custom_categories.where('type').equals('place').toArray() : Promise.resolve([])),
       syncQueue: await db.sync_queue.toArray()
     };
   }) || {
     trips: [], locations: [], places: [], tags: [], entityTags: [],
-    collections: [], reservations: [], itineraries: [], expenses: [], rates: [], tripNotes: [], people: [], userAddresses: [], syncQueue: []
+    collections: [], reservations: [], itineraries: [], expenses: [], rates: [], tripNotes: [], people: [], userAddresses: [], customCategories: [], syncQueue: []
   };
 
   const { 
-    trips, locations, places, tags, entityTags, collections, 
-    reservations, itineraries, expenses, rates, tripNotes: notesList, people = [], userAddresses = [], syncQueue 
+    trips, locations: rawLocations = [], places: rawPlaces = [], tags, entityTags, collections, 
+    reservations, itineraries, expenses, rates, tripNotes: notesList, people = [], userAddresses = [], customCategories = [], syncQueue 
   } = syncData;
+
+  const locations = useMemo(() => rawLocations.filter(l => Number(l.is_archived) !== 1), [rawLocations]);
+  const places = useMemo(() => rawPlaces.filter(p => Number(p.is_archived) !== 1), [rawPlaces]);
 
   const combinedPlaces = useMemo(() => {
     const homePlaces = (userAddresses || []).map(addr => ({
@@ -334,8 +339,21 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
       longitude: (addr.longitude !== null && addr.longitude !== undefined && addr.longitude !== '' && !isNaN(Number(addr.longitude))) ? parseFloat(addr.longitude) : null,
       address: addr.address || ''
     }));
-    return [...places, ...homePlaces];
-  }, [places, userAddresses]);
+
+    // Fallback entries for deleted/archived places to preserve completed trip history
+    const fallbackStops = (itineraries || [])
+      .filter(it => it.custom_name && !places.some(p => p.id === it.place_id))
+      .map(it => ({
+        id: it.place_id || it.id,
+        name: it.custom_name,
+        category: it.custom_category || 'Place',
+        latitude: it.custom_lat,
+        longitude: it.custom_lng,
+        notes: it.notes || ''
+      }));
+
+    return [...places, ...homePlaces, ...fallbackStops];
+  }, [places, userAddresses, itineraries]);
 
   const findUserAddress = useCallback((addrId) => {
     if (!addrId || !Array.isArray(userAddresses)) return null;
@@ -362,12 +380,7 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
           return matched;
         });
       }
-    } else if (selectedTrip && trips && trips.length > 0) {
-      const matched = trips.find(t => String(t.id) === String(selectedTrip.id));
-      if (matched && (matched.name !== selectedTrip.name || matched.start_date !== selectedTrip.start_date || matched.length !== selectedTrip.length || matched.notes !== selectedTrip.notes || String(matched.start_address_id || '') !== String(selectedTrip.start_address_id || '') || String(matched.stop_address_id || '') !== String(selectedTrip.stop_address_id || ''))) {
-        setSelectedTrip(matched);
-      }
-    } else if (!selectedTripId && selectedTrip !== null) {
+    } else if (!selectedTripId) {
       setSelectedTrip(null);
     }
   }, [selectedTripId, trips]);
@@ -435,6 +448,7 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   const [wizardTrip, setWizardTrip] = useState(null);
   const [tripBudget, setTripBudget] = useState('');
   const [showAddLocationDropdown, setShowAddLocationDropdown] = useState(false);
+  const [folderDropdownSearch, setFolderDropdownSearch] = useState('');
   const [isManualOrAi, setIsManualOrAi] = useState('manual');
   const [show3ColumnWorkspace, setShow3ColumnWorkspace] = useState(false);
   const [showNavigationLines, setShowNavigationLines] = useState(false);
@@ -558,6 +572,584 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedTrip]);
 
+  // Add Folder Dropdown click-outside reference & hook
+  const addFolderDropdownRef = useRef(null);
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (addFolderDropdownRef.current && !addFolderDropdownRef.current.contains(e.target)) {
+        setShowAddLocationDropdown(false);
+      }
+    }
+    if (showAddLocationDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [showAddLocationDropdown]);
+
+  // Helper: Get ancestor folder names for a parent_id
+  const getAncestorFolderNames = useCallback((parentId) => {
+    if (!parentId || parentId === 'null' || parentId === 'undefined') return [];
+    const names = [];
+    let currentId = parentId;
+    let depth = 0;
+    while (currentId && depth < 20) {
+      const parent = locations.find(l => String(l.id) === String(currentId));
+      if (parent) {
+        names.unshift(parent.name);
+        const pId = parent.parent_id;
+        if (pId && pId !== 'null' && pId !== 'undefined') {
+          currentId = pId;
+        } else {
+          currentId = null;
+        }
+      } else {
+        break;
+      }
+      depth++;
+    }
+    return names;
+  }, [locations]);
+
+  // Helper: Get all available folders with full breadcrumb path
+  const allAvailableFolders = useMemo(() => {
+    return locations
+      .filter(l => l.is_folder === 1)
+      .map(folder => {
+        const ancestors = getAncestorFolderNames(folder.parent_id);
+        const fullPath = [...ancestors, folder.name].join(' > ');
+        return {
+          id: folder.id,
+          name: folder.name,
+          fullPath
+        };
+      })
+      .sort((a, b) => a.fullPath.localeCompare(b.fullPath));
+  }, [locations, getAncestorFolderNames]);
+
+  // Default and custom categories for Places
+  const defaultPlaceCategories = useMemo(() => [
+    { id: 'default-attraction', name: 'Attraction', icon: '📍' },
+    { id: 'default-dining', name: 'Dining', icon: '🍽️' },
+    { id: 'default-hotel', name: 'Hotel', icon: '🏨' },
+    { id: 'default-stay', name: 'Stay', icon: '🏠' },
+    { id: 'default-activity', name: 'Activity', icon: '🎯' },
+    { id: 'default-shopping', name: 'Shopping', icon: '🛍️' },
+    { id: 'default-transport', name: 'Transport', icon: '🚆' },
+    { id: 'default-nature', name: 'Nature', icon: '🌲' },
+    { id: 'default-nightlife', name: 'Nightlife', icon: '🍸' },
+    { id: 'default-other', name: 'Other', icon: '📌' }
+  ], []);
+  const allPlaceCategories = useMemo(() => {
+    return [
+      ...defaultPlaceCategories,
+      ...customCategories.filter(c => !defaultPlaceCategories.some(d => d.name.toLowerCase() === c.name.toLowerCase()))
+    ];
+  }, [customCategories, defaultPlaceCategories]);
+
+  // Handle coords paste helper
+  const handleCoordsPaste = (e, setLat, setLon) => {
+    const pastedText = e.clipboardData.getData('text');
+    if (pastedText && pastedText.includes(',')) {
+      e.preventDefault();
+      const parts = pastedText.split(',').map(part => part.trim());
+      if (parts.length >= 2) {
+        const lat = parseFloat(parts[0]);
+        const lon = parseFloat(parts[1]);
+        if (!isNaN(lat) && !isNaN(lon)) {
+          setLat(lat.toString());
+          setLon(lon.toString());
+        }
+      }
+    }
+  };
+
+  // Add Folder/Location Modal State (Places Bank)
+  const [showAddFolderModal, setShowAddFolderModal] = useState(false);
+  const [newFolderSearchQuery, setNewFolderSearchQuery] = useState('');
+  const [newFolderSearchResults, setNewFolderSearchResults] = useState([]);
+  const [isSearchingFolder, setIsSearchingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderState, setNewFolderState] = useState('');
+  const [newFolderCountry, setNewFolderCountry] = useState('');
+  const [newFolderLat, setNewFolderLat] = useState('');
+  const [newFolderLon, setNewFolderLon] = useState('');
+  const [newFolderIsFolder, setNewFolderIsFolder] = useState(false);
+  const [newFolderParentId, setNewFolderParentId] = useState('');
+  const [newFolderNotes, setNewFolderNotes] = useState('');
+  const [isSavingFolder, setIsSavingFolder] = useState(false);
+
+  // Debounced Google Places / Nominatim Search for New Folder
+  useEffect(() => {
+    const query = newFolderSearchQuery.trim();
+    if (query.length < 2) {
+      setNewFolderSearchResults([]);
+      setIsSearchingFolder(false);
+      return;
+    }
+
+    setIsSearchingFolder(true);
+    const delayDebounceFn = setTimeout(() => {
+      const apiKey = localStorage.getItem('google_maps_api_key');
+      const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+      const fallbackToNominatim = () => {
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(query)}`)
+          .then(res => res.json())
+          .then(data => {
+            setNewFolderSearchResults(Array.isArray(data) ? data : []);
+            setIsSearchingFolder(false);
+          })
+          .catch(err => {
+            setIsSearchingFolder(false);
+            setNewFolderSearchResults([]);
+          });
+      };
+
+      if (apiKey && googleMapsEnabled) {
+        loadGoogleMaps(apiKey).then(async (google) => {
+          trackApiCall('Google Maps Places');
+          try {
+            const { AutocompleteSuggestion } = await google.maps.importLibrary("places");
+            const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({
+              input: query,
+              includedPrimaryTypes: ["locality", "administrative_area_level_1", "administrative_area_level_2", "country", "natural_feature"]
+            });
+            setIsSearchingFolder(false);
+            if (suggestions && suggestions.length > 0) {
+              const mapped = suggestions.map(s => ({
+                display_name: s.placePrediction.text.toString(),
+                place_name: s.placePrediction.mainText ? s.placePrediction.mainText.toString() : s.placePrediction.text.toString().split(',')[0],
+                place_id: s.placePrediction.placeId,
+                is_gmaps: true
+              }));
+              setNewFolderSearchResults(mapped);
+            } else {
+              fallbackToNominatim();
+            }
+          } catch (e) {
+            try {
+              const service = new google.maps.places.AutocompleteService();
+              service.getPlacePredictions({
+                input: query,
+                types: ['(regions)']
+              }, (predictions, status) => {
+                setIsSearchingFolder(false);
+                if (status === 'OK' && predictions && predictions.length > 0) {
+                  const mapped = predictions.map(p => ({
+                    display_name: p.description,
+                    place_name: p.structured_formatting && p.structured_formatting.main_text ? p.structured_formatting.main_text : p.description.split(',')[0],
+                    place_id: p.place_id,
+                    is_gmaps: true
+                  }));
+                  setNewFolderSearchResults(mapped);
+                } else {
+                  fallbackToNominatim();
+                }
+              });
+            } catch (legacyErr) {
+              fallbackToNominatim();
+            }
+          }
+        }).catch(err => {
+          fallbackToNominatim();
+        });
+      } else {
+        fallbackToNominatim();
+      }
+    }, 350);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [newFolderSearchQuery]);
+
+  const handleSelectFolderSearchResult = async (result) => {
+    if (result.is_gmaps) {
+      setIsSearchingFolder(true);
+      try {
+        trackApiCall('Google Maps Geocoding');
+        const google = await loadGoogleMaps();
+        const { Geocoder } = await google.maps.importLibrary("geocoding");
+        const geocoder = new Geocoder();
+        geocoder.geocode({ placeId: result.place_id }, (results, status) => {
+          setIsSearchingFolder(false);
+          if (status === 'OK' && results[0]) {
+            const r = results[0];
+            const lat = r.geometry.location.lat();
+            const lon = r.geometry.location.lng();
+            
+            let state = '';
+            let country = '';
+            r.address_components.forEach(c => {
+              if (c.types.includes('administrative_area_level_1')) state = c.long_name;
+              if (c.types.includes('country')) country = c.long_name;
+            });
+
+            setNewFolderName(r.formatted_address.split(',')[0]);
+            setNewFolderState(state || (r.formatted_address.split(',').length > 2 ? r.formatted_address.split(',')[r.formatted_address.split(',').length - 3].trim() : ''));
+            setNewFolderCountry(country || r.formatted_address.split(',')[r.formatted_address.split(',').length - 1].trim());
+            setNewFolderLat(lat);
+            setNewFolderLon(lon);
+            setNewFolderSearchResults([]);
+            setNewFolderSearchQuery('');
+          }
+        });
+      } catch (err) {
+        console.error('Gmaps geocode failed:', err);
+        setIsSearchingFolder(false);
+      }
+      return;
+    }
+
+    const address = result.address || {};
+    const state = address.state || address.region || '';
+    const country = address.country || '';
+
+    setNewFolderName(result.name || result.display_name.split(',')[0]);
+    setNewFolderState(state);
+    setNewFolderCountry(country);
+    setNewFolderLat(result.lat);
+    setNewFolderLon(result.lon);
+    setNewFolderSearchResults([]);
+    setNewFolderSearchQuery('');
+  };
+
+  const handleCreateFolderFromBank = async (e) => {
+    e.preventDefault();
+    if (!newFolderName.trim() || isSavingFolder) return;
+    setIsSavingFolder(true);
+
+    const newLocId = generateUUID();
+    const finalName = newFolderName.trim();
+    const latitudeVal = newFolderLat ? parseFloat(newFolderLat) : null;
+    const longitudeVal = newFolderLon ? parseFloat(newFolderLon) : null;
+
+    const newLoc = {
+      id: newLocId,
+      name: finalName,
+      state: newFolderState.trim() || null,
+      country: newFolderCountry.trim() || null,
+      latitude: latitudeVal,
+      longitude: longitudeVal,
+      visited: 0,
+      notes: newFolderNotes,
+      local_file_data: null,
+      immich_album_id: null,
+      parent_id: newFolderParentId || null,
+      is_folder: newFolderIsFolder ? 1 : 0,
+      photo_sync_status: 'pending',
+      created_at: new Date().toISOString()
+    };
+
+    // Save to IndexedDB and queue sync instantly
+    await db.locations.add(newLoc);
+    await queueSyncAction('locations', 'insert', newLoc);
+
+    // Auto-add this folder/location to the active trip's Places Bank
+    const updatedLocIds = [...stopFilterLocationIds, newLocId];
+    setStopFilterLocationIds(updatedLocIds);
+
+    if (selectedTrip) {
+      const existingNotes = safeParseNotes(selectedTrip.notes);
+      const savedLocIds = existingNotes.locationIds || [];
+      if (!savedLocIds.includes(newLocId)) {
+        existingNotes.locationIds = [...savedLocIds, newLocId];
+        const updatedTrip = { ...selectedTrip, notes: JSON.stringify(existingNotes) };
+        await db.trips.update(selectedTrip.id, updatedTrip);
+        await queueSyncAction('trips', 'update', updatedTrip);
+        setSelectedTrip(updatedTrip);
+      }
+    }
+
+    // Fire background photo fetching without holding up the UI
+    trackApiCall('Wikipedia / Google Maps');
+    fetch('/api/import/search-photo', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        query: finalName,
+        latitude: latitudeVal,
+        longitude: longitudeVal,
+        googleMapsApiKey: localStorage.getItem('google_maps_api_key') || undefined
+      })
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(async (data) => {
+        if (data) {
+          const updates = { photo_sync_status: 'completed' };
+          if (data.fileUrl) updates.local_file_data = data.fileUrl;
+          if (data.description && !newFolderNotes.trim()) {
+            updates.notes = data.description;
+          }
+          await db.locations.update(newLocId, updates);
+          await queueSyncAction('locations', 'update', {
+            ...newLoc,
+            ...updates
+          });
+
+          if (data.fileUrl) {
+            const newPhotoObj = {
+              id: generateUUID(),
+              entity_id: newLocId,
+              file_path: data.fileUrl,
+              is_featured: 1,
+              created_at: new Date().toISOString()
+            };
+            await db.entity_photos.add(newPhotoObj);
+            await queueSyncAction('entity_photos', 'insert', newPhotoObj);
+          }
+        }
+      })
+      .catch(err => console.warn('Background location photo fetch failed:', err));
+
+    // Reset Form & Close
+    setNewFolderName('');
+    setNewFolderState('');
+    setNewFolderCountry('');
+    setNewFolderLat('');
+    setNewFolderLon('');
+    setNewFolderIsFolder(false);
+    setNewFolderParentId('');
+    setNewFolderNotes('');
+    setNewFolderSearchQuery('');
+    setNewFolderSearchResults([]);
+    setShowAddFolderModal(false);
+    setIsSavingFolder(false);
+  };
+
+  // Add Place Modal State (Places Bank)
+  const [showAddPlaceModal, setShowAddPlaceModal] = useState(false);
+  const [targetPlaceLocation, setTargetPlaceLocation] = useState(null);
+  const [newPlaceSearchQuery, setNewPlaceSearchQuery] = useState('');
+  const [newPlaceSearchResults, setNewPlaceSearchResults] = useState([]);
+  const [isSearchingPlace, setIsSearchingPlace] = useState(false);
+  const [newPlaceName, setNewPlaceName] = useState('');
+  const [newPlaceCategory, setNewPlaceCategory] = useState('Attraction');
+  const [newPlaceLat, setNewPlaceLat] = useState('');
+  const [newPlaceLon, setNewPlaceLon] = useState('');
+  const [newPlaceNotes, setNewPlaceNotes] = useState('');
+  const [isSavingPlace, setIsSavingPlace] = useState(false);
+
+  // Debounced Google Places / Nominatim Search for New Place
+  useEffect(() => {
+    const query = newPlaceSearchQuery.trim();
+    if (query.length < 2) {
+      setNewPlaceSearchResults([]);
+      setIsSearchingPlace(false);
+      return;
+    }
+
+    setIsSearchingPlace(true);
+    const delayDebounceFn = setTimeout(() => {
+      const apiKey = localStorage.getItem('google_maps_api_key');
+      const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+      const fallbackToNominatim = () => {
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(query)}`)
+          .then(res => res.json())
+          .then(data => {
+            setNewPlaceSearchResults(Array.isArray(data) ? data : []);
+            setIsSearchingPlace(false);
+          })
+          .catch(err => {
+            setIsSearchingPlace(false);
+            setNewPlaceSearchResults([]);
+          });
+      };
+
+      if (apiKey && googleMapsEnabled) {
+        loadGoogleMaps(apiKey).then(async (google) => {
+          trackApiCall('Google Maps Places');
+          try {
+            const { AutocompleteSuggestion } = await google.maps.importLibrary("places");
+            const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({ input: query });
+            setIsSearchingPlace(false);
+            if (suggestions && suggestions.length > 0) {
+              const mapped = suggestions.map(s => ({
+                display_name: s.placePrediction.text.toString(),
+                place_name: s.placePrediction.mainText ? s.placePrediction.mainText.toString() : s.placePrediction.text.toString().split(',')[0],
+                place_id: s.placePrediction.placeId,
+                is_gmaps: true,
+                types: s.placePrediction.types || []
+              }));
+              setNewPlaceSearchResults(mapped);
+            } else {
+              fallbackToNominatim();
+            }
+          } catch (e) {
+            try {
+              const service = new google.maps.places.AutocompleteService();
+              service.getPlacePredictions({ input: query }, (predictions, status) => {
+                setIsSearchingPlace(false);
+                if (status === 'OK' && predictions && predictions.length > 0) {
+                  const mapped = predictions.map(p => ({
+                    display_name: p.description,
+                    place_name: p.structured_formatting && p.structured_formatting.main_text ? p.structured_formatting.main_text : p.description.split(',')[0],
+                    place_id: p.place_id,
+                    is_gmaps: true,
+                    types: p.types || []
+                  }));
+                  setNewPlaceSearchResults(mapped);
+                } else {
+                  fallbackToNominatim();
+                }
+              });
+            } catch (legacyErr) {
+              fallbackToNominatim();
+            }
+          }
+        }).catch(err => {
+          fallbackToNominatim();
+        });
+      } else {
+        fallbackToNominatim();
+      }
+    }, 350);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [newPlaceSearchQuery]);
+
+  const handleSelectPlaceSearchResult = async (result) => {
+    if (result.is_gmaps) {
+      setIsSearchingPlace(true);
+      try {
+        trackApiCall('Google Maps Geocoding');
+        const google = await loadGoogleMaps();
+        const { Geocoder } = await google.maps.importLibrary("geocoding");
+        const geocoder = new Geocoder();
+        geocoder.geocode({ placeId: result.place_id }, (results, status) => {
+          setIsSearchingPlace(false);
+          if (status === 'OK' && results[0]) {
+            const r = results[0];
+            const lat = r.geometry.location.lat();
+            const lon = r.geometry.location.lng();
+            setNewPlaceName(result.place_name || r.formatted_address.split(',')[0]);
+            setNewPlaceLat(lat ? lat.toString() : '');
+            setNewPlaceLon(lon ? lon.toString() : '');
+            
+            // Auto categorize based on Google Place Types
+            const types = result.types || [];
+            if (types.includes('cafe') || types.includes('restaurant') || types.includes('food') || types.includes('bar')) setNewPlaceCategory('Dining');
+            else if (types.includes('lodging') || types.includes('hotel')) setNewPlaceCategory('Hotel');
+            else if (types.includes('museum') || types.includes('tourist_attraction') || types.includes('point_of_interest')) setNewPlaceCategory('Attraction');
+            else if (types.includes('park') || types.includes('natural_feature')) setNewPlaceCategory('Nature');
+            else if (types.includes('airport') || types.includes('transit_station') || types.includes('subway_station') || types.includes('train_station')) setNewPlaceCategory('Transport');
+            else if (types.includes('shopping_mall') || types.includes('store')) setNewPlaceCategory('Shopping');
+
+            setNewPlaceSearchResults([]);
+            setNewPlaceSearchQuery('');
+          }
+        });
+      } catch (err) {
+        setIsSearchingPlace(false);
+      }
+      return;
+    }
+
+    setNewPlaceName(result.display_name.split(',')[0]);
+    setNewPlaceLat(result.lat ? result.lat.toString() : '');
+    setNewPlaceLon(result.lon ? result.lon.toString() : '');
+    const typeStr = (result.type || '').toLowerCase();
+    if (typeStr.includes('hotel') || typeStr.includes('motel') || typeStr.includes('guest_house')) setNewPlaceCategory('Hotel');
+    else if (typeStr.includes('restaurant') || typeStr.includes('cafe') || typeStr.includes('bar') || typeStr.includes('fast_food')) setNewPlaceCategory('Dining');
+    else if (typeStr.includes('park') || typeStr.includes('peak') || typeStr.includes('water')) setNewPlaceCategory('Nature');
+    
+    setNewPlaceSearchResults([]);
+    setNewPlaceSearchQuery('');
+  };
+
+  const handleCreatePlaceFromBank = async (e) => {
+    e.preventDefault();
+    if (!newPlaceName.trim() || !targetPlaceLocation || isSavingPlace) return;
+    setIsSavingPlace(true);
+
+    const newPlaceId = generateUUID();
+    const latitudeVal = newPlaceLat ? parseFloat(newPlaceLat) : null;
+    const longitudeVal = newPlaceLon ? parseFloat(newPlaceLon) : null;
+    const cleanPlaceQuery = newPlaceName.trim();
+    const locationCtx = targetPlaceLocation.name || '';
+
+    const newPlace = {
+      id: newPlaceId,
+      location_id: targetPlaceLocation.id,
+      name: cleanPlaceQuery,
+      category: newPlaceCategory,
+      latitude: latitudeVal,
+      longitude: longitudeVal,
+      visited: 0,
+      notes: newPlaceNotes,
+      local_file_data: null,
+      immich_album_id: null,
+      photo_sync_status: 'pending',
+      created_at: new Date().toISOString()
+    };
+
+    // Save to IndexedDB instantly & queue sync
+    await db.places.add(newPlace);
+    await queueSyncAction('places', 'insert', newPlace);
+
+    // Fire background photo fetching without holding up the UI
+    trackApiCall('Wikipedia / Google Maps');
+    fetch('/api/import/search-photo', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ 
+        query: cleanPlaceQuery, 
+        locationContext: locationCtx,
+        latitude: latitudeVal, 
+        longitude: longitudeVal,
+        googleMapsApiKey: localStorage.getItem('google_maps_api_key')
+      })
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(async (data) => {
+        if (data) {
+          const updates = { photo_sync_status: 'completed' };
+          if (data.fileUrl) updates.local_file_data = data.fileUrl;
+          if (data.description && !newPlaceNotes.trim()) {
+            updates.notes = data.description;
+          }
+          await db.places.update(newPlaceId, updates);
+          await queueSyncAction('places', 'update', {
+            ...newPlace,
+            ...updates
+          });
+
+          if (data.fileUrl) {
+            const newPhotoObj = {
+              id: generateUUID(),
+              entity_id: newPlaceId,
+              file_path: data.fileUrl,
+              is_featured: 1,
+              created_at: new Date().toISOString()
+            };
+            await db.entity_photos.add(newPhotoObj);
+            await queueSyncAction('entity_photos', 'insert', newPhotoObj);
+          }
+        }
+      })
+      .catch(err => console.warn('Background place photo fetch failed:', err));
+
+    // Reset Form & Close
+    setNewPlaceName('');
+    setNewPlaceCategory('Attraction');
+    setNewPlaceLat('');
+    setNewPlaceLon('');
+    setNewPlaceNotes('');
+    setNewPlaceSearchQuery('');
+    setNewPlaceSearchResults([]);
+    setShowAddPlaceModal(false);
+    setIsSavingPlace(false);
+  };
+
   // Selected Location / Collection for the trip
   const [selectedLocationId, setSelectedLocationId] = useState('');
   
@@ -596,7 +1188,92 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
 
   // Calculated Road Distances cache: { "placeId1-placeId2": distanceKm }
   const [distances, setDistances] = useState({});
+  const distancesRef = useRef(distances);
+  useEffect(() => {
+    distancesRef.current = distances;
+  }, [distances]);
   const pendingOSRMFetches = useRef(new Set());
+
+  // Helper: Haversine distance
+  const getHaversine = useCallback((p1, p2) => {
+    if (!p1 || !p2 || !p1.latitude || !p1.longitude || !p2.latitude || !p2.longitude) return 0;
+    const R = 6371; // km
+    const dLat = (p2.latitude - p1.latitude) * Math.PI / 180;
+    const dLon = (p2.longitude - p1.longitude) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(p1.latitude * Math.PI / 180) * Math.cos(p2.latitude * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return Math.round(R * c * 10) / 10;
+  }, []);
+
+  // Helper: Retrieve actual driving route from Google RouteMatrix computeRouteMatrix or OSRM
+  const fetchOSRMDistance = useCallback(async (p1, p2) => {
+    if (!p1 || !p2 || !p1.latitude || !p1.longitude || !p2.latitude || !p2.longitude) return null;
+    const key = `${p1.id}-${p2.id}`;
+    if (distancesRef.current[key]) return { key, value: distancesRef.current[key] };
+    if (pendingOSRMFetches.current.has(key)) return null;
+    pendingOSRMFetches.current.add(key);
+
+    try {
+      const apiKey = localStorage.getItem('google_maps_api_key');
+      const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+      // 1. Try Google Maps RouteMatrix computeRouteMatrix (v2 REST API)
+      if (apiKey && googleMapsEnabled) {
+        try {
+          const routeRes = await fetch('https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': apiKey,
+              'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,distanceMeters,status'
+            },
+            body: JSON.stringify({
+              origins: [{ waypoint: { location: { latLng: { latitude: parseFloat(p1.latitude), longitude: parseFloat(p1.longitude) } } } }],
+              destinations: [{ waypoint: { location: { latLng: { latitude: parseFloat(p2.latitude), longitude: parseFloat(p2.longitude) } } } }],
+              travelMode: 'DRIVE'
+            })
+          });
+
+          if (routeRes.ok) {
+            const matrixData = await routeRes.json();
+            const elem = Array.isArray(matrixData) ? matrixData[0] : matrixData;
+            if (elem && elem.distanceMeters) {
+              const distKm = Math.round((elem.distanceMeters / 1000) * 10) / 10;
+              const durSecs = parseInt((elem.duration || '0').replace('s', ''), 10) || 0;
+              const durationMins = Math.round(durSecs / 60);
+              const valObj = { distance: distKm, duration: durationMins };
+              return { key, value: valObj };
+            }
+          }
+        } catch (e) {
+          console.warn('Google RouteMatrix computeRouteMatrix failed, falling back to OSRM:', e);
+        }
+      }
+
+      // 2. Try OSRM Routing API for driving distance & travel duration
+      const url = `https://router.project-osrm.org/route/v1/driving/${p2.longitude},${p2.latitude};${p1.longitude},${p1.latitude}?overview=false`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.routes && data.routes[0]) {
+          const distKm = Math.round((data.routes[0].distance / 1000) * 10) / 10;
+          const durationMins = Math.round(data.routes[0].duration / 60);
+          const valObj = { distance: distKm, duration: durationMins };
+          return { key, value: valObj };
+        }
+      }
+    } catch (e) {
+      console.warn('OSRM routing fetch failed, using haversine fallback:', e);
+    }
+
+    // 3. Fallback to Haversine straight-line distance calculation
+    const distKm = getHaversine(p1, p2);
+    const valObj = { distance: distKm, duration: Math.round(distKm * 2) };
+    return { key, value: valObj };
+  }, [getHaversine]);
 
   // Filters for Add Stop
   const [stopFilterLocationIds, setStopFilterLocationIds] = useState([]);
@@ -608,6 +1285,11 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   const [stopFilterTagSearch, setStopFilterTagSearch] = useState('');
   const [stopPlaceSearch, setStopPlaceSearch] = useState('');
   const [selectedPlaceIds, setSelectedPlaceIds] = useState([]);
+
+  // Reset & Undo state for Itinerary Days
+  const [resetBackupSnapshot, setResetBackupSnapshot] = useState(null);
+  const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
+  const [isResettingItinerary, setIsResettingItinerary] = useState(false);
 
   const filteredPlacesToAdd = useMemo(() => {
     if (!selectedTrip) return [];
@@ -714,6 +1396,8 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
       // 1. Start from Home on Day 1
       const startAddr = (isFirstDay && activeTripObj.start_address_id && startFromHome) ? findUserAddress(activeTripObj.start_address_id) : null;
       const isDay1StartingFromHome = Boolean(startAddr);
+      const driveToStayFirst = dayEndpoints[day.date]?.driveToStayFirst ?? false;
+
       if (isDay1StartingFromHome && startAddr.latitude && startAddr.longitude) {
         const startPtId = `home_start_${startAddr.id}`;
         pointsList.push({
@@ -732,16 +1416,22 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
         lastAddedPointId = startPtId;
       }
 
-      // 2. Day Origin Stay (only for Day 2+ onwards if stay_night or checkout)
-      if (!isFirstDay && hotelPlace && hotelPlace.latitude && hotelPlace.longitude && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+      // 2. Day Origin Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked)
+      const shouldIncludeStayOrigin = (!isFirstDay && hotelPlace && hotelPlace.latitude && hotelPlace.longitude && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) ||
+        (isFirstDay && isDay1StartingFromHome && hotelPlace && hotelPlace.latitude && hotelPlace.longitude && driveToStayFirst);
+
+      if (shouldIncludeStayOrigin) {
         const firstItemIsHotel = dayItems.length > 0 && dayItems[0].place_id === hotelPlace.id;
         if (!firstItemIsHotel) {
           const segKey = lastAddedPointId ? `${day.date}_${lastAddedPointId}_${hotelPlace.id}` : null;
           const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : 'drive';
+          const originLabel = isFirstDay
+            ? `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+            : (stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`);
           pointsList.push({
             ...hotelPlace,
             id: `stay_origin_${hotelPlace.id}_${day.date}`,
-            name: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`,
+            name: originLabel,
             dayLabel: dayLabelText,
             color: dayColor,
             sequenceOrder: 0,
@@ -854,85 +1544,57 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
 
 
 
+  // Safe background distance calculation effect for active trip stops
   useEffect(() => {
-    if (tripModeActive && activeTripId) {
-      const activeTripObj = trips.find(t => t.id.toString() === activeTripId.toString());
-      if (activeTripObj && (!selectedTrip || selectedTrip.id !== activeTripObj.id)) {
-        setSelectedTrip(activeTripObj);
-      }
-    }
-  }, [tripModeActive, activeTripId, trips, selectedTrip]);
+    if (!selectedTrip || !itineraries || itineraries.length === 0 || !combinedPlaces || combinedPlaces.length === 0) return;
+    const tripItins = itineraries.filter(i => i.trip_id === selectedTrip.id);
+    const days = {};
+    tripItins.forEach(item => {
+      if (!days[item.date]) days[item.date] = [];
+      days[item.date].push(item);
+    });
 
-  useEffect(() => {
-    if (!selectedTrip || itineraries.length === 0 || places.length === 0) return;
-
-    const runRecalculate = async () => {
-      const tripItins = itineraries.filter(i => i.trip_id === selectedTrip.id);
-      
-      const days = {};
-      tripItins.forEach(item => {
-        if (!days[item.date]) days[item.date] = [];
-        days[item.date].push(item);
-      });
-
-      for (const date in days) {
-        const items = days[date].sort((a, b) => a.sequence_order - b.sequence_order);
-        for (let idx = 0; idx < items.length; idx++) {
-          const currentItem = items[idx];
-          if (idx === 0) {
-            if (currentItem.distance_from_prev !== 0 || currentItem.duration_from_prev !== 0) {
-              await queueSyncAction('itinerary_items', 'update', {
-                ...currentItem,
-                distance_from_prev: 0,
-                duration_from_prev: 0
-              });
-            }
-          } else {
-            const prevItem = items[idx - 1];
-            const p1 = places.find(p => p.id === prevItem.place_id);
-            const p2 = places.find(p => p.id === currentItem.place_id);
-            if (p1 && p2) {
-              let expectedDistance = 0;
-              let expectedDuration = 0;
-
-              const key = `${p1.id}-${p2.id}`;
-              if (distances[key] !== undefined) {
-                const distObj = distances[key];
-                if (typeof distObj === 'object') {
-                  expectedDistance = parseFloat(distObj.distance) || 0;
-                  expectedDuration = parseFloat(distObj.duration) || 0;
-                } else {
-                  expectedDistance = parseFloat(distObj) || 0;
-                  expectedDuration = 0;
-                }
-              } else {
-                fetchOSRMDistance(p1, p2);
-                continue;
-              }
-
-              const needsRecalculate = currentItem.distance_from_prev === null || 
-                                       currentItem.distance_from_prev === undefined ||
-                                       currentItem.distance_from_prev === -1;
-              
-              if (!needsRecalculate) continue;
-
-              await queueSyncAction('itinerary_items', 'update', {
-                ...currentItem,
-                distance_from_prev: expectedDistance,
-                duration_from_prev: expectedDuration
-              });
-            }
+    const pairsToFetch = [];
+    for (const date in days) {
+      const items = days[date].sort((a, b) => a.sequence_order - b.sequence_order);
+      for (let idx = 1; idx < items.length; idx++) {
+        const p1 = combinedPlaces.find(p => String(p.id) === String(items[idx - 1].place_id));
+        const p2 = combinedPlaces.find(p => String(p.id) === String(items[idx].place_id));
+        if (p1 && p2 && p1.latitude && p1.longitude && p2.latitude && p2.longitude) {
+          const key = `${p1.id}-${p2.id}`;
+          if (!distancesRef.current[key] && !pendingOSRMFetches.current.has(key)) {
+            pairsToFetch.push({ p1, p2 });
           }
         }
       }
-    };
+    }
 
-    runRecalculate();
-  }, [selectedTrip, itineraries, places, distances]);
+    if (pairsToFetch.length === 0) return;
+
+    let isMounted = true;
+    Promise.all(pairsToFetch.map(({ p1, p2 }) => fetchOSRMDistance(p1, p2)))
+      .then(results => {
+        if (!isMounted) return;
+        const updates = {};
+        for (const res of results) {
+          if (res && res.key && res.value) {
+            updates[res.key] = res.value;
+          }
+        }
+        if (Object.keys(updates).length > 0) {
+          setDistances(prev => ({ ...prev, ...updates }));
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedTrip?.id, itineraries, combinedPlaces, fetchOSRMDistance]);
 
   useEffect(() => {
     if (selectedTrip) {
-      setItinTargetDate(selectedTrip.start_date || '');
+      const targetDate = selectedTrip.start_date || '';
+      setItinTargetDate(prev => (prev === targetDate ? prev : targetDate));
       
       try {
         const notesObj = safeParseNotes(selectedTrip.notes);
@@ -950,15 +1612,20 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
           const colLocIds = colPlaces.map(p => p.location_id);
           locIdsToSet = [...new Set([...locIdsToSet, ...colLocIds])];
         }
-        setStopFilterLocationIds(locIdsToSet);
+        setStopFilterLocationIds(prev => {
+          if (prev.length === locIdsToSet.length && prev.every((id, i) => id === locIdsToSet[i])) {
+            return prev;
+          }
+          return locIdsToSet;
+        });
       } catch (e) {
         console.warn('Failed to parse trip notes for locations/collections:', e);
       }
     } else {
-      setItinTargetDate('');
-      setStopFilterLocationIds([]);
+      setItinTargetDate(prev => (prev === '' ? prev : ''));
+      setStopFilterLocationIds(prev => (prev.length === 0 ? prev : []));
     }
-  }, [selectedTrip, places, collections]);
+  }, [selectedTrip?.id, selectedTrip?.notes, selectedTrip?.start_date, places, collections]);
 
   useEffect(() => {
     fetch('/api/auth/me', {
@@ -1000,10 +1667,17 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
 
   useEffect(() => {
     if (selectedTrip) {
-      setPlannedBudgetInput(getTripPlannedBudget(selectedTrip) || '');
-      setSelectedTripCurrencies(getTripCurrencies(selectedTrip) || []);
+      const planned = getTripPlannedBudget(selectedTrip) || '';
+      setPlannedBudgetInput(prev => (prev === planned ? prev : planned));
+      const curs = getTripCurrencies(selectedTrip) || [];
+      setSelectedTripCurrencies(prev => {
+        if (prev.length === curs.length && prev.every((c, i) => c === curs[i])) {
+          return prev;
+        }
+        return curs;
+      });
     }
-  }, [selectedTrip]);
+  }, [selectedTrip?.id, selectedTrip?.notes]);
 
   const handleUpdateTripConfig = async (updatedFields) => {
     if (!selectedTrip) return;
@@ -1101,7 +1775,12 @@ ${placeLines.join('\n')}`;
       else parts.push(`Location: Any`);
 
       if (isFirst && hasStartHome) {
-        parts.push(`Origin: Starts from Home (Trip Origin)`);
+        const driveToStayFirst = dayEndpoints[d.date]?.driveToStayFirst ?? false;
+        if (driveToStayFirst && hotelPlace) {
+          parts.push(`Origin: Starts from Home -> Drives to Hotel first ("${hotelPlace.name}") to check-in/drop bags before sightseeing`);
+        } else {
+          parts.push(`Origin: Starts from Home (Trip Origin)`);
+        }
       }
 
       if (hotelPlace) {
@@ -1301,90 +1980,6 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
   const [mainResFile, setMainResFile] = useState(null);
   const [editingReservationId, setEditingReservationId] = useState(null);
   const [activePdfUrl, setActivePdfUrl] = useState(null);
-
-  // Helper: Haversine distance
-  const getHaversine = (p1, p2) => {
-    if (!p1.latitude || !p1.longitude || !p2.latitude || !p2.longitude) return 0;
-    const R = 6371; // km
-    const dLat = (p2.latitude - p1.latitude) * Math.PI / 180;
-    const dLon = (p2.longitude - p1.longitude) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(p1.latitude * Math.PI / 180) * Math.cos(p2.latitude * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return Math.round(R * c * 10) / 10;
-  };
-
-  // Helper: Retrieve actual driving route from Google RouteMatrix computeRouteMatrix or OSRM
-  const fetchOSRMDistance = async (p1, p2) => {
-    if (!p1 || !p2 || !p1.latitude || !p1.longitude || !p2.latitude || !p2.longitude) return;
-    const key = `${p1.id}-${p2.id}`;
-    if (distances[key]) return distances[key];
-    if (pendingOSRMFetches.current.has(key)) return;
-    pendingOSRMFetches.current.add(key);
-
-    try {
-      const apiKey = localStorage.getItem('google_maps_api_key');
-      const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
-
-      // 1. Try Google Maps RouteMatrix computeRouteMatrix (v2 REST API)
-      if (apiKey && googleMapsEnabled) {
-        try {
-          const routeRes = await fetch('https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Goog-Api-Key': apiKey,
-              'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,distanceMeters,status'
-            },
-            body: JSON.stringify({
-              origins: [{ waypoint: { location: { latLng: { latitude: parseFloat(p1.latitude), longitude: parseFloat(p1.longitude) } } } }],
-              destinations: [{ waypoint: { location: { latLng: { latitude: parseFloat(p2.latitude), longitude: parseFloat(p2.longitude) } } } }],
-              travelMode: 'DRIVE'
-            })
-          });
-
-          if (routeRes.ok) {
-            const matrixData = await routeRes.json();
-            const elem = Array.isArray(matrixData) ? matrixData[0] : matrixData;
-            if (elem && elem.distanceMeters) {
-              const distKm = Math.round((elem.distanceMeters / 1000) * 10) / 10;
-              const durSecs = parseInt((elem.duration || '0').replace('s', ''), 10) || 0;
-              const durationMins = Math.round(durSecs / 60);
-              const valObj = { distance: distKm, duration: durationMins };
-              setDistances(prev => ({ ...prev, [key]: valObj }));
-              return valObj;
-            }
-          }
-        } catch (e) {
-          console.warn('Google RouteMatrix computeRouteMatrix failed, falling back to OSRM:', e);
-        }
-      }
-
-      // 2. Try OSRM Routing API for driving distance & travel duration
-      const url = `https://router.project-osrm.org/route/v1/driving/${p2.longitude},${p2.latitude};${p1.longitude},${p1.latitude}?overview=false`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.routes && data.routes[0]) {
-          const distKm = Math.round((data.routes[0].distance / 1000) * 10) / 10;
-          const durationMins = Math.round(data.routes[0].duration / 60);
-          const valObj = { distance: distKm, duration: durationMins };
-          setDistances(prev => ({ ...prev, [key]: valObj }));
-          return valObj;
-        }
-      }
-    } catch (e) {
-      console.warn('OSRM routing fetch failed, using haversine fallback:', e);
-    }
-
-    // 3. Fallback to Haversine straight-line distance calculation
-    const distKm = getHaversine(p1, p2);
-    const valObj = { distance: distKm, duration: Math.round(distKm * 2) };
-    setDistances(prev => ({ ...prev, [key]: valObj }));
-    return valObj;
-  };
 
   const handleWizardNext = async (e) => {
     e.preventDefault();
@@ -2928,22 +3523,24 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
               </p>
               {getTripNotesDescription(trip) && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '12px' }}>{getTripNotesDescription(trip).substring(0, 80)}...</p>}
             </div>
-            <div style={{ padding: '0 16px 16px 16px', borderTop: '1px solid rgba(255,255,255,0.02)' }}>
+            <div style={{ padding: '0 16px 16px 16px', borderTop: '1px solid var(--border-glass)' }}>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   handleToggleActiveTrip(trip.id);
                 }}
-                className="btn btn-secondary"
+                className={`btn ${activeTripId.toString() === trip.id.toString() ? 'btn-primary active-trip-btn' : 'btn-secondary'}`}
                 style={{ 
                   marginTop: '10px', 
-                  padding: '6px 12px', 
+                  padding: '6px 14px', 
                   fontSize: '0.75rem', 
-                  background: activeTripId.toString() === trip.id.toString() ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
-                  borderColor: activeTripId.toString() === trip.id.toString() ? 'var(--accent-primary)' : 'var(--border-glass)',
-                  color: activeTripId.toString() === trip.id.toString() ? '#000' : '#fff',
                   width: 'auto',
-                  fontWeight: 600
+                  fontWeight: 600,
+                  borderRadius: '20px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: activeTripId.toString() === trip.id.toString() ? '0 2px 10px var(--accent-primary-glow)' : 'none'
                 }}
               >
                 {activeTripId.toString() === trip.id.toString() ? '⭐ Active Trip' : 'Set as Active'}
@@ -4291,8 +4888,102 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
               height: '100%',
               background: 'var(--bg-surface)'
             }}>
-              <div style={{ padding: '16px', borderBottom: '1px solid var(--border-glass)' }}>
+              <div style={{ padding: '16px', borderBottom: '1px solid var(--border-glass)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>Itinerary Days</h3>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  {resetBackupSnapshot && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={async () => {
+                        if (!selectedTrip || !resetBackupSnapshot) return;
+                        setIsResettingItinerary(true);
+                        try {
+                          // 1. Restore itinerary items
+                          const currentItems = itineraries.filter(i => i.trip_id === selectedTrip.id);
+                          for (const it of currentItems) {
+                            await db.itinerary_items.delete(it.id);
+                            await queueSyncAction('itinerary_items', 'delete', { id: it.id });
+                          }
+                          for (const it of resetBackupSnapshot.itineraries) {
+                            await db.itinerary_items.put(it);
+                            await queueSyncAction('itinerary_items', 'insert', it);
+                          }
+
+                          // 2. Restore trip notes and endpoints
+                          const restoredTrip = {
+                            ...selectedTrip,
+                            notes: resetBackupSnapshot.notes,
+                            start_address_id: resetBackupSnapshot.start_address_id,
+                            stop_address_id: resetBackupSnapshot.stop_address_id
+                          };
+                          await db.trips.update(selectedTrip.id, restoredTrip);
+                          await queueSyncAction('trips', 'update', restoredTrip);
+                          setSelectedTrip(restoredTrip);
+                          setResetBackupSnapshot(null);
+                        } catch (err) {
+                          console.error('Error undoing itinerary reset:', err);
+                        } finally {
+                          setIsResettingItinerary(false);
+                        }
+                      }}
+                      disabled={isResettingItinerary}
+                      style={{
+                        width: 'auto',
+                        padding: '4px 10px',
+                        fontSize: '0.75rem',
+                        height: '28px',
+                        margin: 0,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: 'rgba(59, 130, 246, 0.15)',
+                        color: '#60a5fa',
+                        border: '1px solid rgba(59, 130, 246, 0.3)'
+                      }}
+                      title="Undo the last reset and restore itinerary places, locations, and stays"
+                    >
+                      <span>↺ Undo Reset</span>
+                    </button>
+                  )}
+                  {(() => {
+                    const tripItems = itineraries.filter(i => i.trip_id === selectedTrip?.id);
+                    const curNotes = safeParseNotes(selectedTrip?.notes);
+                    const hasDayLocs = curNotes.dayLocations && Object.keys(curNotes.dayLocations).length > 0;
+                    const hasHotels = curNotes.hotels && Object.keys(curNotes.hotels).length > 0;
+                    const hasEndpoints = curNotes.dayEndpoints && Object.keys(curNotes.dayEndpoints).length > 0;
+                    const hasBehaviors = curNotes.dayStayBehaviors && Object.keys(curNotes.dayStayBehaviors).length > 0;
+                    const hasStartStop = Boolean(selectedTrip?.start_address_id || selectedTrip?.stop_address_id);
+                    const hasAnyItineraryData = tripItems.length > 0 || hasDayLocs || hasHotels || hasEndpoints || hasBehaviors || hasStartStop;
+
+                    if (!hasAnyItineraryData) return null;
+
+                    return (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setShowResetConfirmModal(true)}
+                        disabled={isResettingItinerary}
+                        style={{
+                          width: 'auto',
+                          padding: '4px 10px',
+                          fontSize: '0.75rem',
+                          height: '28px',
+                          margin: 0,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          color: 'var(--danger)',
+                          borderColor: 'rgba(239, 68, 68, 0.3)'
+                        }}
+                        title="Clear all scheduled places, day locations, stays, and home endpoints"
+                      >
+                        <Trash2 size={12} />
+                        <span>Reset</span>
+                      </button>
+                    );
+                  })()}
+                </div>
               </div>
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {itineraryDays.map((day, dIdx) => {
@@ -4311,6 +5002,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   const isLastDay = dIdx === itineraryDays.length - 1;
                   const startFromHome = dayEndpoints[day.date]?.startFromHome ?? (isFirstDay && Boolean(selectedTrip.start_address_id));
                   const lastDayGoHome = dayEndpoints[day.date]?.lastDayGoHome ?? (isLastDay && Boolean(selectedTrip.stop_address_id));
+                  const driveToStayFirst = dayEndpoints[day.date]?.driveToStayFirst ?? false;
                   const stayBehavior = dayStayBehaviors[day.date] || 'stay_night';
 
                   const hotelPlaceId = hotelsObj[day.date];
@@ -4340,15 +5032,21 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     });
                   }
 
-                  // 2. Depart Stay (only for Day 2+ onwards if stay_night or checkout)
-                  if (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+                  // 2. Depart Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked)
+                  const shouldIncludeStayOrigin = (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) ||
+                    (isFirstDay && isDay1StartingFromHome && hotelPlace && driveToStayFirst);
+
+                  if (shouldIncludeStayOrigin) {
                     const firstItemIsHotel = dayItems.length > 0 && String(dayItems[0].place_id) === String(hotelPlace.id);
                     if (!firstItemIsHotel) {
+                      const originLabel = isFirstDay
+                        ? `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+                        : (stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`);
                       dayElements.push({
                         place: hotelPlace,
                         isFixedEndpoint: true,
                         endpointType: 'stay_origin',
-                        label: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
+                        label: originLabel
                       });
                     }
                   }
@@ -4422,7 +5120,6 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                         const key = `${p1.id}-${p2.id}`;
                         let distObj = distances[key];
                         if (distObj === undefined) {
-                          fetchOSRMDistance(p1, p2);
                           const hav = getHaversine(p1, p2);
                           distObj = { distance: hav, duration: Math.round(hav / 40 * 60), mode };
                         } else if (typeof distObj === 'object') {
@@ -4644,6 +5341,30 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                               <option key={addr.id} value={addr.id} style={{ background: 'var(--bg-surface)' }}>🏠 {addr.label} {addr.address ? `(${addr.address})` : ''}</option>
                             ))}
                           </select>
+                        </div>
+                      )}
+
+                      {/* Day 1: Option to drive to stay first if starting from home and stay is assigned */}
+                      {isFirstDay && Boolean(startAddrObj) && Boolean(hotelPlace) && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', background: 'rgba(139, 92, 246, 0.08)', border: '1px dashed var(--accent-primary)', borderRadius: '4px', padding: '6px 10px', boxSizing: 'border-box' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', cursor: 'pointer', margin: 0, color: 'var(--text-primary)', userSelect: 'none', width: '100%' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={Boolean(driveToStayFirst)}
+                              onChange={async (e) => {
+                                const checked = e.target.checked;
+                                const curNotes = safeParseNotes(selectedTrip.notes);
+                                curNotes.dayEndpoints = curNotes.dayEndpoints || {};
+                                curNotes.dayEndpoints[day.date] = { ...(curNotes.dayEndpoints[day.date] || {}), driveToStayFirst: checked };
+                                const updated = { ...selectedTrip, notes: JSON.stringify(curNotes) };
+                                await queueSyncAction('trips', 'update', updated);
+                                setSelectedTrip(updated);
+                              }}
+                              style={{ width: '15px', height: '15px', accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
+                            />
+                            <span style={{ fontWeight: 500 }}>🏨 Drive to stay first</span>
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>(Check-in / drop bags before visiting places)</span>
+                          </label>
                         </div>
                       )}
 
@@ -4918,11 +5639,11 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border-glass)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>Places Bank</h3>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'nowrap' }}>
                     <button 
                       className="btn btn-primary"
                       onClick={() => handleOpenBankAiModal()}
-                      style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
                       title="Plan Trip using AI from all places in Places Bank"
                     >
                       ✨ AI Plan
@@ -4930,48 +5651,118 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     <button 
                       className="btn btn-secondary"
                       onClick={() => setShowAddLocationDropdown(!showAddLocationDropdown)}
-                      style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0 }}
+                      style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', height: '28px', margin: 0, whiteSpace: 'nowrap' }}
+                      title="Add or manage locations and folders in Places Bank"
                     >
-                      ➕ Add Folder
+                      Add Location
                     </button>
                   </div>
                 </div>
 
                 {showAddLocationDropdown && (
-                  <div style={{
-                    position: 'absolute', top: '50px', right: '16px', background: 'var(--bg-surface-elevated)',
-                    border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '12px', zIndex: 1200,
-                    width: '240px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)'
-                  }}>
-                    <h5 style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--text-primary)' }}>Select folders to add:</h5>
-                    <div style={{ maxHeight: '150px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {locations.filter(l => l.is_folder !== 1 && !stopFilterLocationIds.includes(l.id)).map(loc => (
-                        <label key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', margin: 0, color: 'var(--text-primary)' }}>
-                          <input 
-                            type="checkbox"
-                            onChange={async (e) => {
-                              if (e.target.checked) {
-                                const updatedLocIds = [...stopFilterLocationIds, loc.id];
-                                setStopFilterLocationIds(updatedLocIds);
-                                
-                                if (selectedTrip) {
-                                  const existingNotes = safeParseNotes(selectedTrip.notes);
-                                  const savedLocIds = existingNotes.locationIds || [];
-                                  if (!savedLocIds.includes(loc.id)) {
-                                    existingNotes.locationIds = [...savedLocIds, loc.id];
-                                    const updatedTrip = { ...selectedTrip, notes: JSON.stringify(existingNotes) };
-                                    await queueSyncAction('trips', 'update', updatedTrip);
-                                    setSelectedTrip(updatedTrip);
+                  <div 
+                    ref={addFolderDropdownRef}
+                    style={{
+                      position: 'absolute', top: '50px', right: '16px', background: 'var(--bg-surface-elevated)',
+                      border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '12px', zIndex: 1200,
+                      width: '260px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid var(--border-glass)' }}>
+                      <h5 style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary)' }}>Locations & Folders:</h5>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => {
+                          setShowAddLocationDropdown(false);
+                          setShowAddFolderModal(true);
+                        }}
+                        style={{ width: 'auto', padding: '2px 10px', fontSize: '0.75rem', height: '24px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                        title="Create a brand new location or folder"
+                      >
+                        New
+                      </button>
+                    </div>
+
+                    <div style={{ position: 'relative', marginBottom: '8px' }}>
+                      <Search size={13} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                      <input
+                        type="text"
+                        placeholder="Search locations..."
+                        className="form-control"
+                        style={{ height: '28px', fontSize: '0.78rem', paddingLeft: '26px', paddingRight: folderDropdownSearch ? '22px' : '8px' }}
+                        value={folderDropdownSearch}
+                        onChange={(e) => setFolderDropdownSearch(e.target.value)}
+                        autoFocus
+                      />
+                      {folderDropdownSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setFolderDropdownSearch('')}
+                          title="Clear search"
+                          style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {locations
+                        .filter(loc => !folderDropdownSearch || (loc.name || '').toLowerCase().includes(folderDropdownSearch.toLowerCase()))
+                        .map(loc => {
+                          const isAdded = stopFilterLocationIds.includes(loc.id);
+                          const isFolder = loc.is_folder === 1 || loc.is_folder === true || loc.is_folder === '1';
+                          return (
+                            <label key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', margin: 0, color: 'var(--text-primary)' }}>
+                              <input 
+                                type="checkbox"
+                                checked={isAdded}
+                                onChange={async (e) => {
+                                  if (e.target.checked) {
+                                    const updatedLocIds = [...stopFilterLocationIds, loc.id];
+                                    setStopFilterLocationIds(updatedLocIds);
+                                    
+                                    if (selectedTrip) {
+                                      const existingNotes = safeParseNotes(selectedTrip.notes);
+                                      const savedLocIds = existingNotes.locationIds || [];
+                                      if (!savedLocIds.includes(loc.id)) {
+                                        existingNotes.locationIds = [...savedLocIds, loc.id];
+                                        const updatedTrip = { ...selectedTrip, notes: JSON.stringify(existingNotes) };
+                                        await db.trips.update(selectedTrip.id, updatedTrip);
+                                        await queueSyncAction('trips', 'update', updatedTrip);
+                                        setSelectedTrip(updatedTrip);
+                                      }
+                                    }
+                                  } else {
+                                    const updatedLocIds = stopFilterLocationIds.filter(id => id !== loc.id);
+                                    setStopFilterLocationIds(updatedLocIds);
+                                    
+                                    if (selectedTrip) {
+                                      const existingNotes = safeParseNotes(selectedTrip.notes);
+                                      const savedLocIds = existingNotes.locationIds || [];
+                                      existingNotes.locationIds = savedLocIds.filter(id => id !== loc.id);
+                                      const updatedTrip = { ...selectedTrip, notes: JSON.stringify(existingNotes) };
+                                      await db.trips.update(selectedTrip.id, updatedTrip);
+                                      await queueSyncAction('trips', 'update', updatedTrip);
+                                      setSelectedTrip(updatedTrip);
+                                    }
                                   }
-                                }
-                              }
-                            }}
-                          />
-                          {loc.name}
-                        </label>
-                      ))}
-                      {locations.filter(l => l.is_folder !== 1 && !stopFilterLocationIds.includes(l.id)).length === 0 && (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No other folders available.</span>
+                                }}
+                              />
+                              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {isFolder ? '📁 ' : '📍 '}{loc.name}
+                              </span>
+                              {isAdded && <span style={{ fontSize: '0.65rem', color: 'var(--accent-primary)', opacity: 0.85 }}>Added</span>}
+                            </label>
+                          );
+                        })}
+                      {locations.length === 0 && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No locations available.</span>
+                      )}
+                      {locations.length > 0 && 
+                       locations.filter(loc => !folderDropdownSearch || (loc.name || '').toLowerCase().includes(folderDropdownSearch.toLowerCase())).length === 0 && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No matching locations found.</span>
                       )}
                     </div>
                     <button 
@@ -4996,28 +5787,106 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {locations
-                  .filter(l => l.is_folder !== 1 && stopFilterLocationIds.includes(l.id))
+                  .filter(l => stopFilterLocationIds.includes(l.id))
                   .map(loc => {
                     const scheduledPlaceIds = itineraries
                       .filter(i => i.trip_id === selectedTrip.id)
                       .map(i => i.place_id);
                     const folderPlaces = places.filter(p => p.location_id === loc.id && (!scheduledPlaceIds.includes(p.id) || isStayPlace(p)) && (!stopPlaceSearch || p.name.toLowerCase().includes(stopPlaceSearch.toLowerCase())));
 
-                    const activePlacesInLoc = places.filter(pl => pl.is_folder !== 1 && stopFilterLocationIds.includes(pl.location_id));
-                    const sortedActivePlacesInLoc = [...activePlacesInLoc].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                    const placesInThisLoc = places.filter(p => p.location_id === loc.id);
+                    const hasScheduledPlaces = placesInThisLoc.some(p => scheduledPlaceIds.includes(p.id));
+
+                    const tripNotesObj = safeParseNotes(selectedTrip?.notes);
+                    const assignedDayLocations = Object.values(tripNotesObj.dayLocations || {});
+                    const isLocationAssignedToDay = assignedDayLocations.some(locId => String(locId) === String(loc.id));
+
+                    const assignedHotelIds = Object.values(tripNotesObj.hotels || {});
+                    const isHotelInLocationAssigned = placesInThisLoc.some(p => assignedHotelIds.some(hId => String(hId) === String(p.id)));
+
+                    const isFolderInUse = hasScheduledPlaces || isLocationAssignedToDay || isHotelInLocationAssigned;
+
+                    const handleRemoveFolderFromBank = async (e) => {
+                      e.stopPropagation();
+                      const updatedLocIds = stopFilterLocationIds.filter(id => id !== loc.id);
+                      setStopFilterLocationIds(updatedLocIds);
+
+                      if (selectedTrip) {
+                        const existingNotes = safeParseNotes(selectedTrip.notes);
+                        const savedLocIds = existingNotes.locationIds || [];
+                        existingNotes.locationIds = savedLocIds.filter(id => id !== loc.id);
+                        const updatedTrip = { ...selectedTrip, notes: JSON.stringify(existingNotes) };
+                        await db.trips.update(selectedTrip.id, updatedTrip);
+                        await queueSyncAction('trips', 'update', updatedTrip);
+                        setSelectedTrip(updatedTrip);
+                      }
+                    };
+
+                    const isLocFolder = loc.is_folder === 1 || loc.is_folder === true || loc.is_folder === '1';
 
                     return (
                       <div key={loc.id} style={{ border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '10px', background: 'var(--bg-surface-elevated)' }}>
-                        <div 
-                          draggable={true}
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'folder', id: loc.id }));
-                          }}
-                          style={{
-                            fontSize: '0.85rem', fontWeight: 600, cursor: 'grab', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-primary)', marginBottom: '8px'
-                          }}
-                        >
-                          📁 <span>{loc.name}</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <div 
+                            draggable={true}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'folder', id: loc.id }));
+                            }}
+                            style={{
+                              fontSize: '0.85rem', fontWeight: 600, cursor: 'grab', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-primary)',
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '6px'
+                            }}
+                          >
+                            <span>{isLocFolder ? '📁' : '📍'}</span> <span>{loc.name}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTargetPlaceLocation(loc);
+                                setNewPlaceCategory('Attraction');
+                                setShowAddPlaceModal(true);
+                              }}
+                              style={{
+                                width: 'auto',
+                                padding: '2px 8px',
+                                fontSize: '0.7rem',
+                                height: '22px',
+                                margin: 0,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                              title={`Add place to ${loc.name}`}
+                            >
+                              Add Place
+                            </button>
+                            {!isFolderInUse && (
+                              <button
+                                type="button"
+                                className="photo-action-btn"
+                                onClick={handleRemoveFolderFromBank}
+                                style={{
+                                  width: '22px',
+                                  height: '22px',
+                                  padding: 0,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  color: 'var(--danger)',
+                                  background: 'rgba(239, 68, 68, 0.1)',
+                                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer'
+                                }}
+                                title={`Remove folder "${loc.name}" from Places Bank`}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '14px' }}>
                           {folderPlaces.map(p => {
@@ -5269,6 +6138,132 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
           </div>
         </div>
       )}
+      {showResetConfirmModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
+          padding: '20px', backdropFilter: 'blur(6px)'
+        }}>
+          <div className="login-card" style={{ maxWidth: '440px', width: '100%', padding: '24px', position: 'relative' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Trash2 size={20} style={{ color: '#ef4444' }} />
+                <span>Reset Itinerary?</span>
+              </h3>
+              <X 
+                size={20} 
+                style={{ cursor: isResettingItinerary ? 'not-allowed' : 'pointer', color: 'var(--text-primary)' }} 
+                onClick={() => !isResettingItinerary && setShowResetConfirmModal(false)} 
+              />
+            </div>
+            
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 16px 0', lineHeight: '1.5' }}>
+              Are you sure you want to reset this itinerary? This will clear all scheduled sightseeing stops, assigned day locations, stays/accommodations, and home origin/destination endpoints for this trip.
+            </p>
+
+            <div style={{
+              padding: '10px 12px',
+              background: 'rgba(59, 130, 246, 0.12)',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '0.75rem',
+              color: 'var(--text-primary)',
+              marginBottom: '24px'
+            }}>
+              <span>💡</span>
+              <span>An <strong>Undo Reset</strong> button will be available immediately if you change your mind.</span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowResetConfirmModal(false)}
+                disabled={isResettingItinerary}
+                style={{
+                  width: 'auto',
+                  padding: '8px 18px',
+                  fontSize: '0.85rem',
+                  cursor: 'pointer',
+                  margin: 0
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={isResettingItinerary}
+                onClick={async () => {
+                  if (!selectedTrip) return;
+                  setIsResettingItinerary(true);
+                  try {
+                    // 1. Take a snapshot of current itinerary and trip state for Undo
+                    const currentTripItems = itineraries.filter(i => i.trip_id === selectedTrip.id);
+                    setResetBackupSnapshot({
+                      itineraries: currentTripItems,
+                      notes: selectedTrip.notes,
+                      start_address_id: selectedTrip.start_address_id,
+                      stop_address_id: selectedTrip.stop_address_id
+                    });
+
+                    // 2. Delete all itinerary items for this trip
+                    for (const it of currentTripItems) {
+                      await db.itinerary_items.delete(it.id);
+                      await queueSyncAction('itinerary_items', 'delete', { id: it.id });
+                    }
+
+                    // 3. Clear day locations, hotels, day endpoints, and stay behaviors from notes
+                    const curNotes = safeParseNotes(selectedTrip.notes);
+                    delete curNotes.dayLocations;
+                    delete curNotes.hotels;
+                    delete curNotes.dayEndpoints;
+                    delete curNotes.dayStayBehaviors;
+                    delete curNotes.segmentTransport;
+
+                    const updatedTrip = {
+                      ...selectedTrip,
+                      notes: JSON.stringify(curNotes),
+                      start_address_id: null,
+                      stop_address_id: null
+                    };
+
+                    await db.trips.update(selectedTrip.id, updatedTrip);
+                    await queueSyncAction('trips', 'update', updatedTrip);
+                    setSelectedTrip(updatedTrip);
+                    setShowResetConfirmModal(false);
+                  } catch (err) {
+                    console.error('Error resetting itinerary:', err);
+                  } finally {
+                    setIsResettingItinerary(false);
+                  }
+                }}
+                style={{
+                  width: 'auto',
+                  padding: '8px 20px',
+                  fontSize: '0.85rem',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: '#ef4444',
+                  color: '#ffffff',
+                  border: '1px solid #dc2626',
+                  borderRadius: 'var(--radius-sm)',
+                  fontWeight: '600',
+                  cursor: isResettingItinerary ? 'not-allowed' : 'pointer',
+                  margin: 0,
+                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.4)'
+                }}
+              >
+                {isResettingItinerary ? 'Resetting...' : 'Yes, Reset Itinerary'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {editingSegment && (
         <div className="modal-backdrop" style={{ zIndex: 1400, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           <div className="modal-content" style={{ maxWidth: '440px', width: '90%', padding: '20px' }}>
@@ -5365,6 +6360,341 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
           </div>
         </div>
       )}
+
+      {/* Add Location/Folder Modal for Places Bank */}
+      {showAddFolderModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
+          padding: '20px', backdropFilter: 'blur(6px)'
+        }}>
+          <div className="login-card" style={{ maxWidth: '500px', width: '100%', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {newFolderIsFolder ? '📁 Add New Folder' : '📍 Add New Location'}
+              </h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowAddFolderModal(false)} />
+            </div>
+
+            {/* Geocode Search */}
+            <div className="form-group">
+              <label>Search {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'} for Region / City</label>
+              <div className="search-input-wrapper" style={{ position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ paddingLeft: '38px', paddingRight: newFolderSearchQuery ? '32px' : '12px' }}
+                  placeholder="e.g. Paris, Tokyo, Bali..."
+                  value={newFolderSearchQuery}
+                  onChange={(e) => setNewFolderSearchQuery(e.target.value)}
+                />
+                {newFolderSearchQuery && (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    onClick={() => {
+                      setNewFolderSearchQuery('');
+                      setNewFolderSearchResults([]);
+                    }}
+                    title="Clear search"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              {isSearchingFolder && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'}...</p>}
+              {newFolderSearchResults.length > 0 && (
+                <div style={{
+                  background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-sm)', marginTop: '8px', maxHeight: '150px', overflowY: 'auto',
+                  position: 'relative', zIndex: 10
+                }}>
+                  {newFolderSearchResults.map((r, i) => (
+                    <div 
+                      key={i} 
+                      onClick={() => handleSelectFolderSearchResult(r)}
+                      style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-glass)', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                      {r.display_name}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleCreateFolderFromBank}>
+              <div className="form-group">
+                <label>{newFolderIsFolder ? 'Folder Name' : 'Location Name'}</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  required
+                  placeholder={newFolderIsFolder ? "e.g. Tokyo, Paris Trip 2026..." : "e.g. Shinjuku, Eiffel Tower Area..."}
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>State / Region</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Kanto, Île-de-France"
+                    value={newFolderState}
+                    onChange={(e) => setNewFolderState(e.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Country</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Japan, France"
+                    value={newFolderCountry}
+                    onChange={(e) => setNewFolderCountry(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Latitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    value={newFolderLat}
+                    onChange={(e) => setNewFolderLat(e.target.value)}
+                    onPaste={(e) => handleCoordsPaste(e, setNewFolderLat, setNewFolderLon)}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Longitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    value={newFolderLon}
+                    onChange={(e) => setNewFolderLon(e.target.value)}
+                    onPaste={(e) => handleCoordsPaste(e, setNewFolderLat, setNewFolderLon)}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <input
+                  type="checkbox"
+                  id="createAsFolderBank"
+                  checked={newFolderIsFolder}
+                  onChange={(e) => setNewFolderIsFolder(e.target.checked)}
+                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                <label htmlFor="createAsFolderBank" style={{ cursor: 'pointer', fontSize: '0.85rem', userSelect: 'none', margin: 0, color: 'var(--text-primary)' }}>
+                  Create as Folder (allows grouping other locations/places inside)
+                </label>
+              </div>
+
+              <div className="form-group">
+                <label>Folder (Optional)</label>
+                <select
+                  className="form-control"
+                  value={newFolderParentId}
+                  onChange={(e) => setNewFolderParentId(e.target.value)}
+                >
+                  <option value="">None (Top Level / Root)</option>
+                  {allAvailableFolders.map(folder => (
+                    <option key={folder.id} value={folder.id}>
+                      📁 {folder.fullPath}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Notes</label>
+                <textarea
+                  className="form-control"
+                  rows="3"
+                  placeholder="Optional details or itinerary notes..."
+                  value={newFolderNotes}
+                  onChange={(e) => setNewFolderNotes(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddFolderModal(false)} style={{ flex: 1 }}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={isSavingFolder || !newFolderName.trim()} style={{ flex: 1 }}>
+                  {isSavingFolder ? 'Saving...' : (newFolderIsFolder ? 'Save Folder' : 'Save Location')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Place Modal for Places Bank */}
+      {showAddPlaceModal && targetPlaceLocation && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
+          padding: '20px', backdropFilter: 'blur(6px)'
+        }}>
+          <div className="login-card" style={{ maxWidth: '500px', width: '100%', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <MapPin size={18} style={{ color: 'var(--accent-primary)' }} /> Add Place of Visit
+                </h3>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Adding to folder: 📁 <strong>{targetPlaceLocation.name}</strong>
+                </span>
+              </div>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowAddPlaceModal(false)} />
+            </div>
+
+            {/* Place Search */}
+            <div className="form-group">
+              <label>Search {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'} for Place / Landmark</label>
+              <div className="search-input-wrapper" style={{ position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ paddingLeft: '38px', paddingRight: newPlaceSearchQuery ? '32px' : '12px' }}
+                  placeholder="Search landmarks, sights, cafes near this location..."
+                  value={newPlaceSearchQuery}
+                  onChange={(e) => setNewPlaceSearchQuery(e.target.value)}
+                />
+                {newPlaceSearchQuery && (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    onClick={() => {
+                      setNewPlaceSearchQuery('');
+                      setNewPlaceSearchResults([]);
+                    }}
+                    title="Clear search"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              {isSearchingPlace && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px' }}>Searching {localStorage.getItem('google_maps_api_key') && localStorage.getItem('google_maps_enabled') !== 'false' ? 'Google Maps' : 'OSM'}...</p>}
+              {newPlaceSearchResults.length > 0 && (
+                <div style={{
+                  background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-sm)', marginTop: '8px', maxHeight: '150px', overflowY: 'auto',
+                  position: 'relative', zIndex: 10
+                }}>
+                  {newPlaceSearchResults.map((r, i) => (
+                    <div 
+                      key={i} 
+                      onClick={() => handleSelectPlaceSearchResult(r)}
+                      style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-glass)', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                      {r.display_name}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleCreatePlaceFromBank}>
+              <div className="form-group">
+                <label>Place Name *</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  required
+                  placeholder="e.g. Senso-ji, Eiffel Tower..."
+                  value={newPlaceName}
+                  onChange={(e) => setNewPlaceName(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Category</label>
+                  <select
+                    className="form-control"
+                    value={newPlaceCategory}
+                    onChange={(e) => setNewPlaceCategory(e.target.value)}
+                  >
+                    {allPlaceCategories.map(c => (
+                      <option key={c.id} value={c.name}>{c.icon || '📌'} {c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Target Folder</label>
+                  <select
+                    className="form-control"
+                    value={targetPlaceLocation.id}
+                    onChange={(e) => {
+                      const found = locations.find(l => l.id === e.target.value);
+                      if (found) setTargetPlaceLocation(found);
+                    }}
+                  >
+                    {locations.filter(l => l.is_folder !== 1).map(loc => (
+                      <option key={loc.id} value={loc.id}>📁 {loc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Latitude (Optional)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    value={newPlaceLat}
+                    onChange={(e) => setNewPlaceLat(e.target.value)}
+                    onPaste={(e) => handleCoordsPaste(e, setNewPlaceLat, setNewPlaceLon)}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Longitude (Optional)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    value={newPlaceLon}
+                    onChange={(e) => setNewPlaceLon(e.target.value)}
+                    onPaste={(e) => handleCoordsPaste(e, setNewPlaceLat, setNewPlaceLon)}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Notes (Optional)</label>
+                <textarea
+                  className="form-control"
+                  rows="3"
+                  placeholder="Opening hours, tips, ticket information..."
+                  value={newPlaceNotes}
+                  onChange={(e) => setNewPlaceNotes(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddPlaceModal(false)} style={{ flex: 1 }}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={isSavingPlace || !newPlaceName.trim()} style={{ flex: 1 }}>
+                  {isSavingPlace ? 'Saving...' : 'Save Place'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5423,6 +6753,7 @@ const ItineraryDay = ({
 
   const startFromHome = dayEndpoints[date]?.startFromHome ?? (isFirstDay && Boolean(selectedTrip?.start_address_id));
   const lastDayGoHome = dayEndpoints[date]?.lastDayGoHome ?? (isLastDay && Boolean(selectedTrip?.stop_address_id));
+  const driveToStayFirst = dayEndpoints[date]?.driveToStayFirst ?? false;
   const stayBehavior = dayStayBehaviors[date] || 'stay_night';
 
   const hotelPlaceId = hotelsObj[date];
@@ -5452,15 +6783,21 @@ const ItineraryDay = ({
       });
     }
 
-    // 2. Depart Stay (only on Day 2+ for stay_night or checkout)
-    if (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+    // 2. Depart Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked)
+    const shouldIncludeStayOrigin = (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) ||
+      (isFirstDay && Boolean(startAddrObj) && hotelPlace && driveToStayFirst);
+
+    if (shouldIncludeStayOrigin) {
       const firstItemIsHotel = items.length > 0 && items[0].place_id === hotelPlace.id;
       if (!firstItemIsHotel) {
+        const originLabel = isFirstDay
+          ? `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+          : (stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`);
         elems.push({
           place: hotelPlace,
           isFixedEndpoint: true,
           endpointType: 'stay_origin',
-          label: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
+          label: originLabel
         });
       }
     }
@@ -5533,7 +6870,6 @@ const ItineraryDay = ({
           const key = `${p1.id}-${p2.id}`;
           let distObj = distances[key];
           if (distObj === undefined) {
-            fetchOSRMDistance(p1, p2);
             const hav = getHaversine(p1, p2);
             distObj = { distance: hav, duration: Math.round(hav / 40 * 60), mode };
           } else if (typeof distObj === 'object') {
@@ -5551,7 +6887,7 @@ const ItineraryDay = ({
       }
     }
     return list;
-  }, [dayElements, distances, segmentTransport, date, fetchOSRMDistance, getHaversine]);
+  }, [dayElements, distances, segmentTransport, date, getHaversine]);
 
   const dayReservations = reservations.filter(r => {
     if (r.trip_id !== selectedTrip?.id) return false;

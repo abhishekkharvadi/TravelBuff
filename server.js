@@ -6,7 +6,7 @@ import multer from 'multer';
 import path, { dirname, join, extname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import crypto from 'crypto';
+import crypto, { randomUUID } from 'crypto';
 import http from 'http';
 import https from 'https';
 import { WebSocketServer } from 'ws';
@@ -110,6 +110,18 @@ function notifyUserClients(userId, excludeWs = null) {
   wss.clients.forEach((client) => {
     if (client.userId === userId && client.readyState === 1 && client !== excludeWs) {
       client.send(JSON.stringify({ type: 'SYNC_REQUIRED' }));
+    }
+  });
+}
+
+// Broadcast OwnTracks live ping event to user's client sockets
+function notifyOwnTracksPing(userId, pingData) {
+  wss.clients.forEach((client) => {
+    if (client.userId === userId && client.readyState === 1) {
+      client.send(JSON.stringify({
+        type: 'OWNTRACKS_PING_RECEIVED',
+        data: pingData
+      }));
     }
   });
 }
@@ -479,11 +491,51 @@ app.delete('/api/admin/users/:userId', authenticateAdminToken, async (req, res) 
 // Config & Integration API
 // ==========================================
 app.post('/api/config', authenticateToken, async (req, res) => {
-  const { immich_url, immich_key, immich_alt_url, base_currency, ai_settings } = req.body;
+  const { 
+    immich_url, 
+    immich_key, 
+    immich_alt_url, 
+    base_currency, 
+    ai_settings,
+    owntracks_mode,
+    owntracks_recorder_url,
+    owntracks_recorder_user,
+    owntracks_recorder_device,
+    owntracks_recorder_auth_type,
+    owntracks_recorder_username,
+    owntracks_recorder_password
+  } = req.body;
   try {
     await db.run(
-      `UPDATE user_configs SET immich_url = ?, immich_key = ?, immich_alt_url = ?, base_currency = ?, ai_settings = ? WHERE user_id = ?`,
-      [immich_url || null, immich_key || null, immich_alt_url || null, base_currency || 'USD', ai_settings || null, req.user.id]
+      `UPDATE user_configs SET 
+        immich_url = ?, 
+        immich_key = ?, 
+        immich_alt_url = ?, 
+        base_currency = ?, 
+        ai_settings = ?,
+        owntracks_mode = COALESCE(?, owntracks_mode, 'webhook'),
+        owntracks_recorder_url = ?,
+        owntracks_recorder_user = ?,
+        owntracks_recorder_device = ?,
+        owntracks_recorder_auth_type = COALESCE(?, 'none'),
+        owntracks_recorder_username = ?,
+        owntracks_recorder_password = ?
+       WHERE user_id = ?`,
+      [
+        immich_url || null, 
+        immich_key || null, 
+        immich_alt_url || null, 
+        base_currency || 'USD', 
+        ai_settings || null,
+        owntracks_mode || null,
+        owntracks_recorder_url || null,
+        owntracks_recorder_user || null,
+        owntracks_recorder_device || null,
+        owntracks_recorder_auth_type || 'none',
+        owntracks_recorder_username || null,
+        owntracks_recorder_password || null,
+        req.user.id
+      ]
     );
     res.json({ success: true });
   } catch (err) {
@@ -553,7 +605,7 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// OwnTracks Public Webhook (No JWT, identified by token)
+// OwnTracks Public Webhook (Direct Mode - No JWT, identified by token)
 // ==========================================
 app.post('/api/owntracks/webhook/:token', async (req, res) => {
   const { token } = req.params;
@@ -563,9 +615,9 @@ app.post('/api/owntracks/webhook/:token', async (req, res) => {
       return res.status(403).json({ error: 'Invalid web-hook token' });
     }
 
-    const { _type, lat, lon, acc, tst } = req.body;
+    const { _type, lat, lon, acc, tst, batt, conn, alt, vel } = req.body;
     // OwnTracks sends different packets; we only log coordinates
-    if (_type === 'location' && lat && lon) {
+    if (_type === 'location' && lat !== undefined && lon !== undefined) {
       const id = crypto.randomUUID();
       const timestamp = tst || Math.floor(Date.now() / 1000);
       
@@ -573,12 +625,220 @@ app.post('/api/owntracks/webhook/:token', async (req, res) => {
         `INSERT INTO gps_logs (id, user_id, latitude, longitude, accuracy, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
         [id, config.user_id, lat, lon, acc || null, timestamp]
       );
+      
+      const pingPayload = {
+        id,
+        latitude: lat,
+        longitude: lon,
+        accuracy: acc || null,
+        timestamp,
+        battery: batt !== undefined ? batt : null,
+        connection: conn || null,
+        altitude: alt !== undefined ? alt : null,
+        velocity: vel !== undefined ? vel : null,
+        receivedAt: new Date().toISOString()
+      };
+
       res.json({ status: 'ok', msg: 'Coordinate logged' });
       notifyUserClients(config.user_id);
+      notifyOwnTracksPing(config.user_id, pingPayload);
       return;
     }
 
     res.json({ status: 'ignored', msg: 'Not a location payload' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// OwnTracks Status API (Latest ping & total point count)
+app.get('/api/owntracks/status', authenticateToken, async (req, res) => {
+  try {
+    const countRow = await db.get('SELECT COUNT(*) as total FROM gps_logs WHERE user_id = ?', [req.user.id]);
+    const latestPing = await db.get(
+      'SELECT id, latitude, longitude, accuracy, timestamp FROM gps_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1',
+      [req.user.id]
+    );
+
+    res.json({
+      totalPoints: countRow ? countRow.total : 0,
+      latestPing: latestPing || null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// OwnTracks Recorder Helper & Sync
+// ==========================================
+async function fetchOwnTracksRecorderPoints(config, { fromUnix, toUnix, limit } = {}) {
+  const {
+    owntracks_recorder_url,
+    owntracks_recorder_user,
+    owntracks_recorder_device,
+    owntracks_recorder_auth_type,
+    owntracks_recorder_username,
+    owntracks_recorder_password
+  } = config;
+
+  if (!owntracks_recorder_url || !owntracks_recorder_user || !owntracks_recorder_device) {
+    throw new Error('OwnTracks Recorder URL, User, and Device must be configured.');
+  }
+
+  const baseUrl = owntracks_recorder_url.replace(/\/+$/, '');
+  const urlObj = new URL(`${baseUrl}/api/0/locations`);
+  urlObj.searchParams.set('user', owntracks_recorder_user);
+  urlObj.searchParams.set('device', owntracks_recorder_device);
+  urlObj.searchParams.set('format', 'json');
+
+  if (fromUnix) {
+    urlObj.searchParams.set('from', new Date(fromUnix * 1000).toISOString());
+  }
+  if (toUnix) {
+    urlObj.searchParams.set('to', new Date(toUnix * 1000).toISOString());
+  }
+  if (limit) {
+    urlObj.searchParams.set('limit', limit.toString());
+  }
+
+  const headers = { 'Accept': 'application/json' };
+  if (owntracks_recorder_auth_type === 'basic' && owntracks_recorder_username) {
+    const creds = Buffer.from(`${owntracks_recorder_username}:${owntracks_recorder_password || ''}`).toString('base64');
+    headers['Authorization'] = `Basic ${creds}`;
+  }
+
+  const response = await fetch(urlObj.toString(), {
+    method: 'GET',
+    headers
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`OwnTracks Recorder returned HTTP ${response.status}: ${errText || response.statusText}`);
+  }
+
+  const data = await response.json();
+  // Locations can be an array of objects or an object containing array
+  let locations = [];
+  if (Array.isArray(data)) {
+    locations = data;
+  } else if (data && Array.isArray(data.data)) {
+    locations = data.data;
+  } else if (data && Array.isArray(data.locations)) {
+    locations = data.locations;
+  }
+
+  return locations;
+}
+
+// Test Connection to OwnTracks Recorder
+app.post('/api/owntracks/recorder/test', authenticateToken, async (req, res) => {
+  const {
+    recorder_url,
+    recorder_user,
+    recorder_device,
+    auth_type,
+    username,
+    password
+  } = req.body;
+
+  if (!recorder_url || !recorder_user || !recorder_device) {
+    return res.status(400).json({ error: 'Recorder URL, User, and Device are required.' });
+  }
+
+  try {
+    const testConfig = {
+      owntracks_recorder_url: recorder_url,
+      owntracks_recorder_user: recorder_user,
+      owntracks_recorder_device: recorder_device,
+      owntracks_recorder_auth_type: auth_type || 'none',
+      owntracks_recorder_username: username,
+      owntracks_recorder_password: password
+    };
+
+    // Test by requesting the last 1 location point
+    const points = await fetchOwnTracksRecorderPoints(testConfig, { limit: 1 });
+    const pointCount = points.length;
+    const lastPoint = pointCount > 0 ? points[points.length - 1] : null;
+
+    res.json({
+      success: true,
+      message: `Connected successfully to OwnTracks Recorder. Found device "${recorder_device}" for user "${recorder_user}".`,
+      lastPing: lastPoint && lastPoint.tst ? new Date(lastPoint.tst * 1000).toISOString() : null,
+      samplePoint: lastPoint ? { lat: lastPoint.lat, lon: lastPoint.lon, tst: lastPoint.tst } : null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manual Sync from OwnTracks Recorder
+app.post('/api/owntracks/recorder/sync', authenticateToken, async (req, res) => {
+  const { fromDate, toDate, tripId } = req.body;
+  try {
+    const config = await db.get('SELECT * FROM user_configs WHERE user_id = ?', [req.user.id]);
+    if (!config || !config.owntracks_recorder_url) {
+      return res.status(400).json({ error: 'OwnTracks Recorder is not configured for your account.' });
+    }
+
+    let startUnix = null;
+    let endUnix = null;
+
+    if (tripId) {
+      const trip = await db.get('SELECT start_date, end_date FROM trips WHERE id = ? AND user_id = ?', [tripId, req.user.id]);
+      if (trip && trip.start_date && trip.end_date) {
+        startUnix = Math.floor(new Date(trip.start_date + 'T00:00:00').getTime() / 1000);
+        endUnix = Math.floor(new Date(trip.end_date + 'T23:59:59').getTime() / 1000);
+      }
+    } else if (fromDate && toDate) {
+      startUnix = Math.floor(new Date(fromDate + 'T00:00:00').getTime() / 1000);
+      endUnix = Math.floor(new Date(toDate + 'T23:59:59').getTime() / 1000);
+    } else {
+      // Default: Last 7 days
+      endUnix = Math.floor(Date.now() / 1000);
+      startUnix = endUnix - (7 * 24 * 60 * 60);
+    }
+
+    const points = await fetchOwnTracksRecorderPoints(config, { fromUnix: startUnix, toUnix: endUnix });
+    let insertedCount = 0;
+
+    for (const pt of points) {
+      const lat = pt.lat;
+      const lon = pt.lon;
+      const tst = pt.tst || Math.floor(Date.now() / 1000);
+      const acc = pt.acc || null;
+
+      if (lat !== undefined && lon !== undefined) {
+        // Check if point with identical user and timestamp already exists to prevent duplicate rows
+        const existing = await db.get('SELECT id FROM gps_logs WHERE user_id = ? AND timestamp = ?', [req.user.id, tst]);
+        if (!existing) {
+          const id = crypto.randomUUID();
+          await db.run(
+            'INSERT INTO gps_logs (id, user_id, latitude, longitude, accuracy, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+            [id, req.user.id, lat, lon, acc, tst]
+          );
+          insertedCount++;
+        }
+      }
+    }
+
+    if (insertedCount > 0) {
+      notifyUserClients(req.user.id);
+    }
+
+    res.json({
+      success: true,
+      totalFetched: points.length,
+      insertedCount,
+      points: points.map(pt => ({
+        lat: pt.lat,
+        lon: pt.lon,
+        accuracy: pt.acc || null,
+        timestamp: pt.tst || Math.floor(Date.now() / 1000)
+      })),
+      message: `Synced ${insertedCount} new location points from OwnTracks Recorder (${points.length} received).`
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -632,6 +892,47 @@ app.post('/api/immich/test', authenticateToken, async (req, res) => {
   try {
     const version = await fetchImmich(immich_url, immich_key, 'server/version');
     res.json(version);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Immich Map Markers endpoint for Location Import
+app.get('/api/immich/markers', authenticateToken, async (req, res) => {
+  try {
+    const config = await db.get('SELECT immich_url, immich_key FROM user_configs WHERE user_id = ?', [req.user.id]);
+    if (!config || !config.immich_url || !config.immich_key) {
+      return res.status(400).json({ error: 'Immich URL and API Key are not configured in Settings' });
+    }
+
+    const markers = await fetchImmich(config.immich_url, config.immich_key, 'map/markers');
+    res.json(Array.isArray(markers) ? markers : []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Also support POST /api/immich/markers with custom credentials if testing directly
+app.post('/api/immich/markers', authenticateToken, async (req, res) => {
+  const { immich_url, immich_key } = req.body;
+  let targetUrl = immich_url;
+  let targetKey = immich_key;
+
+  try {
+    if (!targetUrl || !targetKey) {
+      const config = await db.get('SELECT immich_url, immich_key FROM user_configs WHERE user_id = ?', [req.user.id]);
+      if (config) {
+        targetUrl = config.immich_url;
+        targetKey = config.immich_key;
+      }
+    }
+
+    if (!targetUrl || !targetKey) {
+      return res.status(400).json({ error: 'Immich URL and API Key are required' });
+    }
+
+    const markers = await fetchImmich(targetUrl, targetKey, 'map/markers');
+    res.json(Array.isArray(markers) ? markers : []);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -750,6 +1051,32 @@ app.get('/api/trips/:tripId/owntracks-distance', authenticateToken, async (req, 
     const startUnix = Math.floor(new Date(trip.start_date + 'T00:00:00').getTime() / 1000);
     const endUnix = Math.floor(new Date(trip.end_date + 'T23:59:59').getTime() / 1000);
 
+    // If user is in Recorder pull mode, attempt to pull latest points from the Recorder for this trip
+    const config = await db.get('SELECT * FROM user_configs WHERE user_id = ?', [req.user.id]);
+    if (config && config.owntracks_mode === 'recorder' && config.owntracks_recorder_url) {
+      try {
+        const points = await fetchOwnTracksRecorderPoints(config, { fromUnix: startUnix, toUnix: endUnix });
+        for (const pt of points) {
+          const lat = pt.lat;
+          const lon = pt.lon;
+          const tst = pt.tst || Math.floor(Date.now() / 1000);
+          const acc = pt.acc || null;
+          if (lat !== undefined && lon !== undefined) {
+            const existing = await db.get('SELECT id FROM gps_logs WHERE user_id = ? AND timestamp = ?', [req.user.id, tst]);
+            if (!existing) {
+              const id = crypto.randomUUID();
+              await db.run(
+                'INSERT INTO gps_logs (id, user_id, latitude, longitude, accuracy, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+                [id, req.user.id, lat, lon, acc, tst]
+              );
+            }
+          }
+        }
+      } catch (recErr) {
+        console.warn('[OwnTracks Recorder] Auto-pull during distance query warning:', recErr.message);
+      }
+    }
+
     // Fetch user logs
     const logs = await db.all(
       `SELECT latitude, longitude, timestamp, accuracy FROM gps_logs 
@@ -865,48 +1192,158 @@ async function resolvePhotoAndDescription({ query, locationContext, latitude, lo
   let description = null;
   let source = 'wikimedia';
 
-  // Helper for N-gram Substring combinations (for 4+ word names)
-  const generateSubQueries = (rawQuery, locCtx) => {
-    const clean = rawQuery.replace(/[,;]/g, '').trim();
-    const words = clean.split(/\s+/).filter(w => w.length > 0);
-    const set = new Set();
-    set.add(clean);
+  // Helper to detect if a Wikipedia page represents a person, media, or non-place entity
+  const isPersonOrNonPlaceEntity = (page) => {
+    if (!page) return false;
 
-    if (words.length >= 4) {
-      // Remove common prefix descriptors (e.g. Zonal, Government, Royal, National)
-      const stopPrefixes = ['zonal', 'government', 'govt', 'royal', 'national', 'state', 'district', 'central', 'the'];
-      if (stopPrefixes.includes(words[0].toLowerCase())) {
-        const withoutPrefix = words.slice(1).join(' ');
-        if (withoutPrefix.length >= 3) set.add(withoutPrefix);
+    // 1. If coordinates are present, this is a physical geographic entity (place/landmark)
+    if (page.coordinates && Array.isArray(page.coordinates) && page.coordinates.length > 0) {
+      return false;
+    }
+
+    // 2. Check Disambiguation
+    if (page.pageprops && page.pageprops.disambiguation !== undefined) {
+      return true;
+    }
+    const extractText = (page.extract || '').trim();
+    if (extractText.toLowerCase().includes('may refer to:') || extractText.toLowerCase().includes('can refer to:')) {
+      return true;
+    }
+
+    // 3. Check Wikipedia Categories
+    const categories = page.categories || [];
+    const personCategoryRegex = /Category:\s*(?:Living\s+people|\d{1,4}\s+(?:births|deaths)|Centenarians|People\s+from\b|.*?\b(?:politicians|actors|actresses|singers|songwriters|musicians|cricketers|footballers|athletes|writers|authors|poets|artists|painters|sculptors|directors|producers|scientists|physicists|chemists|biologists|mathematicians|philosophers|economists|historians|journalists|activists|clergy|bishops|priests|saints|swamis|gurus|monarchs|emperors|kings|queens|princes|princesses|generals|admirals|military\s+personnel|alumni|burials)\b)/i;
+    for (const cat of categories) {
+      const catTitle = cat.title || '';
+      if (personCategoryRegex.test(catTitle)) {
+        return true;
       }
-      // 3-word & 2-word sliding sub-phrases
-      for (let len = words.length - 1; len >= 2; len--) {
-        for (let i = 0; i <= words.length - len; i++) {
-          const sub = words.slice(i, i + len).join(' ');
-          if (sub.length >= 4) set.add(sub);
+    }
+
+    // 4. Check Wikidata Short Description (pageprops['wikibase-shortdesc'])
+    const shortDesc = (page.pageprops?.['wikibase-shortdesc'] || page.description || '').trim();
+    if (shortDesc) {
+      const nonPlaceDescRegex = /\b(?:author|writer|poet|journalist|politician|actor|actress|singer|musician|composer|songwriter|band|music\s+group|album|single|song|film|movie|television\s+series|tv\s+series|tv\s+show|video\s+game|game|novel|book|play|fictional\s+character|comic\s+character|cricketer|footballer|player|athlete|swimmer|cyclist|golfer|coach|manager|scientist|physicist|chemist|biologist|doctor|physician|surgeon|lawyer|judge|businessman|businesswoman|entrepreneur|executive|activist|model|influencer|clergy|priest|bishop|pope|saint|swami|guru|monk|nun|general|admiral|soldier|person|human|male|female|born\s+\d{3,4}|\d{3,4}–\d{3,4}|\d{3,4}–present)\b/i;
+      if (nonPlaceDescRegex.test(shortDesc)) {
+        return true;
+      }
+    }
+
+    // 5. Extract Text Heuristics for Biographies and Non-Places
+    if (extractText) {
+      const firstSentence = extractText.split('\n')[0] || '';
+      // Parenthetical birth/death dates at the start (e.g. "(born October 15, 1949)" or "(1879–1955)")
+      const birthDeathRegex = /^.{1,60}?\s*\((?:(?:born\s+)?(?:\d{1,2}\s+[A-Za-z]+\s+)?\d{3,4}|\d{3,4}\s*[–\-—]\s*(?:\d{3,4}|present))\)/i;
+      if (birthDeathRegex.test(firstSentence)) {
+        return true;
+      }
+
+      // Biographical profession phrasing
+      const bioPhraseRegex = /\b(?:is|was)\s+(?:an?|the)\s+(?:[a-zA-Z\-]+\s+)?(?:author|writer|politician|actor|actress|singer|musician|cricketer|footballer|athlete|artist|director|producer|physicist|chemist|biologist|scientist|businessman|businesswoman|entrepreneur|activist|priest|bishop|saint|guru|general|admiral)\b/i;
+      if (bioPhraseRegex.test(firstSentence)) {
+        return true;
+      }
+
+      // Bio pronoun prevalence in absence of geographic keywords
+      const placeKeywordRegex = /\b(?:city|town|village|settlement|municipality|district|state|province|country|island|mountain|hill|river|lake|park|temple|church|mosque|monument|fort|palace|museum|station|airport|beach|resort|hotel|neighbourhood|suburb|region|capital|locality|panchayat|mandal|taluk|county)\b/i;
+      const pronounCount = (firstSentence.match(/\b(?:he|she|his|her)\b/gi) || []).length;
+      if (pronounCount >= 2 && !placeKeywordRegex.test(firstSentence)) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  // Helper for N-gram Substring combinations (for multi-word and comma-separated location names)
+  const generateSubQueries = (rawQuery, locCtx) => {
+    const set = new Set();
+    const cleanFull = (rawQuery || '').trim();
+    const cleanLoc = (locCtx || '').trim();
+
+    // 1. Highest Priority: Full query with location context
+    if (cleanFull && cleanLoc) {
+      set.add(`${cleanFull} ${cleanLoc}`);
+    }
+
+    if (cleanFull) set.add(cleanFull);
+
+    // If query has commas (e.g. "Chennai, India" or "St Thomas Mount, Chennai, India")
+    if (cleanFull.includes(',')) {
+      const parts = cleanFull.split(',').map(p => p.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        if (cleanLoc) set.add(`${parts[0]} ${cleanLoc}`);
+        set.add(parts[0]); // e.g. "Chennai" or "St Thomas Mount"
+        if (parts.length > 1) {
+          set.add(`${parts[0]} ${parts[1]}`); // e.g. "St Thomas Mount Chennai"
         }
       }
     }
 
-    const queries = Array.from(set);
-    if (locCtx && locCtx.trim()) {
-      queries.push(`${clean} ${locCtx.trim()}`);
+    const cleanNoPunct = cleanFull.replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleanNoPunct && cleanNoPunct !== cleanFull) set.add(cleanNoPunct);
+
+    const words = cleanNoPunct.split(/\s+/).filter(w => w.length > 0);
+    if (words.length >= 2) {
+      // Add first word with location context if available
+      if (cleanLoc && words[0].length >= 3) {
+        set.add(`${words[0]} ${cleanLoc}`);
+      }
+
+      // Remove common prefixes
+      const stopPrefixes = ['zonal', 'government', 'govt', 'royal', 'national', 'state', 'district', 'central', 'the'];
+      if (stopPrefixes.includes(words[0].toLowerCase())) {
+        const withoutPrefix = words.slice(1).join(' ');
+        if (withoutPrefix.length >= 3) {
+          if (cleanLoc) set.add(`${withoutPrefix} ${cleanLoc}`);
+          set.add(withoutPrefix);
+        }
+      }
+      // Sub-phrases (length >= 2)
+      for (let len = words.length - 1; len >= 2; len--) {
+        for (let i = 0; i <= words.length - len; i++) {
+          const sub = words.slice(i, i + len).join(' ');
+          if (sub.length >= 3) {
+            if (cleanLoc) set.add(`${sub} ${cleanLoc}`);
+            set.add(sub);
+          }
+        }
+      }
+      // Only add single word standalone if it is at least 5 letters and no location context exists
+      if (!cleanLoc && words[0].length >= 5) {
+        set.add(words[0]);
+      }
     }
-    return queries;
+
+    return Array.from(set);
   };
 
   // Helper for Regex Candidate Title Matching
   const isRegexTitleMatch = (inputQuery, candidateTitle) => {
-    if (!candidateTitle) return !1;
-    const cleanInput = inputQuery.toLowerCase().replace(/[^a-z0-9\s]/g, '');
-    const cleanCand = candidateTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
-    const words = cleanInput.split(/\s+/).filter(w => w.length > 2 && !['the', 'and', 'for', 'near', 'via'].includes(w));
+    if (!candidateTitle) return false;
+    const cleanInput = inputQuery.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+    const cleanCand = candidateTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+    
+    // Exact match or prefix match
+    if (cleanCand === cleanInput || cleanCand.startsWith(cleanInput + ' ') || cleanCand.endsWith(' ' + cleanInput)) {
+      return true;
+    }
+
+    const words = cleanInput.split(/\s+/).filter(w => w.length > 2 && !['the', 'and', 'for', 'near', 'via', 'in', 'of'].includes(w));
     if (words.length === 0) return true;
+
+    // Single-word input query: Require candidate to start with the word or candidate match exactly
+    if (words.length === 1) {
+      const singleWord = words[0];
+      return cleanCand === singleWord || cleanCand.startsWith(singleWord + ' ') || cleanCand.includes(`(${singleWord})`);
+    }
+
+    // Multi-word input query: Require all or majority of words to be present in candidate
     let matchCount = 0;
     for (const w of words) {
       if (cleanCand.includes(w)) matchCount++;
     }
-    return (matchCount / words.length) >= 0.5;
+    return (matchCount / words.length) >= 0.75;
   };
 
   // 1. Geosearch (Coordinates-Based)
@@ -939,9 +1376,8 @@ async function resolvePhotoAndDescription({ query, locationContext, latitude, lo
 
   const tryFetchWikiTitle = async (searchTitle) => {
     try {
-      let cleanTitle = searchTitle;
-      if (searchTitle.includes(',')) cleanTitle = searchTitle.split(',')[0].trim();
-      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(cleanTitle)}&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&exlimit=1&format=json&origin=*&redirects=1`;
+      const cleanTitle = searchTitle.trim();
+      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(cleanTitle)}&prop=pageimages|extracts|pageprops|categories|coordinates&cllimit=50&coprimary=all&pithumbsize=640&exintro=1&explaintext=1&exlimit=1&format=json&origin=*&redirects=1`;
       const wikiRes = await fetch(wikiUrl, { headers, signal: AbortSignal.timeout(8000) });
       if (wikiRes.ok) {
         const wikiData = await wikiRes.json();
@@ -949,12 +1385,18 @@ async function resolvePhotoAndDescription({ query, locationContext, latitude, lo
         const pageId = Object.keys(pages)[0];
         if (pageId && pageId !== '-1' && pages[pageId]) {
           const page = pages[pageId];
+
+          // Validate that the entity is not a person, disambiguation, or non-place
+          if (isPersonOrNonPlaceEntity(page)) {
+            console.log(`[${loggerPrefix}] Discarding non-place/person Wikipedia article "${page.title}"`);
+            return null;
+          }
+
           const extractText = page.extract || '';
-          const isDisambig = extractText.toLowerCase().includes('may refer to:') || extractText.toLowerCase().includes('can refer to:');
           return {
+            title: page.title,
             img: page.thumbnail?.source || null,
-            desc: extractText.split('\n')[0]?.trim() || null,
-            isDisambig
+            desc: extractText.split('\n')[0]?.trim() || null
           };
         }
       }
@@ -977,14 +1419,14 @@ async function resolvePhotoAndDescription({ query, locationContext, latitude, lo
 
   // 3. Wikipedia Fuzzy Full-Text Search API (list=search) + Server-Side Regex Matching
   if (!imageUrl) {
-    for (const variant of searchVariants.slice(0, 3)) {
+    for (const variant of searchVariants.slice(0, 4)) {
       try {
         const srUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(variant)}&format=json&origin=*`;
         const srRes = await fetch(srUrl, { headers, signal: AbortSignal.timeout(8000) });
         if (srRes.ok) {
           const srData = await srRes.json();
           const candidates = srData?.query?.search || [];
-          for (const cand of candidates.slice(0, 4)) {
+          for (const cand of candidates.slice(0, 5)) {
             if (isRegexTitleMatch(query, cand.title)) {
               const res = await tryFetchWikiTitle(cand.title);
               if (res && res.img) {
@@ -1107,10 +1549,408 @@ app.post('/api/import/search-photo', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
+// Atomic Server-Side Immich Import Pipeline
+// ==========================================
+app.post('/api/immich/execute-import', authenticateToken, async (req, res) => {
+  const userId = req.user?.id || 1;
+  const { countryTree = {}, fetchImages = true, createHierarchy = true } = req.body;
+  const logs = [];
+
+  const addLog = (stage, text, type = 'info', extra = {}) => {
+    logs.push({
+      id: `srv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      stage,
+      text,
+      type,
+      ...extra
+    });
+  };
+
+  try {
+    addLog('General', `Starting server-side import (${createHierarchy ? 'Hierarchical Organization' : 'Root-Level Import'})...`, 'info');
+    await db.exec('BEGIN TRANSACTION');
+
+    let totalImported = 0;
+    let totalRelocated = 0;
+
+    for (const [countryName, countryObj] of Object.entries(countryTree)) {
+      const cleanCountry = countryName.trim();
+      const statesToProcess = Object.entries(countryObj.states || {}).filter(([_, s]) =>
+        Object.values(s.cities || {}).some(c => (c.actionState === 'CREATE_NEW' && c.selected) || (c.actionState === 'RELOCATE_EXISTING' && c.relocateSelected))
+      );
+      const directCitiesToProcess = Object.values(countryObj.directCities || {}).filter(c =>
+        (c.actionState === 'CREATE_NEW' && c.selected) || (c.actionState === 'RELOCATE_EXISTING' && c.relocateSelected)
+      );
+
+      if (statesToProcess.length === 0 && directCitiesToProcess.length === 0) continue;
+
+      let countryFolderId = null;
+
+      if (createHierarchy) {
+        // 1. Resolve or Create Country Folder
+        let countryFolder = null;
+        if (cleanCountry !== 'Uncategorized / Other') {
+          countryFolder = await db.get(
+            'SELECT * FROM locations WHERE is_folder = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND user_id = ? LIMIT 1',
+            [cleanCountry, userId]
+          );
+        }
+
+        countryFolderId = countryFolder ? countryFolder.id : null;
+        if (!countryFolder && cleanCountry !== 'Uncategorized / Other') {
+          countryFolderId = randomUUID();
+          let countryPhotoUrl = null;
+          let countryNotes = `Auto-created country folder from Immich photo import.`;
+
+          if (fetchImages) {
+            addLog('Photos', `Fetching cover photo for Country "${cleanCountry}"...`, 'info');
+            const photoRes = await resolvePhotoAndDescription({
+              query: cleanCountry,
+              locationContext: '',
+              loggerPrefix: 'Country-Photo'
+            });
+            if (photoRes && photoRes.fileUrl) {
+              countryPhotoUrl = photoRes.fileUrl;
+              if (photoRes.description) countryNotes = photoRes.description;
+              addLog('Photos', `Attached cover photo for Country "${cleanCountry}"`, 'success', { img: countryPhotoUrl });
+            }
+          }
+
+          await db.run(
+            `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
+             VALUES (?, ?, ?, NULL, ?, NULL, NULL, 1, ?, ?, NULL, 1, 0, 'completed', ?)`,
+            [countryFolderId, userId, cleanCountry, cleanCountry, countryNotes, countryPhotoUrl, new Date().toISOString()]
+          );
+          addLog('Hierarchy', `Created Country folder "${cleanCountry}" at Root level.`, 'success');
+        } else if (countryFolder) {
+          addLog('Hierarchy', `Reusing existing Country folder "${cleanCountry}".`, 'info');
+        }
+      }
+
+      // 2. Process States under Country
+      for (const [stateName, stateObj] of statesToProcess) {
+        const cleanState = stateName.trim();
+        let stateFolderId = null;
+
+        if (createHierarchy) {
+          let stateFolder = await db.get(
+            'SELECT * FROM locations WHERE is_folder = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND (parent_id = ? OR parent_id IS NULL) AND user_id = ? LIMIT 1',
+            [cleanState, countryFolderId, userId]
+          );
+
+          stateFolderId = stateFolder ? stateFolder.id : null;
+          if (!stateFolder) {
+            stateFolderId = randomUUID();
+            let statePhotoUrl = null;
+            let stateNotes = `Auto-created state folder under ${cleanCountry} from Immich photo import.`;
+
+            if (fetchImages) {
+              addLog('Photos', `Fetching cover photo for State "${cleanState}"...`, 'info');
+              const photoRes = await resolvePhotoAndDescription({
+                query: cleanState,
+                locationContext: cleanCountry !== 'Uncategorized / Other' ? cleanCountry : '',
+                loggerPrefix: 'State-Photo'
+              });
+              if (photoRes && photoRes.fileUrl) {
+                statePhotoUrl = photoRes.fileUrl;
+                if (photoRes.description) stateNotes = photoRes.description;
+                addLog('Photos', `Attached cover photo for State "${cleanState}"`, 'success', { img: statePhotoUrl });
+              }
+            }
+
+            await db.run(
+              `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
+               VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, ?, ?, ?, 1, 0, 'completed', ?)`,
+              [stateFolderId, userId, cleanState, cleanState, cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null, stateNotes, statePhotoUrl, countryFolderId, new Date().toISOString()]
+            );
+            addLog('Hierarchy', `Created State folder "${cleanState}" under Country "${cleanCountry}".`, 'success');
+          } else {
+            if (countryFolderId && stateFolder.parent_id !== countryFolderId) {
+              await db.run('UPDATE locations SET parent_id = ? WHERE id = ? AND user_id = ?', [countryFolderId, stateFolderId, userId]);
+              addLog('Hierarchy', `Linked existing State folder "${cleanState}" under Country "${cleanCountry}".`, 'info');
+            }
+          }
+        }
+
+        // Cities under State
+        for (const city of Object.values(stateObj.cities || {})) {
+          const targetParentId = createHierarchy ? stateFolderId : null;
+
+          if (city.actionState === 'CREATE_NEW' && city.selected) {
+            const newCityId = randomUUID();
+            let finalName = city.name.trim();
+            if (cleanCountry && cleanCountry !== 'Uncategorized / Other' && !finalName.toLowerCase().includes(cleanCountry.toLowerCase())) {
+              finalName = `${finalName}, ${cleanCountry}`;
+            }
+
+            let cityPhotoUrl = null;
+            let cityNotes = `Imported from Immich (${city.count || 1} photos taken here).`;
+
+            if (fetchImages) {
+              addLog('Photos', `Fetching cover photo for "${city.name}"...`, 'info');
+              const photoRes = await resolvePhotoAndDescription({
+                query: city.name.trim(),
+                locationContext: cleanState ? `${cleanState}, ${cleanCountry}` : cleanCountry,
+                latitude: city.lat || null,
+                longitude: city.lon || null,
+                loggerPrefix: 'City-Photo'
+              });
+              if (photoRes && photoRes.fileUrl) {
+                cityPhotoUrl = photoRes.fileUrl;
+                if (photoRes.description) cityNotes = photoRes.description;
+                addLog('Photos', `Attached cover photo for "${finalName}"`, 'success', { img: cityPhotoUrl });
+              } else {
+                addLog('Photos', `No public image found for "${finalName}"`, 'warning');
+              }
+            }
+
+            await db.run(
+              `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'completed', ?)`,
+              [
+                newCityId,
+                userId,
+                finalName,
+                cleanState,
+                cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null,
+                city.lat || null,
+                city.lon || null,
+                city.visited ? 1 : 0,
+                cityNotes,
+                cityPhotoUrl,
+                targetParentId,
+                new Date().toISOString()
+              ]
+            );
+            totalImported++;
+            addLog('Hierarchy', createHierarchy ? `Created location "${finalName}" inside State folder "${cleanState}".` : `Created location "${finalName}" at Root level.`, 'success');
+          } else if (city.actionState === 'RELOCATE_EXISTING' && city.relocateSelected && city.existingLoc) {
+            const locId = city.existingLoc.id;
+            let updates = ['state = ?'];
+            let vals = [cleanState];
+
+            if (createHierarchy) {
+              updates.push('parent_id = ?');
+              vals.push(targetParentId);
+            }
+
+            if (cleanCountry !== 'Uncategorized / Other') {
+              updates.push('country = ?');
+              vals.push(cleanCountry);
+            }
+
+            if (fetchImages && !city.existingLoc.local_file_data) {
+              const photoRes = await resolvePhotoAndDescription({
+                query: city.name.trim(),
+                locationContext: cleanState ? `${cleanState}, ${cleanCountry}` : cleanCountry,
+                latitude: city.lat || city.existingLoc.latitude || null,
+                longitude: city.lon || city.existingLoc.longitude || null,
+                loggerPrefix: 'Relocate-Photo'
+              });
+              if (photoRes && photoRes.fileUrl) {
+                updates.push('local_file_data = ?');
+                vals.push(photoRes.fileUrl);
+                addLog('Photos', `Attached cover photo for relocated "${city.existingLoc.name}"`, 'success', { img: photoRes.fileUrl });
+              }
+            }
+
+            vals.push(locId, userId);
+            await db.run(`UPDATE locations SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, vals);
+            totalRelocated++;
+            addLog('Hierarchy', createHierarchy ? `Relocated existing location "${city.existingLoc.name}" into State folder "${cleanState}".` : `Updated location "${city.existingLoc.name}".`, 'success');
+          }
+        }
+      }
+
+      // 3. Direct Cities under Country (No State Tag)
+      for (const city of directCitiesToProcess) {
+        const targetParentId = createHierarchy ? countryFolderId : null;
+
+        if (city.actionState === 'CREATE_NEW' && city.selected) {
+          const newCityId = randomUUID();
+          let finalName = city.name.trim();
+          if (cleanCountry && cleanCountry !== 'Uncategorized / Other' && !finalName.toLowerCase().includes(cleanCountry.toLowerCase())) {
+            finalName = `${finalName}, ${cleanCountry}`;
+          }
+
+          let cityPhotoUrl = null;
+          let cityNotes = `Imported from Immich (${city.count || 1} photos taken here).`;
+
+          if (fetchImages) {
+            addLog('Photos', `Fetching cover photo for "${city.name}"...`, 'info');
+            const photoRes = await resolvePhotoAndDescription({
+              query: city.name.trim(),
+              locationContext: cleanCountry,
+              latitude: city.lat || null,
+              longitude: city.lon || null,
+              loggerPrefix: 'City-Photo'
+            });
+            if (photoRes && photoRes.fileUrl) {
+              cityPhotoUrl = photoRes.fileUrl;
+              if (photoRes.description) cityNotes = photoRes.description;
+              addLog('Photos', `Attached cover photo for "${finalName}"`, 'success', { img: cityPhotoUrl });
+            } else {
+              addLog('Photos', `No public image found for "${finalName}"`, 'warning');
+            }
+          }
+
+          await db.run(
+            `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
+             VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'completed', ?)`,
+            [
+              newCityId,
+              userId,
+              finalName,
+              cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null,
+              city.lat || null,
+              city.lon || null,
+              city.visited ? 1 : 0,
+              cityNotes,
+              cityPhotoUrl,
+              targetParentId,
+              new Date().toISOString()
+            ]
+          );
+          totalImported++;
+          addLog('Hierarchy', createHierarchy ? `Created location "${finalName}" inside Country folder "${cleanCountry}".` : `Created location "${finalName}" at Root level.`, 'success');
+        } else if (city.actionState === 'RELOCATE_EXISTING' && city.relocateSelected && city.existingLoc) {
+          const locId = city.existingLoc.id;
+          let updates = [];
+          let vals = [];
+
+          if (createHierarchy) {
+            updates.push('parent_id = ?');
+            vals.push(targetParentId);
+          }
+
+          if (cleanCountry !== 'Uncategorized / Other') {
+            updates.push('country = ?');
+            vals.push(cleanCountry);
+          }
+
+          if (fetchImages && !city.existingLoc.local_file_data) {
+            const photoRes = await resolvePhotoAndDescription({
+              query: city.name.trim(),
+              locationContext: cleanCountry,
+              latitude: city.lat || city.existingLoc.latitude || null,
+              longitude: city.lon || city.existingLoc.longitude || null,
+              loggerPrefix: 'Relocate-Photo'
+            });
+            if (photoRes && photoRes.fileUrl) {
+              updates.push('local_file_data = ?');
+              vals.push(photoRes.fileUrl);
+              addLog('Photos', `Attached cover photo for relocated "${city.existingLoc.name}"`, 'success', { img: photoRes.fileUrl });
+            }
+          }
+
+          if (updates.length > 0) {
+            vals.push(locId, userId);
+            await db.run(`UPDATE locations SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, vals);
+            totalRelocated++;
+            addLog('Hierarchy', createHierarchy ? `Relocated existing location "${city.existingLoc.name}" into Country folder "${cleanCountry}".` : `Updated location "${city.existingLoc.name}".`, 'success');
+          }
+        }
+      }
+    }
+
+    await db.exec('COMMIT');
+    addLog('General', `Successfully finished import: ${totalImported} created, ${totalRelocated} relocated.`, 'success');
+
+    res.json({
+      success: true,
+      totalImported,
+      totalRelocated,
+      logs
+    });
+  } catch (err) {
+    await db.exec('ROLLBACK').catch(() => {});
+    console.error('Error during atomic Immich import pipeline:', err);
+    addLog('General', `ERROR during import: ${err.message}`, 'error');
+    res.status(500).json({ error: err.message, logs });
+  }
+});
+
+// ==========================================
+// Archive & Permanent Deletion Helpers
+// ==========================================
+async function getAllChildLocationIds(locId, userId) {
+  const allIds = [locId];
+  const children = await db.all('SELECT id FROM locations WHERE parent_id = ? AND user_id = ?', [locId, userId]);
+  for (const child of children) {
+    const subIds = await getAllChildLocationIds(child.id, userId);
+    allIds.push(...subIds);
+  }
+  return allIds;
+}
+
+async function deleteEntityPhotosAndFiles(entityIds) {
+  if (!entityIds || entityIds.length === 0) return;
+  const placeholders = entityIds.map(() => '?').join(',');
+  try {
+    const photos = await db.all(`SELECT id, file_path FROM entity_photos WHERE entity_id IN (${placeholders})`, entityIds);
+    for (const p of photos) {
+      if (p.file_path && p.file_path.startsWith('/uploads/')) {
+        const filename = p.file_path.replace('/uploads/', '');
+        const filePath = join(UPLOADS_DIR, filename);
+        const shared = await db.get(`SELECT id FROM entity_photos WHERE file_path = ? AND entity_id NOT IN (${placeholders}) LIMIT 1`, [p.file_path, ...entityIds]);
+        if (!shared && fs.existsSync(filePath)) {
+          try { fs.unlinkSync(filePath); } catch (_) {}
+        }
+      }
+    }
+    await db.run(`DELETE FROM entity_photos WHERE entity_id IN (${placeholders})`, entityIds);
+    await db.run(`DELETE FROM entity_tags WHERE entity_id IN (${placeholders})`, entityIds);
+  } catch (err) {
+    console.error('Failed to cleanup entity photos/files:', err);
+  }
+}
+
+async function preserveCompletedTripsForPlaces(placeIds) {
+  if (!placeIds || placeIds.length === 0) return;
+  for (const pid of placeIds) {
+    const pl = await db.get('SELECT name, category, latitude, longitude FROM places WHERE id = ?', [pid]);
+    if (pl) {
+      await db.run(`
+        UPDATE itinerary_items 
+        SET custom_name = ?, custom_category = ?, custom_lat = ?, custom_lng = ?, place_id = NULL
+        WHERE place_id = ? AND trip_id IN (SELECT id FROM trips WHERE visited = 1)
+      `, [pl.name, pl.category, pl.latitude || null, pl.longitude || null, pid]);
+    }
+    await db.run(`
+      DELETE FROM itinerary_items 
+      WHERE place_id = ? AND trip_id IN (SELECT id FROM trips WHERE visited = 0)
+    `, [pid]);
+  }
+}
+
+async function removeLocationFromCollections(locationIds, userId) {
+  if (!locationIds || locationIds.length === 0) return;
+  try {
+    const collections = await db.all('SELECT id, manual_location_ids FROM collections WHERE user_id = ?', [userId]);
+    for (const col of collections) {
+      if (col.manual_location_ids) {
+        try {
+          let ids = typeof col.manual_location_ids === 'string' ? JSON.parse(col.manual_location_ids) : col.manual_location_ids;
+          if (Array.isArray(ids)) {
+            const filtered = ids.filter(id => !locationIds.includes(id));
+            if (filtered.length !== ids.length) {
+              await db.run('UPDATE collections SET manual_location_ids = ? WHERE id = ?', [JSON.stringify(filtered), col.id]);
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (err) {
+    console.error('Failed to cleanup collections references:', err);
+  }
+}
+
+// ==========================================
 // Sync Endpoint (Offline sync queue)
 // ==========================================
 app.post('/api/sync', authenticateToken, async (req, res) => {
-  const { actions } = req.body; // Array of operations: { table, action: 'insert'|'update'|'delete', data }
+  const { actions } = req.body; // Array of operations: { table, action, data }
   if (!actions || !Array.isArray(actions)) {
     return res.status(400).json({ error: 'Sync payload must be an array' });
   }
@@ -1137,190 +1977,292 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
       ];
 
       for (const op of actions) {
-        const { table, action, data } = op;
-        console.log("[Sync Debug]", table, action, JSON.stringify(data));
-        if (!data || typeof data !== 'object') continue;
-        const hasUserId = tablesWithUserId.includes(table);
-        
-        if (hasUserId) {
-          data.user_id = userId; 
-        }
-
-        if (table === 'itinerary_items' && (data.sequence_order === undefined || data.sequence_order === null)) {
-          data.sequence_order = 0;
-        }
-
-        if (action === 'insert') {
-          const columns = Object.keys(data).filter(col => data[col] !== undefined);
-          if (columns.length === 0) continue;
-          const placeholders = columns.map(() => '?').join(', ');
-          const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
-          
-          await db.run(
-            `INSERT OR REPLACE INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
-            values
-          );
-        } 
-        else if (action === 'update') {
-          const id = data.id;
-          if (!id) continue;
-
-          const columns = Object.keys(data).filter(col => col !== 'id' && data[col] !== undefined);
-          if (columns.length === 0) continue;
-          const assignments = columns.map(col => `${col} = ?`).join(', ');
-          const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
+        try {
+          await db.exec('SAVEPOINT sync_item');
+          const { table, action, data } = op;
+          console.log("[Sync Debug]", table, action, JSON.stringify(data));
+          if (!data || typeof data !== 'object') {
+            await db.exec('RELEASE SAVEPOINT sync_item');
+            continue;
+          }
+          const hasUserId = tablesWithUserId.includes(table);
           
           if (hasUserId) {
-            values.push(id, userId);
-            await db.run(
-              `UPDATE ${table} SET ${assignments} WHERE id = ? AND user_id = ?`,
-              values
-            );
-          } else {
-            values.push(id);
-            await db.run(
-              `UPDATE ${table} SET ${assignments} WHERE id = ?`,
-              values
-            );
+            data.user_id = userId; 
           }
-        } 
-        else if (action === 'delete_folder') {
+
+          if (table === 'itinerary_items') {
+            if (data.sequence_order === undefined || data.sequence_order === null) {
+              data.sequence_order = 0;
+            }
+            if (data.place_id) {
+              if (typeof data.place_id === 'string' && (data.place_id.startsWith('home_') || data.place_id === 'null' || data.place_id === 'undefined' || data.place_id === '')) {
+                data.place_id = null;
+              } else {
+                const placeExists = await db.get('SELECT id FROM places WHERE id = ?', [data.place_id]);
+                if (!placeExists) {
+                  data.place_id = null;
+                }
+              }
+            } else {
+              data.place_id = null;
+            }
+
+            if (data.trip_id) {
+              const tripExists = await db.get('SELECT id FROM trips WHERE id = ?', [data.trip_id]);
+              if (!tripExists) {
+                await db.exec('RELEASE SAVEPOINT sync_item');
+                continue;
+              }
+            }
+          }
+
+          if (table === 'places') {
+            if (data.location_id) {
+              if (data.location_id === '__orphaned__' || data.location_id === 'null' || data.location_id === 'undefined' || data.location_id === '') {
+                data.location_id = null;
+              } else {
+                const locExists = await db.get('SELECT id FROM locations WHERE id = ?', [data.location_id]);
+                if (!locExists) {
+                  data.location_id = null;
+                }
+              }
+            } else {
+              data.location_id = null;
+            }
+          }
+
           if (table === 'locations') {
+            if (data.parent_id) {
+              if (data.parent_id === 'null' || data.parent_id === 'undefined' || data.parent_id === '') {
+                data.parent_id = null;
+              } else {
+                const parentExistsInDb = await db.get('SELECT id FROM locations WHERE id = ?', [data.parent_id]);
+                const parentExistsInBatch = Array.isArray(actions) && actions.some(act => act.table === 'locations' && act.data && String(act.data.id) === String(data.parent_id));
+                if (!parentExistsInDb && !parentExistsInBatch) {
+                  data.parent_id = null;
+                }
+              }
+            } else {
+              data.parent_id = null;
+            }
+          }
+
+          if (['trip_currency_rates', 'trip_notes', 'reservations', 'expenses'].includes(table)) {
+            if (data.trip_id) {
+              const tripExists = await db.get('SELECT id FROM trips WHERE id = ?', [data.trip_id]);
+              if (!tripExists) {
+                await db.exec('RELEASE SAVEPOINT sync_item');
+                continue;
+              }
+            }
+          }
+
+          if (table === 'entity_tags') {
+            if (data.tag_id) {
+              const tagExists = await db.get('SELECT id FROM tags WHERE id = ?', [data.tag_id]);
+              if (!tagExists) {
+                await db.exec('RELEASE SAVEPOINT sync_item');
+                continue;
+              }
+            }
+          }
+
+          if (action === 'insert') {
+            const columns = Object.keys(data).filter(col => data[col] !== undefined);
+            if (columns.length === 0) {
+              await db.exec('RELEASE SAVEPOINT sync_item');
+              continue;
+            }
+            const placeholders = columns.map(() => '?').join(', ');
+            const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
+            
+            await db.run(
+              `INSERT OR REPLACE INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
+              values
+            );
+          } 
+          else if (action === 'update') {
+            const id = data.id;
+            if (!id) {
+              await db.exec('RELEASE SAVEPOINT sync_item');
+              continue;
+            }
+
+            const columns = Object.keys(data).filter(col => col !== 'id' && data[col] !== undefined);
+            if (columns.length === 0) {
+              await db.exec('RELEASE SAVEPOINT sync_item');
+              continue;
+            }
+            const assignments = columns.map(col => `${col} = ?`).join(', ');
+            const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
+            
+            if (hasUserId) {
+              values.push(id, userId);
+              await db.run(
+                `UPDATE ${table} SET ${assignments} WHERE id = ? AND user_id = ?`,
+                values
+              );
+            } else {
+              values.push(id);
+              await db.run(
+                `UPDATE ${table} SET ${assignments} WHERE id = ?`,
+                values
+              );
+            }
+          }
+          else if (action === 'archive_location') {
             const id = data.id;
             if (id) {
-              const deletePhotosForEntity = async (entityId) => {
-                try {
-                  const photos = await db.all('SELECT file_path FROM entity_photos WHERE entity_id = ?', [entityId]);
-                  for (const p of photos) {
-                    if (p.file_path && p.file_path.startsWith('/uploads/')) {
-                      const filename = p.file_path.replace('/uploads/', '');
-                      const filePath = join(UPLOADS_DIR, filename);
-                      if (fs.existsSync(filePath)) {
-                        fs.unlinkSync(filePath);
-                      }
-                    }
-                  }
-                  await db.run('DELETE FROM entity_photos WHERE entity_id = ?', [entityId]);
-                } catch (err) {
-                  console.error('Failed to delete photos for entity:', entityId, err);
-                }
-              };
-
-              const deleteLocationRecursively = async (locId) => {
-                const childLocs = await db.all('SELECT id FROM locations WHERE parent_id = ? AND user_id = ?', [locId, userId]);
-                for (const child of childLocs) {
-                  await deleteLocationRecursively(child.id);
-                }
-                const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [locId]);
-                if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
-                  const filename = loc.local_file_data.replace('/uploads/', '');
-                  const filePath = join(UPLOADS_DIR, filename);
-                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                }
-                await deletePhotosForEntity(locId);
-
-                const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [locId]);
-                for (const sp of subPlaces) {
-                  if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
-                    const filename = sp.local_file_data.replace('/uploads/', '');
-                    const filePath = join(UPLOADS_DIR, filename);
-                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                  }
-                  await deletePhotosForEntity(sp.id);
-                  await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
-                }
-                await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [locId, userId]);
-              };
-
-              const deleteContents = data.deleteContents;
-              if (deleteContents) {
-                await deleteLocationRecursively(id);
-              } else {
-                await db.run('UPDATE locations SET parent_id = NULL WHERE parent_id = ? AND user_id = ?', [id, userId]);
-                const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [id]);
-                if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
-                  const filename = loc.local_file_data.replace('/uploads/', '');
-                  const filePath = join(UPLOADS_DIR, filename);
-                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                }
-                await deletePhotosForEntity(id);
-
-                const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [id]);
-                for (const sp of subPlaces) {
-                  if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
-                    const filename = sp.local_file_data.replace('/uploads/', '');
-                    const filePath = join(UPLOADS_DIR, filename);
-                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                  }
-                  await deletePhotosForEntity(sp.id);
-                  await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
-                }
-                await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
-              }
+              const allLocIds = await getAllChildLocationIds(id, userId);
+              const placeholders = allLocIds.map(() => '?').join(',');
+              await db.run(`UPDATE locations SET is_archived = 1 WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+              await db.run(`UPDATE places SET is_archived = 1 WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
             }
           }
-        }
-        else if (action === 'delete') {
-          if (table === 'entity_tags') {
-            const { entity_id, tag_id } = data;
-            await db.run(`DELETE FROM entity_tags WHERE entity_id = ? AND tag_id = ?`, [entity_id, tag_id]);
-          } else {
+          else if (action === 'unarchive_location') {
             const id = data.id;
-            if (!id) continue;
-
-            const deletePhotosForEntity = async (entityId) => {
-              try {
-                const photos = await db.all('SELECT file_path FROM entity_photos WHERE entity_id = ?', [entityId]);
-                for (const p of photos) {
-                  if (p.file_path && p.file_path.startsWith('/uploads/')) {
-                    const filename = p.file_path.replace('/uploads/', '');
-                    const filePath = join(UPLOADS_DIR, filename);
-                    if (fs.existsSync(filePath)) {
-                      fs.unlinkSync(filePath);
-                    }
-                  }
+            if (id) {
+              const allLocIds = await getAllChildLocationIds(id, userId);
+              const placeholders = allLocIds.map(() => '?').join(',');
+              await db.run(`UPDATE locations SET is_archived = 0 WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+              await db.run(`UPDATE places SET is_archived = 0 WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+              const loc = await db.get('SELECT parent_id FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+              if (loc && loc.parent_id) {
+                const parentLoc = await db.get('SELECT is_archived FROM locations WHERE id = ? AND user_id = ?', [loc.parent_id, userId]);
+                if (!parentLoc || parentLoc.is_archived === 1) {
+                  await db.run('UPDATE locations SET parent_id = NULL WHERE id = ? AND user_id = ?', [id, userId]);
                 }
-                await db.run('DELETE FROM entity_photos WHERE entity_id = ?', [entityId]);
-              } catch (err) {
-                console.error('Failed to delete photos for entity:', entityId, err);
               }
-            };
-
-            if (table === 'locations') {
-              const loc = await db.get('SELECT local_file_data FROM locations WHERE id = ?', [id]);
-              if (loc && loc.local_file_data && loc.local_file_data.startsWith('/uploads/')) {
-                const filename = loc.local_file_data.replace('/uploads/', '');
-                const filePath = join(UPLOADS_DIR, filename);
-                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-              }
-              await deletePhotosForEntity(id);
-
-              const subPlaces = await db.all('SELECT id, local_file_data FROM places WHERE location_id = ?', [id]);
-              for (const sp of subPlaces) {
-                if (sp.local_file_data && sp.local_file_data.startsWith('/uploads/')) {
-                  const filename = sp.local_file_data.replace('/uploads/', '');
-                  const filePath = join(UPLOADS_DIR, filename);
-                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                }
-                await deletePhotosForEntity(sp.id);
-                await db.run('DELETE FROM places WHERE id = ?', [sp.id]);
-              }
-            } else if (table === 'places') {
-              const pl = await db.get('SELECT local_file_data FROM places WHERE id = ?', [id]);
-              if (pl && pl.local_file_data && pl.local_file_data.startsWith('/uploads/')) {
-                const filename = pl.local_file_data.replace('/uploads/', '');
-                const filePath = join(UPLOADS_DIR, filename);
-                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-              }
-              await deletePhotosForEntity(id);
-            }
-
-            if (hasUserId) {
-              await db.run(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`, [id, userId]);
-            } else {
-              await db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
             }
           }
+          else if (action === 'archive_place') {
+            const id = data.id;
+            if (id) {
+              await db.run('UPDATE places SET is_archived = 1 WHERE id = ? AND user_id = ?', [id, userId]);
+            }
+          }
+          else if (action === 'unarchive_place') {
+            const id = data.id;
+            if (id) {
+              if (data.location_id) {
+                await db.run('UPDATE places SET is_archived = 0, location_id = ? WHERE id = ? AND user_id = ?', [data.location_id, id, userId]);
+              } else {
+                await db.run('UPDATE places SET is_archived = 0 WHERE id = ? AND user_id = ?', [id, userId]);
+              }
+            }
+          }
+          else if (action === 'delete_archived_folder') {
+            const folderId = data.id;
+            if (folderId) {
+              const retainLocations = !!data.retainLocations;
+              if (retainLocations) {
+                await db.run('UPDATE locations SET parent_id = NULL WHERE parent_id = ? AND user_id = ?', [folderId, userId]);
+                await deleteEntityPhotosAndFiles([folderId]);
+                await removeLocationFromCollections([folderId], userId);
+                await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [folderId, userId]);
+              } else {
+                const allLocIds = await getAllChildLocationIds(folderId, userId);
+                const placeholders = allLocIds.map(() => '?').join(',');
+                const places = await db.all(`SELECT id FROM places WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+                const placeIds = places.map(p => p.id);
+                await preserveCompletedTripsForPlaces(placeIds);
+                await deleteEntityPhotosAndFiles([...allLocIds, ...placeIds]);
+                await removeLocationFromCollections(allLocIds, userId);
+                await db.run(`DELETE FROM places WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+                await db.run(`DELETE FROM locations WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+              }
+            }
+          }
+          else if (action === 'delete_archived_location') {
+            const locId = data.id;
+            if (locId) {
+              const retainPlaces = !!data.retainPlaces;
+              if (retainPlaces) {
+                await db.run("UPDATE places SET location_id = NULL, is_archived = 1 WHERE location_id = ? AND user_id = ?", [locId, userId]);
+                await deleteEntityPhotosAndFiles([locId]);
+                await removeLocationFromCollections([locId], userId);
+                await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [locId, userId]);
+              } else {
+                const places = await db.all('SELECT id FROM places WHERE location_id = ? AND user_id = ?', [locId, userId]);
+                const placeIds = places.map(p => p.id);
+                await preserveCompletedTripsForPlaces(placeIds);
+                await deleteEntityPhotosAndFiles([locId, ...placeIds]);
+                await removeLocationFromCollections([locId], userId);
+                await db.run('DELETE FROM places WHERE location_id = ? AND user_id = ?', [locId, userId]);
+                await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [locId, userId]);
+              }
+            }
+          }
+          else if (action === 'delete_archived_place') {
+            const placeId = data.id;
+            if (placeId) {
+              await preserveCompletedTripsForPlaces([placeId]);
+              await deleteEntityPhotosAndFiles([placeId]);
+              await db.run('DELETE FROM places WHERE id = ? AND user_id = ?', [placeId, userId]);
+            }
+          }
+          else if (action === 'delete_folder') {
+            if (table === 'locations') {
+              const id = data.id;
+              if (id) {
+                const deleteContents = data.deleteContents;
+                if (deleteContents) {
+                  const allLocIds = await getAllChildLocationIds(id, userId);
+                  const placeholders = allLocIds.map(() => '?').join(',');
+                  const places = await db.all(`SELECT id FROM places WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+                  const placeIds = places.map(p => p.id);
+                  await preserveCompletedTripsForPlaces(placeIds);
+                  await deleteEntityPhotosAndFiles([...allLocIds, ...placeIds]);
+                  await removeLocationFromCollections(allLocIds, userId);
+                  await db.run(`DELETE FROM places WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+                  await db.run(`DELETE FROM locations WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+                } else {
+                  await db.run('UPDATE locations SET parent_id = NULL WHERE parent_id = ? AND user_id = ?', [id, userId]);
+                  await deleteEntityPhotosAndFiles([id]);
+                  await removeLocationFromCollections([id], userId);
+                  await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+                }
+              }
+            }
+          }
+          else if (action === 'delete') {
+            if (table === 'entity_tags') {
+              const { entity_id, tag_id } = data;
+              await db.run(`DELETE FROM entity_tags WHERE entity_id = ? AND tag_id = ?`, [entity_id, tag_id]);
+            } else {
+              const id = data.id;
+              if (!id) {
+                await db.exec('RELEASE SAVEPOINT sync_item');
+                continue;
+              }
+
+              if (table === 'locations') {
+                const places = await db.all('SELECT id FROM places WHERE location_id = ? AND user_id = ?', [id, userId]);
+                const placeIds = places.map(p => p.id);
+                await preserveCompletedTripsForPlaces(placeIds);
+                await deleteEntityPhotosAndFiles([id, ...placeIds]);
+                await removeLocationFromCollections([id], userId);
+                await db.run('DELETE FROM places WHERE location_id = ? AND user_id = ?', [id, userId]);
+              } else if (table === 'places') {
+                await preserveCompletedTripsForPlaces([id]);
+                await deleteEntityPhotosAndFiles([id]);
+              }
+
+              if (hasUserId) {
+                await db.run(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`, [id, userId]);
+              } else {
+                await db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
+              }
+            }
+          }
+
+          await db.exec('RELEASE SAVEPOINT sync_item');
+        } catch (itemErr) {
+          try {
+            await db.exec('ROLLBACK TO SAVEPOINT sync_item');
+          } catch (_) {}
+          console.warn(`[Sync Warning] Failed to process sync action for ${op.table}: ${itemErr.message}`);
         }
       }
 
@@ -1392,10 +2334,359 @@ app.put('/api/locations/:id', authenticateToken, async (req, res) => {
   }
 });
 
+app.put('/api/locations/:id/archive', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const allLocIds = await getAllChildLocationIds(id, userId);
+    const placeholders = allLocIds.map(() => '?').join(',');
+    await db.run(`UPDATE locations SET is_archived = 1 WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    await db.run(`UPDATE places SET is_archived = 1 WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    notifyUserClients(userId);
+    res.json({ success: true, archivedIds: allLocIds });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/locations/:id/unarchive', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const allLocIds = await getAllChildLocationIds(id, userId);
+    const placeholders = allLocIds.map(() => '?').join(',');
+    await db.run(`UPDATE locations SET is_archived = 0 WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    await db.run(`UPDATE places SET is_archived = 0 WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    const loc = await db.get('SELECT parent_id FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+    if (loc && loc.parent_id) {
+      const parentLoc = await db.get('SELECT is_archived FROM locations WHERE id = ? AND user_id = ?', [loc.parent_id, userId]);
+      if (!parentLoc || parentLoc.is_archived === 1) {
+        await db.run('UPDATE locations SET parent_id = NULL WHERE id = ? AND user_id = ?', [id, userId]);
+      }
+    }
+    notifyUserClients(userId);
+    res.json({ success: true, unarchivedIds: allLocIds });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/places/:id/archive', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    await db.run('UPDATE places SET is_archived = 1 WHERE id = ? AND user_id = ?', [id, userId]);
+    notifyUserClients(userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/places/:id/unarchive', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const { location_id } = req.body;
+    if (location_id) {
+      await db.run('UPDATE places SET is_archived = 0, location_id = ? WHERE id = ? AND user_id = ?', [location_id, id, userId]);
+    } else {
+      await db.run('UPDATE places SET is_archived = 0 WHERE id = ? AND user_id = ?', [id, userId]);
+    }
+    notifyUserClients(userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bulk Location Operations
+app.post('/api/locations/bulk-archive', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids must be a non-empty array' });
+    }
+    const allLocIdsSet = new Set();
+    for (const id of ids) {
+      const childIds = await getAllChildLocationIds(id, userId);
+      childIds.forEach(cid => allLocIdsSet.add(cid));
+    }
+    const allLocIds = Array.from(allLocIdsSet);
+    const placeholders = allLocIds.map(() => '?').join(',');
+    await db.run(`UPDATE locations SET is_archived = 1 WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    await db.run(`UPDATE places SET is_archived = 1 WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    notifyUserClients(userId);
+    res.json({ success: true, count: allLocIds.length, archivedIds: allLocIds });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/locations/bulk-unarchive', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids must be a non-empty array' });
+    }
+    const allLocIdsSet = new Set();
+    for (const id of ids) {
+      const childIds = await getAllChildLocationIds(id, userId);
+      childIds.forEach(cid => allLocIdsSet.add(cid));
+    }
+    const allLocIds = Array.from(allLocIdsSet);
+    const placeholders = allLocIds.map(() => '?').join(',');
+    await db.run(`UPDATE locations SET is_archived = 0 WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    await db.run(`UPDATE places SET is_archived = 0 WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    
+    // Disconnect from parent if parent is still archived
+    for (const id of ids) {
+      const loc = await db.get('SELECT parent_id FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+      if (loc && loc.parent_id) {
+        const parentLoc = await db.get('SELECT is_archived FROM locations WHERE id = ? AND user_id = ?', [loc.parent_id, userId]);
+        if (!parentLoc || parentLoc.is_archived === 1) {
+          await db.run('UPDATE locations SET parent_id = NULL WHERE id = ? AND user_id = ?', [id, userId]);
+        }
+      }
+    }
+    notifyUserClients(userId);
+    res.json({ success: true, count: allLocIds.length, unarchivedIds: allLocIds });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bulk Place Operations
+app.post('/api/places/bulk-archive', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids must be a non-empty array' });
+    }
+    const placeholders = ids.map(() => '?').join(',');
+    await db.run(`UPDATE places SET is_archived = 1 WHERE id IN (${placeholders}) AND user_id = ?`, [...ids, userId]);
+    notifyUserClients(userId);
+    res.json({ success: true, count: ids.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/places/bulk-unarchive', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { ids, location_id } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids must be a non-empty array' });
+    }
+    const placeholders = ids.map(() => '?').join(',');
+    if (location_id) {
+      await db.run(`UPDATE places SET is_archived = 0, location_id = ? WHERE id IN (${placeholders}) AND user_id = ?`, [location_id, ...ids, userId]);
+    } else {
+      await db.run(`UPDATE places SET is_archived = 0 WHERE id IN (${placeholders}) AND user_id = ?`, [...ids, userId]);
+    }
+    notifyUserClients(userId);
+    res.json({ success: true, count: ids.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bulk Permanent Deletion
+app.post('/api/archived/bulk-delete', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { locationIds = [], placeIds = [] } = req.body;
+
+    if (Array.isArray(placeIds) && placeIds.length > 0) {
+      await preserveCompletedTripsForPlaces(placeIds);
+      await deleteEntityPhotosAndFiles(placeIds);
+      const pPlaceholders = placeIds.map(() => '?').join(',');
+      await db.run(`DELETE FROM places WHERE id IN (${pPlaceholders}) AND user_id = ?`, [...placeIds, userId]);
+    }
+
+    if (Array.isArray(locationIds) && locationIds.length > 0) {
+      const allLocIdsSet = new Set();
+      for (const lid of locationIds) {
+        const cIds = await getAllChildLocationIds(lid, userId);
+        cIds.forEach(id => allLocIdsSet.add(id));
+      }
+      const allLocIds = Array.from(allLocIdsSet);
+      if (allLocIds.length > 0) {
+        const lPlaceholders = allLocIds.map(() => '?').join(',');
+        const childPlaces = await db.all(`SELECT id FROM places WHERE location_id IN (${lPlaceholders}) AND user_id = ?`, [...allLocIds, userId]);
+        const childPlaceIds = childPlaces.map(p => p.id);
+
+        await preserveCompletedTripsForPlaces(childPlaceIds);
+        await deleteEntityPhotosAndFiles([...allLocIds, ...childPlaceIds]);
+        await removeLocationFromCollections(allLocIds, userId);
+        await db.run(`DELETE FROM places WHERE location_id IN (${lPlaceholders}) AND user_id = ?`, [...allLocIds, userId]);
+        await db.run(`DELETE FROM locations WHERE id IN (${lPlaceholders}) AND user_id = ?`, [...allLocIds, userId]);
+      }
+    }
+
+    notifyUserClients(userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/places/:id/trip_usage', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const activeTrips = await db.all(`
+      SELECT t.id as trip_id, t.name as trip_name, i.date, i.sequence_order
+      FROM itinerary_items i
+      JOIN trips t ON i.trip_id = t.id
+      WHERE i.place_id = ? AND t.user_id = ? AND (t.visited = 0 OR t.visited IS NULL)
+      ORDER BY i.date ASC
+    `, [id, userId]);
+
+    const completedTrips = await db.all(`
+      SELECT t.id as trip_id, t.name as trip_name, i.date, i.sequence_order
+      FROM itinerary_items i
+      JOIN trips t ON i.trip_id = t.id
+      WHERE i.place_id = ? AND t.user_id = ? AND t.visited = 1
+      ORDER BY i.date ASC
+    `, [id, userId]);
+
+    res.json({ activeTrips, completedTrips });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/locations/:id/trip_usage', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const allLocIds = await getAllChildLocationIds(id, userId);
+    const placeholders = allLocIds.map(() => '?').join(',');
+
+    const activeTrips = await db.all(`
+      SELECT DISTINCT t.id as trip_id, t.name as trip_name, p.name as place_name, i.date
+      FROM itinerary_items i
+      JOIN trips t ON i.trip_id = t.id
+      JOIN places p ON i.place_id = p.id
+      WHERE p.location_id IN (${placeholders}) AND t.user_id = ? AND (t.visited = 0 OR t.visited IS NULL)
+      ORDER BY i.date ASC
+    `, [...allLocIds, userId]);
+
+    const completedTrips = await db.all(`
+      SELECT DISTINCT t.id as trip_id, t.name as trip_name, p.name as place_name, i.date
+      FROM itinerary_items i
+      JOIN trips t ON i.trip_id = t.id
+      JOIN places p ON i.place_id = p.id
+      WHERE p.location_id IN (${placeholders}) AND t.user_id = ? AND t.visited = 1
+      ORDER BY i.date ASC
+    `, [...allLocIds, userId]);
+
+    res.json({ activeTrips, completedTrips });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/archived', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const locations = await db.all('SELECT * FROM locations WHERE user_id = ? AND is_archived = 1 ORDER BY created_at DESC', [userId]);
+    const places = await db.all('SELECT * FROM places WHERE user_id = ? AND is_archived = 1 ORDER BY created_at DESC', [userId]);
+    res.json({ locations, places });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/archived/folders/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const retainLocations = req.query.retainLocations === 'true';
+
+    if (retainLocations) {
+      await db.run('UPDATE locations SET parent_id = NULL WHERE parent_id = ? AND user_id = ?', [id, userId]);
+      await deleteEntityPhotosAndFiles([id]);
+      await removeLocationFromCollections([id], userId);
+      await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+    } else {
+      const allLocIds = await getAllChildLocationIds(id, userId);
+      const placeholders = allLocIds.map(() => '?').join(',');
+      const places = await db.all(`SELECT id FROM places WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+      const placeIds = places.map(p => p.id);
+      await preserveCompletedTripsForPlaces(placeIds);
+      await deleteEntityPhotosAndFiles([...allLocIds, ...placeIds]);
+      await removeLocationFromCollections(allLocIds, userId);
+      await db.run(`DELETE FROM places WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+      await db.run(`DELETE FROM locations WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    }
+
+    notifyUserClients(userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/archived/locations/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const retainPlaces = req.query.retainPlaces === 'true';
+
+    if (retainPlaces) {
+      await db.run("UPDATE places SET location_id = '__orphaned__', is_archived = 1 WHERE location_id = ? AND user_id = ?", [id, userId]);
+      await deleteEntityPhotosAndFiles([id]);
+      await removeLocationFromCollections([id], userId);
+      await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+    } else {
+      const places = await db.all('SELECT id FROM places WHERE location_id = ? AND user_id = ?', [id, userId]);
+      const placeIds = places.map(p => p.id);
+      await preserveCompletedTripsForPlaces(placeIds);
+      await deleteEntityPhotosAndFiles([id, ...placeIds]);
+      await removeLocationFromCollections([id], userId);
+      await db.run('DELETE FROM places WHERE location_id = ? AND user_id = ?', [id, userId]);
+      await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [id, userId]);
+    }
+
+    notifyUserClients(userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/archived/places/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    await preserveCompletedTripsForPlaces([id]);
+    await deleteEntityPhotosAndFiles([id]);
+    await db.run('DELETE FROM places WHERE id = ? AND user_id = ?', [id, userId]);
+    notifyUserClients(userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/locations/:id', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    await db.run('DELETE FROM locations WHERE id = ? AND user_id = ?', [req.params.id, userId]);
+    const allLocIds = await getAllChildLocationIds(req.params.id, userId);
+    const placeholders = allLocIds.map(() => '?').join(',');
+    const places = await db.all(`SELECT id FROM places WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    const placeIds = places.map(p => p.id);
+    await preserveCompletedTripsForPlaces(placeIds);
+    await deleteEntityPhotosAndFiles([...allLocIds, ...placeIds]);
+    await removeLocationFromCollections(allLocIds, userId);
+    await db.run(`DELETE FROM places WHERE location_id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
+    await db.run(`DELETE FROM locations WHERE id IN (${placeholders}) AND user_id = ?`, [...allLocIds, userId]);
     notifyUserClients(userId);
     res.json({ success: true });
   } catch (err) {
@@ -1918,7 +3209,11 @@ app.put('/api/places/:id', authenticateToken, async (req, res) => {
 app.delete('/api/places/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
-    await db.run('DELETE FROM places WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    const userId = req.user.id;
+    await preserveCompletedTripsForPlaces([id]);
+    await deleteEntityPhotosAndFiles([id]);
+    await db.run('DELETE FROM places WHERE id = ? AND user_id = ?', [id, userId]);
+    notifyUserClients(userId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2757,11 +4052,14 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
   // NOTE: 'users' table is strictly EXCLUDED from restore to prevent overwriting login accounts or logging users out
   const tablesOrder = [
     'user_configs',
-    'locations',
-    'places',
+    'user_addresses',
+    'people',
     'custom_categories',
     'tags',
+    'locations',
+    'places',
     'entity_tags',
+    'entity_photos',
     'collections',
     'trips',
     'trip_currency_rates',
@@ -2770,11 +4068,8 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
     'itinerary_items',
     'expenses',
     'gps_logs',
-    'entity_photos',
     'ai_imports',
-    'saved_markdowns',
-    'people',
-    'user_addresses'
+    'saved_markdowns'
   ];
 
   for (const table of tablesOrder) {
@@ -2860,6 +4155,36 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
           row.manual_location_ids = ids.join(',');
         }
 
+        if (table === 'collections' && typeof row.rules === 'string' && row.rules) {
+          let rulesStr = row.rules;
+          for (const [oldId, newId] of idMap.entries()) {
+            if (rulesStr.includes(oldId)) {
+              rulesStr = rulesStr.split(oldId).join(newId);
+            }
+          }
+          row.rules = rulesStr;
+        }
+
+        if (table === 'trips' && typeof row.notes === 'string' && row.notes) {
+          let notesStr = row.notes;
+          for (const [oldId, newId] of idMap.entries()) {
+            if (notesStr.includes(oldId)) {
+              notesStr = notesStr.split(oldId).join(newId);
+            }
+          }
+          row.notes = notesStr;
+        }
+
+        if (table === 'trips' && typeof row.companions === 'string' && row.companions) {
+          let compStr = row.companions;
+          for (const [oldId, newId] of idMap.entries()) {
+            if (compStr.includes(oldId)) {
+              compStr = compStr.split(oldId).join(newId);
+            }
+          }
+          row.companions = compStr;
+        }
+
         if (table === 'entity_tags') {
           const exists = await db.get('SELECT 1 FROM entity_tags WHERE entity_id = ? AND tag_id = ?', [row.entity_id, row.tag_id]);
           if (exists) {
@@ -2880,6 +4205,11 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
         warnings.push(`Skipped row in ${table}: ${rowErr.message}`);
       }
     }
+  }
+
+  // Reconcile nested folder hierarchy parent_ids if parent IDs were remapped
+  for (const [oldId, newId] of idMap.entries()) {
+    await db.run('UPDATE locations SET parent_id = ? WHERE parent_id = ?', [newId, oldId]).catch(() => {});
   }
 
   // Check configuration integration warnings
@@ -2984,11 +4314,14 @@ app.post('/api/backup/restore', async (req, res) => {
   // NOTE: 'users' table is strictly EXCLUDED from restore to prevent overwriting login accounts or logging users out
   const tablesOrder = [
     'user_configs',
-    'locations',
-    'places',
+    'user_addresses',
+    'people',
     'custom_categories',
     'tags',
+    'locations',
+    'places',
     'entity_tags',
+    'entity_photos',
     'collections',
     'trips',
     'trip_currency_rates',
@@ -2997,11 +4330,8 @@ app.post('/api/backup/restore', async (req, res) => {
     'itinerary_items',
     'expenses',
     'gps_logs',
-    'entity_photos',
     'ai_imports',
-    'saved_markdowns',
-    'people',
-    'user_addresses'
+    'saved_markdowns'
   ];
 
   try {
@@ -3080,6 +4410,36 @@ app.post('/api/backup/restore', async (req, res) => {
             row.manual_location_ids = ids.join(',');
           }
 
+          if (table === 'collections' && typeof row.rules === 'string' && row.rules) {
+            let rulesStr = row.rules;
+            for (const [oldId, newId] of idMap.entries()) {
+              if (rulesStr.includes(oldId)) {
+                rulesStr = rulesStr.split(oldId).join(newId);
+              }
+            }
+            row.rules = rulesStr;
+          }
+
+          if (table === 'trips' && typeof row.notes === 'string' && row.notes) {
+            let notesStr = row.notes;
+            for (const [oldId, newId] of idMap.entries()) {
+              if (notesStr.includes(oldId)) {
+                notesStr = notesStr.split(oldId).join(newId);
+              }
+            }
+            row.notes = notesStr;
+          }
+
+          if (table === 'trips' && typeof row.companions === 'string' && row.companions) {
+            let compStr = row.companions;
+            for (const [oldId, newId] of idMap.entries()) {
+              if (compStr.includes(oldId)) {
+                compStr = compStr.split(oldId).join(newId);
+              }
+            }
+            row.companions = compStr;
+          }
+
           if (table === 'entity_tags') {
             const exists = await db.get('SELECT 1 FROM entity_tags WHERE entity_id = ? AND tag_id = ?', [row.entity_id, row.tag_id]);
             if (exists) {
@@ -3098,6 +4458,11 @@ app.post('/api/backup/restore', async (req, res) => {
           console.warn(`[Legacy Restore Warning] Row skipped in ${table}:`, rowErr.message);
         }
       }
+    }
+
+    // Reconcile nested folder hierarchy parent_ids if parent IDs were remapped
+    for (const [oldId, newId] of idMap.entries()) {
+      await db.run('UPDATE locations SET parent_id = ? WHERE parent_id = ?', [newId, oldId]).catch(() => {});
     }
 
     // Restore files

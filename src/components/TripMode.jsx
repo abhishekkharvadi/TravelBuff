@@ -59,7 +59,10 @@ export default function TripMode({ token }) {
     };
   }) || { trips: [], places: [], itineraries: [], expenses: [], rates: [], locations: [], reservations: [], tripNotes: [], people: [], userAddresses: [] };
 
-  const { trips, places, itineraries, expenses, rates, locations, reservations, tripNotes, people = [], userAddresses = [] } = syncData;
+  const { trips, places: rawPlaces = [], itineraries, expenses, rates, locations: rawLocations = [], reservations, tripNotes, people = [], userAddresses = [] } = syncData;
+
+  const locations = rawLocations.filter(l => Number(l.is_archived) !== 1);
+  const places = rawPlaces.filter(p => Number(p.is_archived) !== 1);
 
   const combinedPlaces = useMemo(() => {
     const homePlaces = (userAddresses || []).map(addr => ({
@@ -72,8 +75,21 @@ export default function TripMode({ token }) {
       longitude: (addr.longitude !== null && addr.longitude !== undefined && addr.longitude !== '' && !isNaN(Number(addr.longitude))) ? parseFloat(addr.longitude) : null,
       address: addr.address || ''
     }));
-    return [...places, ...homePlaces];
-  }, [places, userAddresses]);
+
+    // Fallback stops for deleted/archived places to protect completed/active trips
+    const fallbackStops = (itineraries || [])
+      .filter(it => it.custom_name && !places.some(p => p.id === it.place_id))
+      .map(it => ({
+        id: it.place_id || it.id,
+        name: it.custom_name,
+        category: it.custom_category || 'Place',
+        latitude: it.custom_lat,
+        longitude: it.custom_lng,
+        notes: it.notes || ''
+      }));
+
+    return [...places, ...homePlaces, ...fallbackStops];
+  }, [places, userAddresses, itineraries]);
 
   // Local State
   const [activeTrip, setActiveTrip] = useState(null);
@@ -802,6 +818,7 @@ export default function TripMode({ token }) {
   const dayEndpointConfig = dayEndpoints[displayDayStr] || (activeDayObj ? dayEndpoints[activeDayObj.label] : null) || (activeDayObj ? dayEndpoints[`Day ${activeDayObj.dayNumber}`] : null) || {};
   const startFromHome = dayEndpointConfig.startFromHome ?? (isFirstDay && Boolean(currentTrip?.start_address_id));
   const lastDayGoHome = dayEndpointConfig.lastDayGoHome ?? (isLastDay && Boolean(currentTrip?.stop_address_id));
+  const driveToStayFirst = dayEndpointConfig.driveToStayFirst ?? false;
   const stayBehavior = dayStayBehaviors[displayDayStr] || (activeDayObj ? dayStayBehaviors[activeDayObj.label] : null) || (activeDayObj ? dayStayBehaviors[`Day ${activeDayObj.dayNumber}`] : null) || 'stay_night';
 
   const hotelPlaceId = hotelsObj[displayDayStr] || (activeDayObj ? hotelsObj[activeDayObj.label] : null) || (activeDayObj ? hotelsObj[`Day ${activeDayObj.dayNumber}`] : null);
@@ -834,15 +851,21 @@ export default function TripMode({ token }) {
       });
     }
 
-    // 2. Depart Stay (only on Day 2+ for stay_night or checkout)
-    if (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+    // 2. Depart Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked)
+    const shouldIncludeStayOrigin = (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) ||
+      (isFirstDay && Boolean(startAddrObj) && hotelPlace && driveToStayFirst);
+
+    if (shouldIncludeStayOrigin) {
       const firstItemIsHotel = activeDayStops.length > 0 && String(activeDayStops[0].place_id) === String(hotelPlace.id);
       if (!firstItemIsHotel) {
+        const originLabel = isFirstDay
+          ? `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+          : (stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`);
         elems.push({
           place: hotelPlace,
           isFixedEndpoint: true,
           endpointType: 'stay_origin',
-          label: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
+          label: originLabel
         });
       }
     }

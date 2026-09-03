@@ -318,6 +318,16 @@ Here is how to create popular collection setups step-by-step:
   3. Under Categories, check **museum** and **temple** (monuments/heritage).
   4. Click **Save Collection** to see an interactive culture map across Paris.
 
+---
+
+### Multi-Select Mode & Bulk Deletion
+Manage collections in batches with the interactive selection mode:
+1. Click the **"Select"** button in the Collections header.
+2. Selection checkboxes will appear on each custom collection card.
+3. Click cards to toggle selection (or click **"Select All"** in the floating bottom action bar).
+4. Click **"Delete (N)"** to remove selected collections. A confirmation prompt confirms the batch removal while safely preserving all underlying locations and places in your database.
+5. Click **"Done Selecting"** to exit multi-select mode.
+
 #### Example 5: "Tokyo Coffee Trail" (International Example)
 * **Goal**: Group specialty coffee shops across Tokyo neighborhoods (Shibuya, Shinjuku, Ginza).
 * **Steps**:
@@ -585,14 +595,15 @@ When you are actively traveling—standing in an airport line, riding a train, o
 
 ## 9. Settings & System Administration
 
-The **Settings** page is your central control panel for managing integrations, AI assistants, backup files, custom categories, travel companions, saved addresses, user administration, and API logs.
+The **Settings** page is organized into a clean, **6-tab Hybrid Layout** with an instant **Global Live Search** bar at the top:
 
----
-
-### User Account & Profile Management
-Accessible from the user menu in the top-right header:
-* **Profile Photo / Avatar**: Upload and update your personal profile picture.
-* **Password Management**: Self-service password updates with current password verification.
+* **Global Live Search Bar**: Located in the Settings header. Search across all settings fields and integrations simultaneously. Clicking any matching section switches directly to its tab and smoothly scrolls with an active glow outline.
+* **1. ⚙️ General & Preferences**: Base Currency (160+ ISO world currencies), default travel speeds, default country context, home airport, default navigation map app (Google vs Apple Maps), and saved home origin/destination addresses.
+* **2. 🔌 Integrations & AI**: Immich Photo Server (including embedded People & Companions face recognition sync), AI Assistant LLM Providers (OpenAI, Claude, Gemini, Ollama, DeepSeek, Groq, OpenRouter), Google Maps API key, and OwnTracks GPS real-time tracking.
+* **3. 🏷️ Taxonomy & Tags**: Keyword tags with custom color badges and custom categories with emoji icons.
+* **4. 💾 Data & Backups**: Full JSON backup export, chunked restore engine, media cache resync, archived items & retention options, and saved travel guides.
+* **5. 👤 Account**: My Profile & Security (self-service profile picture avatar upload, password change with current password validation) and Admin User Management (user registry, role assignment, password resets, cascade user deletion).
+* **6. 🖥️ System**: Privacy & Telemetry opt-in controls, external API usage logs (past 6 months with CSV export), Guided UI Spotlight Tour restart, Getting Started checklist, and "What's New in v7.4.0" release notes.
 
 ---
 

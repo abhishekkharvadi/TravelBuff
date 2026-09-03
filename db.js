@@ -13,6 +13,7 @@ if (!fs.existsSync(DB_DIR)) {
 
 const DB_PATH = path.join(DB_DIR, 'travelbuff.db');
 const dbInstance = new sqlite3.Database(DB_PATH);
+dbInstance.run('PRAGMA foreign_keys = ON;');
 
 // Promise Wrappers for SQLite
 export const db = {
@@ -74,6 +75,13 @@ export async function initDatabase() {
       immich_alt_url TEXT,
       ai_settings TEXT,
       owntracks_key TEXT NOT NULL UNIQUE,
+      owntracks_mode TEXT DEFAULT 'webhook',
+      owntracks_recorder_url TEXT,
+      owntracks_recorder_user TEXT,
+      owntracks_recorder_device TEXT,
+      owntracks_recorder_auth_type TEXT DEFAULT 'none',
+      owntracks_recorder_username TEXT,
+      owntracks_recorder_password TEXT,
       base_currency TEXT DEFAULT 'USD',
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
@@ -92,6 +100,7 @@ export async function initDatabase() {
       local_file_data TEXT,
       parent_id TEXT DEFAULT NULL,
       is_folder INTEGER DEFAULT 0,
+      is_archived INTEGER DEFAULT 0,
       photo_sync_status TEXT DEFAULT 'pending',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -110,6 +119,7 @@ export async function initDatabase() {
       notes TEXT,
       immich_album_id TEXT,
       local_file_data TEXT,
+      is_archived INTEGER DEFAULT 0,
       photo_sync_status TEXT DEFAULT 'pending',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -213,6 +223,10 @@ export async function initDatabase() {
       sequence_order INTEGER NOT NULL,
       distance_from_prev REAL DEFAULT -1,
       duration_from_prev REAL DEFAULT -1,
+      custom_name TEXT,
+      custom_category TEXT,
+      custom_lat REAL,
+      custom_lng REAL,
       FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,
       FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
     );
@@ -324,8 +338,19 @@ export async function initDatabase() {
   await db.run('ALTER TABLE trips ADD COLUMN companions TEXT').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN start_address_id TEXT').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN stop_address_id TEXT').catch(() => {});
-  await db.run('ALTER TABLE locations ADD COLUMN photo_sync_retry_count INTEGER DEFAULT 0').catch(() => {});
-  await db.run('ALTER TABLE places ADD COLUMN photo_sync_retry_count INTEGER DEFAULT 0').catch(() => {});
+  await db.run('ALTER TABLE locations ADD COLUMN is_archived INTEGER DEFAULT 0').catch(() => {});
+  await db.run('ALTER TABLE places ADD COLUMN is_archived INTEGER DEFAULT 0').catch(() => {});
+  await db.run('ALTER TABLE itinerary_items ADD COLUMN custom_name TEXT').catch(() => {});
+  await db.run('ALTER TABLE itinerary_items ADD COLUMN custom_category TEXT').catch(() => {});
+  await db.run('ALTER TABLE itinerary_items ADD COLUMN custom_lat REAL').catch(() => {});
+  await db.run('ALTER TABLE itinerary_items ADD COLUMN custom_lng REAL').catch(() => {});
+  await db.run("ALTER TABLE user_configs ADD COLUMN owntracks_mode TEXT DEFAULT 'webhook'").catch(() => {});
+  await db.run('ALTER TABLE user_configs ADD COLUMN owntracks_recorder_url TEXT').catch(() => {});
+  await db.run('ALTER TABLE user_configs ADD COLUMN owntracks_recorder_user TEXT').catch(() => {});
+  await db.run('ALTER TABLE user_configs ADD COLUMN owntracks_recorder_device TEXT').catch(() => {});
+  await db.run("ALTER TABLE user_configs ADD COLUMN owntracks_recorder_auth_type TEXT DEFAULT 'none'").catch(() => {});
+  await db.run('ALTER TABLE user_configs ADD COLUMN owntracks_recorder_username TEXT').catch(() => {});
+  await db.run('ALTER TABLE user_configs ADD COLUMN owntracks_recorder_password TEXT').catch(() => {});
 
   // Auto-promote earliest registered user to Admin if no admin exists yet
   try {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Cloud, CloudLightning, RefreshCw, LogOut, MapPin, ClipboardList, Settings, Compass, Moon, Edit, Map, Sparkles, User, X } from 'lucide-react';
+import { Cloud, CloudLightning, RefreshCw, LogOut, MapPin, ClipboardList, Settings, Compass, Moon, Edit, Map, Sparkles, User, X, Archive } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './clientDb.js';
 import AiImportModal from './components/AiImportModal.jsx';
@@ -12,10 +12,15 @@ import Collections from './components/Collections.jsx';
 import TripPlanning from './components/TripPlanning.jsx';
 import SettingsTab from './components/Settings.jsx';
 import TripMode from './components/TripMode.jsx';
+import ArchivedItems from './components/ArchivedItems.jsx';
 import OnboardingTour from './components/OnboardingTour.jsx';
 import OnboardingChecklist from './components/OnboardingChecklist.jsx';
+import ImmichImportProgressModal from './components/ImmichImportProgressModal.jsx';
+import WhatsNewModal from './components/WhatsNewModal.jsx';
+import { immichImportQueue } from './services/immichImportQueue.js';
 import { initSyncManager, registerSyncStatusListener } from './sync.js';
 import { populateLocalDb, clearLocalDb } from './clientDb.js';
+import { reconcileMissingFolderCovers } from './utils/photoReconciler.js';
 import { APP_VERSION } from './version.js';
 import { parseRoute, buildHash, navigateToHash, slugify } from './router.js';
 
@@ -42,12 +47,60 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [resumeMarkdown, setResumeMarkdown] = useState(null);
 
+  // Immich background task queue state
+  const [immichQueueState, setImmichQueueState] = useState(immichImportQueue.getState());
+  const [showImmichProgressModal, setShowImmichProgressModal] = useState(false);
+
+  useEffect(() => {
+    const unsub = immichImportQueue.subscribe(state => {
+      setImmichQueueState(state);
+    });
+
+    const token = localStorage.getItem('tb_token');
+    if (token) {
+      immichImportQueue.checkAndResumePending(token);
+    }
+
+    return () => unsub();
+  }, []);
+
   // Onboarding Tour & Getting Started Checklist states
   const [showOnboardingTour, setShowOnboardingTour] = useState(false);
   const [showOnboardingChecklist, setShowOnboardingChecklist] = useState(false);
 
   // Telemetry Banner state
   const [showTelemetryBanner, setShowTelemetryBanner] = useState(false);
+
+  // App Update Notification & What's New state
+  const [showWhatsNewModal, setShowWhatsNewModal] = useState(false);
+  const [hasUpdateNotification, setHasUpdateNotification] = useState(false);
+
+  useEffect(() => {
+    try {
+      const lastSeenVersion = localStorage.getItem('tb_last_seen_version');
+      if (lastSeenVersion !== APP_VERSION) {
+        setHasUpdateNotification(true);
+      }
+    } catch (e) {
+      console.warn('Could not check update version', e);
+    }
+  }, []);
+
+  const handleOpenWhatsNew = () => {
+    setShowWhatsNewModal(true);
+    setHasUpdateNotification(false);
+    try {
+      localStorage.setItem('tb_last_seen_version', APP_VERSION);
+    } catch (e) {}
+  };
+
+  const handleDismissUpdateNotification = (e) => {
+    if (e) e.stopPropagation();
+    setHasUpdateNotification(false);
+    try {
+      localStorage.setItem('tb_last_seen_version', APP_VERSION);
+    } catch (e) {}
+  };
 
   // Auto-launch tour & checklist on user session
   useEffect(() => {
@@ -325,6 +378,25 @@ export default function App() {
     [], []
   );
   const pendingCount = pendingImports?.length || 0;
+
+  const allLocationsForReconcile = useLiveQuery(
+    () => db.locations ? db.locations.toArray() : Promise.resolve([]),
+    [], []
+  );
+  const allPhotosForReconcile = useLiveQuery(
+    () => db.entity_photos ? db.entity_photos.toArray() : Promise.resolve([]),
+    [], []
+  );
+
+  const hasReconciledRef = useRef(false);
+
+  // Startup background cover photo reconciler (max 2 attempts per folder, strictly once on startup)
+  useEffect(() => {
+    if (!hasReconciledRef.current && user?.token && allLocationsForReconcile && allLocationsForReconcile.length > 0) {
+      hasReconciledRef.current = true;
+      reconcileMissingFolderCovers(allLocationsForReconcile, allPhotosForReconcile || [], user.token);
+    }
+  }, [user?.token, allLocationsForReconcile]);
 
   // 1. Recover session on mount
   useEffect(() => {
@@ -726,6 +798,43 @@ export default function App() {
         )}
 
         <div className="header-controls">
+          {/* Immich Task Queue Header Indicator */}
+          {immichQueueState.status !== 'idle' && (
+            <div 
+              onClick={() => setShowImmichProgressModal(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                height: '32px',
+                padding: '0 10px',
+                borderRadius: '16px',
+                cursor: 'pointer',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                background: immichQueueState.status === 'completed' ? 'rgba(74, 222, 128, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                border: immichQueueState.status === 'completed' ? '1px solid rgba(74, 222, 128, 0.4)' : '1px solid rgba(99, 102, 241, 0.4)',
+                color: immichQueueState.status === 'completed' ? 'var(--success)' : 'var(--accent-primary-hover)',
+                backdropFilter: 'blur(8px)',
+                transition: 'all 0.2s ease',
+                userSelect: 'none'
+              }}
+              title={immichQueueState.status === 'completed' ? "Immich import finished. Click to review summary." : `Enriching Immich locations: ${immichQueueState.completed}/${immichQueueState.total}. Click to view progress.`}
+            >
+              {immichQueueState.status === 'completed' ? (
+                <>
+                  <span style={{ fontSize: '13px' }}>✨</span>
+                  <span>Immich Done</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={13} className="sync-spinner" style={{ color: 'var(--accent-primary)' }} />
+                  <span>Immich ({immichQueueState.completed}/{immichQueueState.total})</span>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Sync Status Badge */}
           <div className={`sync-badge ${syncStatus}`}>
             {syncStatus === 'synced' && (
@@ -892,8 +1001,8 @@ export default function App() {
                 <button onClick={() => { handleTabSelect('settings'); setUserMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Settings size={16} /> Settings
                 </button>
-                <button onClick={() => { setShowAccountModal(true); setUserMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <User size={16} /> Account Management
+                <button onClick={() => { handleOpenWhatsNew(); setUserMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Sparkles size={16} style={{ color: 'var(--accent-primary-hover)' }} /> What's New ({APP_VERSION})
                 </button>
                 <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
                 <div style={{ padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -925,7 +1034,11 @@ export default function App() {
                   <LogOut size={16} /> Logout
                 </button>
                 <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
-                <div style={{ padding: '6px 16px', fontSize: '0.68rem', color: 'var(--text-secondary)', textAlign: 'center', opacity: 0.7 }}>
+                <div 
+                  onClick={() => { handleOpenWhatsNew(); setUserMenuOpen(false); }}
+                  style={{ padding: '6px 16px', fontSize: '0.68rem', color: 'var(--text-secondary)', textAlign: 'center', opacity: 0.8, cursor: 'pointer' }}
+                  title="Click to view release notes"
+                >
                   TravelBuff {APP_VERSION}
                 </div>
               </div>
@@ -934,6 +1047,78 @@ export default function App() {
         </div>
       </header>
 
+      {/* Main Container */}
+      <div className="app-container">
+        {/* App Version Update Notification Banner */}
+        {hasUpdateNotification && (
+          <div className="no-print" style={{
+            background: 'linear-gradient(90deg, rgba(124, 58, 237, 0.9), rgba(59, 130, 246, 0.9))',
+            color: '#ffffff',
+            padding: '10px 20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.25)',
+            fontSize: '0.88rem',
+            fontWeight: 500
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={handleOpenWhatsNew}>
+              <Sparkles size={16} style={{ color: '#fef08a' }} />
+              <span>
+                <strong>TravelBuff has been updated to {APP_VERSION}!</strong> <span style={{ textDecoration: 'underline', opacity: 0.95, marginLeft: '4px' }}>Click here to review all updates & changes →</span>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleDismissUpdateNotification}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#ffffff',
+                cursor: 'pointer',
+                padding: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                opacity: 0.8
+              }}
+              title="Dismiss"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {/* Connection Offline/Reconnecting Alert Banner */}
+        {syncStatus === 'offline' && (
+          <div className="offline-banner no-print">
+            <CloudLightning size={16} />
+            <span>You are currently working offline. Changes will automatically sync when connection restores.</span>
+          </div>
+        )}
+
+        {/* Global Sync Error Alert */}
+        {syncStatus === 'error' && (
+          <div className="sync-error-banner no-print">
+            <span>Sync encountered an issue. Local changes are saved and will retry automatically.</span>
+            <button onClick={() => triggerSync()} className="btn-retry">Retry Now</button>
+          </div>
+        )}
+
+        {/* AI Processing Queue Indicator / Drawer Trigger */}
+        {pendingCount > 0 && (
+          <div className="ai-queue-floating-pill no-print" onClick={() => setShowAiReview(true)}>
+            <Sparkles size={16} className="sparkle-pulse" />
+            <span>{pendingCount} AI Import{pendingCount > 1 ? 's' : ''} Ready to Review</span>
+          </div>
+        )}
+
+          {showWhatsNewModal && (
+            <WhatsNewModal
+              isOpen={showWhatsNewModal}
+              onClose={() => setShowWhatsNewModal(false)}
+              onNavigateTab={handleTabSelect}
+            />
+          )}
           {showAiImport && <AiImportModal token={user.token} initialMode={importMode} resumeMarkdown={resumeMarkdown} onClose={() => { setShowAiImport(false); setResumeMarkdown(null); }} />}
           {showAiReview && <AiReviewQueue items={pendingImports || []} onClose={() => setShowAiReview(false)} />}
           {showAccountModal && <AccountModal token={user.token} profilePicture={user.profilePicture} username={user.username} onClose={() => setShowAccountModal(false)} onProfileUpdated={handleProfileUpdated} />}
@@ -983,6 +1168,7 @@ export default function App() {
                     setCurrentFolderId={handleFolderSelect} 
                     returnToCollectionId={returnToCollectionId}
                     onReturnToCollection={handleReturnToCollection}
+                    onNavigate={handleTabSelect}
                   />
                 )}
                 {activeTab === 'collections' && (
@@ -1000,13 +1186,23 @@ export default function App() {
                     onSelectTrip={handleTripSelect}
                   />
                 )}
+                {activeTab === 'archived' && (
+                  <ArchivedItems 
+                    token={user.token}
+                    onNavigate={handleTabSelect}
+                  />
+                )}
                 {activeTab === 'settings' && (
                   <SettingsTab 
                     token={user.token} 
                     userId={user.userId} 
+                    username={user.username}
+                    profilePicture={user.profilePicture}
+                    onProfileUpdated={handleProfileUpdated}
                     onLogout={handleLogout} 
                     onResumeMarkdown={(md) => { setResumeMarkdown(md); setShowAiImport(true); }} 
                     onRestartTour={() => setShowOnboardingTour(true)}
+                    onOpenWhatsNew={handleOpenWhatsNew}
                     onShowChecklist={() => {
                       setShowOnboardingChecklist(true);
                       if (user?.userId) {
@@ -1016,6 +1212,7 @@ export default function App() {
                       localStorage.removeItem('tb_checklist_dismissed');
                       localStorage.removeItem('tb_checklist_collapsed');
                     }}
+                    onNavigate={handleTabSelect}
                   />
                 )}
               </>
@@ -1065,8 +1262,8 @@ export default function App() {
                 <button onClick={() => { handleTabSelect('settings'); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Settings size={16} /> Settings
                 </button>
-                <button onClick={() => { setShowAccountModal(true); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <User size={16} /> Account Management
+                <button onClick={() => { handleOpenWhatsNew(); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Sparkles size={16} style={{ color: 'var(--accent-primary-hover)' }} /> What's New ({APP_VERSION})
                 </button>
                 <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
                 <div style={{ padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1097,6 +1294,14 @@ export default function App() {
                 <button onClick={() => { handleLogout(); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--error)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <LogOut size={16} /> Logout
                 </button>
+                <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
+                <div 
+                  onClick={() => { handleOpenWhatsNew(); setMobileMenuOpen(false); }}
+                  style={{ padding: '6px 16px', fontSize: '0.68rem', color: 'var(--text-secondary)', textAlign: 'center', opacity: 0.8, cursor: 'pointer' }}
+                  title="Click to view release notes"
+                >
+                  TravelBuff {APP_VERSION}
+                </div>
               </div>
             )}
           </button>
@@ -1145,6 +1350,13 @@ export default function App() {
           setShowAiImport(true);
         }}
       />
+
+      {/* Immich Import Progress / Background Task Modal */}
+      <ImmichImportProgressModal
+        isOpen={showImmichProgressModal}
+        onClose={() => setShowImmichProgressModal(false)}
+      />
+      </div>
     </div>
   );
 }

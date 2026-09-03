@@ -124,6 +124,8 @@ export function isOnline() {
   return navigator.onLine;
 }
 
+let syncPending = false;
+
 // Perform Sync
 export async function performSync(token) {
   const activeToken = token || (currentGetToken ? currentGetToken() : localStorage.getItem('tb_token'));
@@ -132,56 +134,67 @@ export async function performSync(token) {
     return;
   }
 
-  if (isSyncing) return;
+  if (isSyncing) {
+    syncPending = true;
+    return;
+  }
 
   if (!isOnline()) {
     syncStatusCallback('offline');
     return;
   }
 
+  isSyncing = true;
+  syncStatusCallback('syncing');
+
   try {
-    const queue = await db.sync_queue.orderBy('timestamp').toArray();
-    if (queue.length === 0) {
-      syncStatusCallback('synced');
-      return;
+    while (true) {
+      syncPending = false;
+      const queue = await db.sync_queue.orderBy('timestamp').toArray();
+      if (queue.length === 0) {
+        syncStatusCallback('synced');
+        break;
+      }
+
+      // Send to /api/sync
+      const response = await fetch('/api/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${activeToken}`
+        },
+        body: JSON.stringify({ actions: queue })
+      });
+
+      handleResponseAuth(response);
+
+      if (response.ok) {
+        // Clear synced items from queue
+        const ids = queue.map(q => q.id);
+        await db.sync_queue.bulkDelete(ids);
+        console.log(`[PWA Sync] Successfully synchronized ${queue.length} offline actions.`);
+      } else if (response.status === 401 || response.status === 403) {
+        notifyAuthExpired();
+        console.warn('[PWA Sync] Authentication expired or rejected during synchronization.');
+        break;
+      } else {
+        syncStatusCallback('error');
+        const errText = await response.text().catch(() => '');
+        console.error('[PWA Sync] Sync failed with status code:', response.status, 'Details:', errText);
+        break;
+      }
     }
-
-    isSyncing = true;
-    syncStatusCallback('syncing');
-
-    // Send to /api/sync
-    const response = await fetch('/api/sync', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${activeToken}`
-      },
-      body: JSON.stringify({ actions: queue })
-    });
-
-    handleResponseAuth(response);
-
-    if (response.ok) {
-      // Clear synced items from queue
-      const ids = queue.map(q => q.id);
-      await db.sync_queue.bulkDelete(ids);
-      syncStatusCallback('synced');
-      console.log(`[PWA Sync] Successfully synchronized ${queue.length} offline actions.`);
-      // Pull fresh data from server now that changes have landed
-      await populateLocalDb(activeToken);
-    } else if (response.status === 401 || response.status === 403) {
-      notifyAuthExpired();
-      console.warn('[PWA Sync] Authentication expired or rejected during synchronization.');
-    } else {
-      syncStatusCallback('error');
-      const errText = await response.text().catch(() => '');
-      console.error('[PWA Sync] Sync failed with status code:', response.status, 'Details:', errText);
-    }
+    // Pull fresh data from server once queue is drained
+    await populateLocalDb(activeToken);
+    syncStatusCallback('synced');
   } catch (err) {
     syncStatusCallback('offline');
     console.warn('[PWA Sync] Server unreachable (offline). Changes remain safely stored locally:', err.message || err);
   } finally {
     isSyncing = false;
+    if (syncPending) {
+      performSync(activeToken);
+    }
   }
 }
 

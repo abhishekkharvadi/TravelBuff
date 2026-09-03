@@ -2,21 +2,60 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.4.0] - 2026-09-03
+
+### 🚀 Major Features & Enhancements
+- **Global Duplicate Prevention for Folders & Locations**:
+  - **Comprehensive Multi-Level Detection**: Live duplicate search that inspects the entire database across all folders (`is_folder: 1`) and locations (`is_folder: 0`), regardless of hierarchical parent path.
+  - **Multi-Factor Matching**: Evaluates exact and normalized names, state/country pairings, and GPS coordinates within 150 meters.
+  - **Inline Warning Banner**: Displays an informative banner in the Create Location / Folder modal with parent path breadcrumbs and a 1-click **"View Existing Folder/Location"** jump button.
+  - **Duplicate Guard**: Adds confirmation safeguard preventing accidental duplicate creations.
+- **Collection Multi-Select & Bulk Deletion**:
+  - **Multi-Select Mode**: Added a "Select" / "Done Selecting" toggle in the Collections header.
+  - **Interactive Checkboxes & Counter**: Select multiple collection cards with card-click selection and real-time counter.
+  - **Floating Bulk Action Bar**: Pinned bottom action bar featuring "Select All", "Deselect All", selection count, and bulk "Delete (N)" action.
+  - **Safe Deletion**: Confirms bulk deletion while explicitly preserving underlying locations and places of visit in the database.
+- **Re-organized Hybrid 6-Tab Settings Page with Global Search**:
+  - **6 Distinct Category Tabs**:
+    1. ⚙️ **General & Preferences**: Base Currency, Default Travel Speed, Default Country, Home Airport, Default Navigation App, and Saved Home Addresses.
+    2. 🔌 **Integrations & AI**: Immich Server Settings & Embedded People / Travel Companions Face Sync, AI Assistant Configuration (OpenAI, Gemini, Claude, Ollama, DeepSeek, Groq, OpenRouter), Google Maps Integration, and OwnTracks GPS Tracking.
+    3. 🏷️ **Taxonomy & Tags**: Keyword Tags with color management and Custom Categories with emoji icons.
+    4. 💾 **Data & Backups**: Full JSON Backup & Restore, Archived Items & Data Retention, and Saved Travel Guides & Markdowns.
+    5. 👤 **Account**: My Profile & Security (Profile photo avatar upload & self-service password change) and Admin User Management (roles, admin password resets, user deletion).
+    6. 🖥️ **System**: Privacy & Telemetry controls, External API Usage Logs (6-month history), Help & Guided Onboarding, and Database Maintenance.
+  - **Global Live Search**: Top search bar with fuzzy matching across all tab sections and instant click-to-jump navigation with smooth scroll and glow highlight.
+- **App Update Notification Banner & "What's New in v7.4.0" Modal**:
+  - **Gradient Update Banner**: Persistent top notification banner alerting users when a new version is detected via `localStorage` version diffing.
+  - **What's New Release Modal**: Rich modal dialog displaying structured highlights, feature descriptions, and navigation shortcuts.
+  - **Global Version Visibility**: Synchronized `APP_VERSION` (`v7.4.0`) across all UI surfaces including the login screen, desktop user avatar dropdown, mobile profile drawer, and settings footer.
+- **Avatar Dropdown Menu Cleanup**:
+  - Removed "Archived Items" from desktop and mobile user avatar dropdowns to streamline account controls (available in Settings $\rightarrow$ Data & Backups).
+  - Added direct "What's New" link and app version footer in avatar menus.
+
 ## [v7.3.0] - 2026-08-28
 
 ### 🚀 Major Features & Itinerary Enhancements
 - **Timeline Endpoint Checkboxes & Daily Accommodation Management**:
   - **Day 1 Start from Home Checkbox**: Added `[x] Start from Home` toggle on Day 1. When checked, incorporates the starting home address as the origin node in the day's timeline and route navigation.
+  - **Day 1 Drive to Stay First Checkbox**: Added `[x] Drive to stay first (Check-in / drop bags before sightseeing)` option on Day 1 when both a Start Home address and Stay are selected. Formats Day 1 into: Home $\rightarrow$ Stay $\rightarrow$ Place 1 $\dots \rightarrow$ Stay.
   - **Daily Stay Behavior Selectors**: Configurable per-day stay behavior options:
     - `🔄 Stay here at night` *(Default round-trip loop: departs stay in the morning, returns at night)*
     - `➡️ Checkout from Hotel` *(Morning departure only; day concludes at the last stop or moving onward to next destination)*
     - `🏁 Late check-in (sightseeing first)` *(Direct sightseeing during the day, checking in to stay in the evening)*
   - **Final Day Go Home Checkbox**: Added `[x] Last Day, Go Home` toggle on the final itinerary day to route from the last stop/stay back to the designated stop home address.
-- **Trip Mode Synchronization & Daily Endpoint Flow**:
-  - **Full Chronological Timeline**: Updated `TripMode.jsx` to render the complete daily flow matching the Planning Workspace:
-    - `🏠 Start from Home` origin on Day 1 (with direct navigation button).
-    - Daily accommodation stops (`🏨 Stay: <Hotel Name>`, morning departures on Day 2+, checkout, and late check-in).
-    - `🏠 Last Day: Home` return endpoint on the final day (with direct navigation button).
+- **Itinerary Reset & Undo Management**:
+  - Added a **`🗑️ Reset`** button directly in the **Itinerary Days** header in the Planning Workspace.
+  - **Confirmation Dialog**: Asks the user to confirm before wiping scheduled stops, assigned day locations, stays/accommodations, and start/stop endpoints.
+  - **One-Click `↺ Undo Reset`**: Captures a full snapshot of the itinerary before clearing. If reset by mistake, clicking `↺ Undo Reset` instantly restores all scheduled items, day locations, stays, and settings across IndexedDB/SQLite.
+- **Light Mode UI & Active Trip Contrast**:
+  - Enhanced the **⭐ Active Trip** button in the Trips catalog (`#/trips`) with dedicated high-contrast styles (`.active-trip-btn`).
+  - In light mode, active trip badges now render with vibrant purple fill (`var(--accent-primary)`), crisp white text (`#ffffff`), glowing accent shadow, and pill border, preventing gray-on-gray washout against light card backgrounds.
+- **Places Bank Folder & Location Management**:
+  - **"Add Location" Action & Filter Dropdown**: Renamed the "Add Folder" button to **"Add Location"** in the Places Bank header. The dropdown now lists both Folders (`📁`) and Locations (`📍`) with search filtering and direct creation capability.
+  - **Create Location / Folder Dialog**: Removed the forced/disabled folder checkbox. Users can now choose whether to create a regular Location (default) or check **"Create as Folder"** to group places inside.
+  - **Removed Redundant Checkbox in Add Place**: Removed the disabled "Create as Folder" checkbox from the "Add Place of Visit" modal.
+  - **Remove/Delete Unused Location or Folder**: The `🗑️` button remains active on any location or folder in the Places Bank as long as no places from it are scheduled on any day, and neither the location nor its hotels are assigned to any day.
+  - Clicking removes the folder/location from the current trip's Places Bank filter and updates trip notes in IndexedDB/SQLite.
   - **Clean Two-Row Header**:
     - **Row 1**: `Day X` title on the left and the interactive `Day (Date) Selector` dropdown on the right.
     - **Row 2**: `📍 Location` badge and `🏨 Stay: <Hotel Name>` badge (with responsive CSS ellipsis truncation and full-name tooltip) displayed side-by-side.
@@ -26,7 +65,9 @@ All notable changes to TravelBuff will be documented in this file.
   - **ResizeObserver & `isVisible` Propagation (`MapView.jsx`)**: Attached a dynamic `ResizeObserver` and `isVisible` signal to automatically trigger `map.invalidateSize()` (Leaflet) and `google.maps.event.trigger(map, 'resize')` (Google Maps) whenever the map container transitions from `0x0` hidden state (`display: none`) to visible on mobile devices.
   - **Auto FitBounds on Tab Toggle**: Re-evaluates viewport boundaries (`map.fitBounds`) with mobile-optimized padding when switching to the "Map" pane in Planning Workspace, ensuring all scheduled pins and routes display centered without grey tiles or offset views.
   - **Mobile Map Container Height Optimization (`TripPlanning.jsx`)**: Standardized mobile map viewport height (`calc(100vh - 190px)`, min-height `350px`) for edge-to-edge touch interactivity.
-- **Offline-to-Online Bidirectional Sync Resilience**:
+- **Offline-to-Online Bidirectional Sync Resilience & React Loop Fixes**:
+  - **Itinerary Foreign Key Constraint Fix (`server.js`)**: Resolved `POST /api/sync` 500 errors caused by `SQLITE_CONSTRAINT: FOREIGN KEY constraint failed` when syncing itinerary items referencing virtual home address IDs (`home_<id>`). The server now sanitizes non-place IDs to `NULL` before database insertion while preserving custom stop metadata.
+  - **React Maximum Update Depth Exceeded Loop Elimination (`TripPlanning.jsx`)**: Stabilized `getHaversine` and `fetchOSRMDistance` callback references with `useCallback` and prevented circular re-render cascades in distance calculation dependencies.
   - **SQLite Type-Coercion in Dependent Queries (`server.js`)**: Fixed SQLite query filters (`/api/itineraries/:tripId`, `/api/reservations/:tripId`, `/api/expenses/:tripId`, `/api/trips/:tripId/rates`, and `/api/trips/:tripId/notes`) using `CAST(trip_id AS TEXT) = ? OR trip_id = ?`, preventing SQLite from returning empty sets when queried with string URL parameters.
   - **Prioritized Itinerary Prefetch (`clientDb.js`)**: Reordered `populateLocalDb` to fetch and store `itinerary_items` immediately before long sequential PDF attachment downloads.
   - **Fixed `OnboardingChecklist.jsx` Reconnect Crash**: Corrected invalid table accessor (`db.markdowns` -> `db.saved_markdowns`), eliminating uncaught `TypeError: Cannot read properties of undefined (reading 'count')` that interrupted Dexie live query reactivity on server reconnect.

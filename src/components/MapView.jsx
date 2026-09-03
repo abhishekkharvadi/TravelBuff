@@ -43,6 +43,96 @@ const loadGoogleMapsScript = (apiKey) => {
   });
 };
 
+const darkGoogleMapStyles = [
+  { elementType: 'geometry', stylers: [{ color: '#242f3e' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#242f3e' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
+  {
+    featureType: 'administrative.locality',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#d59563' }]
+  },
+  {
+    featureType: 'poi',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#d59563' }]
+  },
+  {
+    featureType: 'poi.park',
+    elementType: 'geometry',
+    stylers: [{ color: '#263c3f' }]
+  },
+  {
+    featureType: 'poi.park',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#6b9a76' }]
+  },
+  {
+    featureType: 'road',
+    elementType: 'geometry',
+    stylers: [{ color: '#38414e' }]
+  },
+  {
+    featureType: 'road',
+    elementType: 'geometry.stroke',
+    stylers: [{ color: '#212a37' }]
+  },
+  {
+    featureType: 'road',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#9ca5b3' }]
+  },
+  {
+    featureType: 'road.highway',
+    elementType: 'geometry',
+    stylers: [{ color: '#746855' }]
+  },
+  {
+    featureType: 'road.highway',
+    elementType: 'geometry.stroke',
+    stylers: [{ color: '#1f2835' }]
+  },
+  {
+    featureType: 'road.highway',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#f3d19c' }]
+  },
+  {
+    featureType: 'transit',
+    elementType: 'geometry',
+    stylers: [{ color: '#2f3948' }]
+  },
+  {
+    featureType: 'transit.station',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#d59563' }]
+  },
+  {
+    featureType: 'water',
+    elementType: 'geometry',
+    stylers: [{ color: '#17263c' }]
+  },
+  {
+    featureType: 'water',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#515c6d' }]
+  },
+  {
+    featureType: 'water',
+    elementType: 'labels.text.stroke',
+    stylers: [{ color: '#17263c' }]
+  }
+];
+
+const checkIsDark = () => {
+  if (typeof document === 'undefined') return true;
+  if (document.body.classList.contains('light-theme')) return false;
+  const savedTheme = localStorage.getItem('tb_theme') || 'system';
+  if (savedTheme === 'light') return false;
+  if (savedTheme === 'dark') return true;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+};
+
 export default function MapView({ points = [], drawLine = false, isVisible = true }) {
   const mapContainerRef = useRef(null);
   
@@ -58,9 +148,40 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
   const tileLayerRef = useRef(null);
   const prevPointsSigRef = useRef('');
 
+  const [isDark, setIsDark] = useState(checkIsDark);
   const [isGoogleMapsReady, setIsGoogleMapsReady] = useState(false);
   const apiKey = (localStorage.getItem('google_maps_api_key') || '').trim();
   const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+  // React to theme changes from App settings or OS dark/light switch
+  useEffect(() => {
+    const updateTheme = () => {
+      setIsDark(checkIsDark());
+    };
+
+    const observer = new MutationObserver(() => {
+      updateTheme();
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+    const mediaQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    const handleMediaChange = () => {
+      updateTheme();
+    };
+    if (mediaQuery && mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleMediaChange);
+    }
+
+    window.addEventListener('storage', updateTheme);
+
+    return () => {
+      observer.disconnect();
+      if (mediaQuery && mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener('change', handleMediaChange);
+      }
+      window.removeEventListener('storage', updateTheme);
+    };
+  }, []);
 
   const triggerMapResizeAndFitBounds = () => {
     const validPoints = (points || []).filter(p => {
@@ -245,18 +366,24 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
               center: { lat: 20, lng: 0 },
               zoom: 2,
               disableDefaultUI: false,
-              mapId: 'DEMO_MAP_ID' // Required map ID for AdvancedMarkerElement
+              mapId: 'DEMO_MAP_ID', // Required map ID for AdvancedMarkerElement
+              colorScheme: isDark ? (window.google?.maps?.ColorScheme?.DARK || 'DARK') : (window.google?.maps?.ColorScheme?.LIGHT || 'LIGHT'),
+              styles: isDark ? darkGoogleMapStyles : []
             });
             googleMarkersRef.current = {};
             googlePolylinesRef.current = [];
             isJustInitialized = true;
+          } else {
+            googleMapInstanceRef.current.setOptions({
+              colorScheme: isDark ? (window.google?.maps?.ColorScheme?.DARK || 'DARK') : (window.google?.maps?.ColorScheme?.LIGHT || 'LIGHT'),
+              styles: isDark ? darkGoogleMapStyles : []
+            });
           }
 
           const googleMap = googleMapInstanceRef.current;
 
-          const isLightTheme = document.body.classList.contains('light-theme') || document.documentElement.getAttribute('data-theme') === 'light';
-          const innerColor = isLightTheme ? '#ffffff' : '#1e1e2c';
-          const labelTextColor = isLightTheme ? '#111111' : '#ffffff';
+          const innerColor = isDark ? '#1e1e2c' : '#ffffff';
+          const labelTextColor = isDark ? '#ffffff' : '#111111';
 
           // Place or update Google advanced markers
           const placedCoordsByDay = new Set();
@@ -307,12 +434,12 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
 
               const infoWindow = new window.google.maps.InfoWindow({
                 content: `
-                  <div style="padding: 10px; color: #111;">
-                    <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold;">${p.name}</h4>
-                    <span style="font-size: 0.75rem; color: #666;">
+                  <div style="padding: 10px; color: ${isDark ? '#f3f4f6' : '#111'}; background: ${isDark ? '#1e1e2c' : '#ffffff'}; border-radius: 8px;">
+                    <h4 style="margin: 0 0 4px 0; font-size: 0.9rem; font-weight: bold; color: ${isDark ? '#f3f4f6' : '#111'};">${p.name}</h4>
+                    <span style="font-size: 0.75rem; color: ${isDark ? '#9ca3af' : '#666'};">
                       ${p.category || 'Location'} ${p.dayLabel ? `• ${p.dayLabel}` : ''}
                     </span>
-                    ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: #444;">${p.notes.substring(0, 80)}...</p>` : ''}
+                    ${p.notes ? `<p style="font-size: 0.8rem; margin-top: 6px; color: ${isDark ? '#d1d5db' : '#444'};">${p.notes.substring(0, 80)}...</p>` : ''}
                   </div>
                 `
               });
@@ -488,23 +615,24 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
       }
 
       let isLeafletJustInitialized = false;
+      const osmTileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+      const tileAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
       // Initialize Leaflet if not created yet
       if (!mapInstanceRef.current && mapContainerRef.current) {
         const L = window.L;
         if (!L) return;
 
-        const tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-
         const map = L.map(mapContainerRef.current).setView([20, 0], 2);
-        tileLayerRef.current = L.tileLayer(tileUrl, {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        tileLayerRef.current = L.tileLayer(osmTileUrl, {
+          attribution: tileAttribution,
           maxZoom: 19
         }).addTo(map);
 
         mapInstanceRef.current = map;
         isLeafletJustInitialized = true;
       } else if (mapInstanceRef.current && tileLayerRef.current) {
-        tileLayerRef.current.setUrl('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+        tileLayerRef.current.setUrl(osmTileUrl);
       }
 
       const map = mapInstanceRef.current;
@@ -532,12 +660,11 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
 
       if (validPoints.length === 0) return;
 
-      const isLightTheme = document.body.classList.contains('light-theme') || document.documentElement.getAttribute('data-theme') === 'light';
-      const innerColor = isLightTheme ? '#ffffff' : '#1e1e2c';
-      const labelTextColor = isLightTheme ? '#111111' : '#ffffff';
-      const popupBg = isLightTheme ? '#ffffff' : '#1e1e2c';
-      const popupTitleColor = isLightTheme ? '#111111' : '#f3f4f6';
-      const popupSubColor = isLightTheme ? '#666666' : '#9ca3af';
+      const innerColor = isDark ? '#1e1e2c' : '#ffffff';
+      const labelTextColor = isDark ? '#ffffff' : '#111111';
+      const popupBg = isDark ? '#1e1e2c' : '#ffffff';
+      const popupTitleColor = isDark ? '#f3f4f6' : '#111111';
+      const popupSubColor = isDark ? '#9ca3af' : '#666666';
 
       // Place or update Leaflet markers
       const placedLeafletCoordsByDay = new Set();
@@ -551,17 +678,17 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
           : (p.visited === 1 ? '#10b981' : (p.location_id ? '#06b6d4' : '#8b5cf6'))
         );
 
-        const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${pinPrimaryColor}; color: #fff; font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; border: 1px solid #ffffff; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.4);">${p.dayLabel}</span>` : '';
+        const dayBadge = p.dayLabel ? `<span style="position: absolute; top: -8px; right: -8px; background: ${pinPrimaryColor}; color: #fff; font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; border: 1px solid ${isDark ? 'rgba(255,255,255,0.2)' : '#ffffff'}; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.4);">${p.dayLabel}</span>` : '';
         const leafletSeqVal = p.sequenceLabel !== undefined && p.sequenceLabel !== null ? p.sequenceLabel : (p.sequenceOrder !== undefined && p.sequenceOrder !== null ? p.sequenceOrder : null);
         const markerLabel = String(leafletSeqVal !== null ? leafletSeqVal : getCategoryEmoji(p.category || p.type));
 
         const markerHtml = `
           <div style="position: relative; width: 36px; height: 42px;">
             <svg xmlns="http://www.w3.org/2000/svg" width="36" height="42" viewBox="0 0 36 42" style="display: block; filter: drop-shadow(0px 4px 8px rgba(0,0,0,0.5));">
-              <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${pinPrimaryColor}" stroke="#ffffff" stroke-width="1.5"/>
-              <circle cx="18" cy="18" r="13" fill="#ffffff"/>
+              <path d="M18 0C8.1 0 0 8.1 0 18c0 12.6 15.3 22.8 16.7 23.7.8.5 1.8.5 2.6 0 1.4-.9 16.7-11.1 16.7-23.7C36 8.1 27.9 0 18 0z" fill="${pinPrimaryColor}" stroke="${isDark ? '#33334d' : '#ffffff'}" stroke-width="1.5"/>
+              <circle cx="18" cy="18" r="13" fill="${innerColor}"/>
             </svg>
-            <div style="position: absolute; top: 0; left: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: #111111; font-size: 13px; font-weight: bold; pointer-events: none; line-height: 1;">
+            <div style="position: absolute; top: 0; left: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: ${labelTextColor}; font-size: 13px; font-weight: bold; pointer-events: none; line-height: 1;">
               ${markerLabel}
             </div>
             ${dayBadge}
@@ -733,7 +860,7 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
     return () => {
       active = false;
     };
-  }, [points, drawLine, isGoogleMapsReady]);
+  }, [points, drawLine, isGoogleMapsReady, isDark]);
 
   // Clean up on unmount
   useEffect(() => {

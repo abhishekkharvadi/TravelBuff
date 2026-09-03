@@ -255,10 +255,11 @@ The **Locations and Regions** section is the core database of your TravelBuff ap
 1. Open the **Locations** workspace.
 2. Click **+ Add Location** (or tap the button in the header toolbar).
 3. Search for a city, attraction, or restaurant using the geolocation search bar.
-4. Confirm details (Name, City, State, Country, Coordinates) and click **Save Location**.
+4. **Global Duplicate Prevention**: TravelBuff automatically inspects the entire database across all folders and locations for potential duplicates (matching by name, country/state, and GPS proximity within 150m). If a duplicate is found, an inline warning banner displays the existing item's parent hierarchy breadcrumbs and a direct **"View Existing Folder/Location"** jump button.
+5. Confirm details (Name, City, State, Country, Coordinates) and click **Save Location**.
 
 ### What are Folders?
-Folders represent geographical containers (such as "Europe", "Italy", or "Rome") used to structure child locations logically. Folders display customizable visited states and organize nesting hierarchies.
+Folders represent geographical containers (such as "Europe", "Italy", or "Rome") used to structure child locations logically. Folders display customizable visited states and organize nesting hierarchies. Duplicate prevention applies seamlessly across both standard locations and folder containers.
 
 #### How to Identify a Folder
 In the Locations grid workspace, folders can be distinguished from standard location cards by these visual characteristics:
@@ -327,6 +328,14 @@ Instead of adding locations manually, you can create dynamic collections:
 ### Filter Collections
 Inside a collection view, use search queries and tag toggles to filter listed spots.
 
+### Multi-Select Mode & Bulk Deletion
+Manage collections efficiently with batch operations:
+1. In the Collections page header, click the **"Select"** toggle button.
+2. Selection checkboxes appear on all custom collection cards (System collections remain protected and cannot be deleted).
+3. Click collection cards to select or deselect items, or use **"Select All"** in the floating bottom action bar.
+4. Click **"Delete (N)"** to remove selected collections. A confirmation prompt confirms the deletion while safely preserving all underlying locations and places of visit in the database.
+5. Click **"Done Selecting"** to exit multi-select mode.
+
 ---
 
 ## 5. Trips
@@ -359,14 +368,38 @@ Toggle modes in the header:
 
 ---
 
-## 6. Settings
+## 6. Settings & Configurations
 
-Configure all settings parameters inside the Settings dashboard:
-* **GCP API Key**: Enables Google Maps Javascript elements, Places Autocomplete, and Geocoding.
-* **Immich Settings**: Configures the connection URL and API key to pull photo galleries.
-* **OwnTracks API**: Sets integration parameters to fetch daily distance travel logs.
-* **Base Currency**: Sets default display currency for calculations.
-* **API Calls Tracker**: Monitor real-time numbers of calls executed for Directions, Geocoding, and Autocomplete requests to stay within budgets.
+TravelBuff provides a unified, **6-tab Hybrid Settings** interface with a persistent **Global Live Search** bar for fast navigation:
+
+* **Global Live Search Bar**: Located at the top of the Settings page. Type any keyword (e.g., "Immich", "API key", "Backup", "Currency", "Password") to see instant matching sections across all tabs. Clicking a result instantly switches to the corresponding tab and smoothly scrolls to the section with a prominent highlight glow.
+* **1. ⚙️ General & Preferences**:
+  - **Base Currency**: Select your default home currency from 160+ ISO currencies.
+  - **Default Travel Speed**: Configure average transit speeds for driving, walking, and transit calculations.
+  - **Default Country & Home Airport**: Default geographical context for autocomplete queries and flight planning.
+  - **Default Navigation Map App**: (iOS/macOS) Choose between Google Maps and Apple Maps.
+  - **Saved Home Addresses**: Manage origin and destination home address coordinates for automated route planning.
+* **2. 🔌 Integrations & AI**:
+  - **Immich Server Settings**: Configure backend server URL, external public URL, API key, test connectivity, and import locations.
+  - **People & Companions (Immich Face Sync)**: Directly embedded inside the Immich card to manage travel companion profiles, assign relationship roles, and sync recognized face thumbnails from Immich.
+  - **AI Assistant Configuration**: Connect OpenAI, Claude, Gemini, Ollama, DeepSeek, Groq, Mistral, or OpenRouter with custom model selectors and Firecrawl API scraping.
+  - **Google Maps Integration**: Set Google Maps API key and configure geocoding/places providers.
+  - **OwnTracks GPS Integration**: Real-time webhook URLs and Recorder server connections for GPS trail logging.
+* **3. 🏷️ Taxonomy & Tags**:
+  - **Keyword Tags**: Create, edit, recolor, or remove custom taxonomy tags.
+  - **Custom Categories**: Manage place categories and emoji icons.
+* **4. 💾 Data & Backups**:
+  - **Backup & Restore Data**: Export full database JSON backups or restore in background chunks.
+  - **Archived Items & Data Retention**: View, restore, or permanently delete archived folders and locations.
+  - **Saved Travel Guides & Markdowns**: View and resume curating scraped markdown travel guides.
+* **5. 👤 Account**:
+  - **My Profile & Security**: Upload or change your personal profile picture avatar and self-service password updates with current password validation.
+  - **User Management & Administration**: (Admin only) View registered accounts, assign roles, reset user passwords, or permanently delete users with cascade data wiping. Standard users view session info and logout.
+* **6. 🖥️ System**:
+  - **Help & Guided Onboarding**: Restart interactive spotlight tours, reopen the Getting Started checklist, and access the "What's New in v7.4.0" release notes.
+  - **Privacy & Telemetry**: Toggle 100% anonymous usage statistics, preview telemetry payloads, and send test pings.
+  - **External API Usage Logs**: Inspect 6-month call volume history across Google Maps, OSRM, Wikipedia, and AI.
+  - **Database Maintenance**: Re-sync offline IndexedDB cache and companion avatars with the server.
 
 ---
 
@@ -410,7 +443,27 @@ Keep your travel data safe:
 
 ## 9. Release Notes & Version History
 
-### Version 1.2.0 (Current Release)
+### Version 7.4.0 (Current Release)
+* **Global Duplicate Prevention for Folders & Locations**:
+  - Live duplicate search across all folders and locations evaluating names, country/state, and GPS proximity within 150 meters.
+  - Interactive duplicate warning banner displaying parent path breadcrumbs and direct "View Existing" navigation button.
+* **Collection Multi-Select Mode & Bulk Deletion**:
+  - Added "Select" / "Done Selecting" toggle in Collections header with card checkboxes and floating bulk action bar.
+  - Safe bulk deletion with confirmation safeguard preserving all underlying locations and places.
+* **Re-organized Hybrid 6-Tab Settings with Global Live Search**:
+  - 6 dedicated tabs: ⚙️ General & Preferences, 🔌 Integrations & AI, 🏷️ Taxonomy & Tags, 💾 Data & Backups, 👤 Account, and 🖥️ System.
+  - Top search input with instant matching dropdown, tab switching, and auto-scrolling with accent outline highlight.
+* **App Update Notification Banner & "What's New in v7.4.0" Modal**:
+  - Persistent top update notification banner alerting users of new releases with direct link to view release notes.
+  - Rich "What's New" modal dialog accessible from the update banner, avatar dropdown, and Settings Help tab.
+  - Synchronized `APP_VERSION` across login, avatar menus, mobile profile drawer, and settings footers.
+* **Avatar Dropdown Menu Cleanup**:
+  - Removed "Archived Items" from user avatar dropdowns (now in Settings $\rightarrow$ Data & Backups).
+  - Added clickable "What's New" link and version badge in desktop and mobile profile dropdowns.
+
+---
+
+### Version 1.2.0
 * **Browser Back (`←`) / Forward (`→`) Navigation & Hash Routing**:
   - Implemented lightweight hash-based URL routing (`src/router.js`) synchronized with browser history states (`pushState`, `popstate`, `hashchange`).
   - Pressing the browser Back button now seamlessly steps back through nested location folders (`/#/locations/:folderId`), collections, trip planners, and settings pages instead of exiting the app.

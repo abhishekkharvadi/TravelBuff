@@ -65,6 +65,8 @@ export function parseRoute() {
         route.guideSlug = parts[2];
       }
     }
+  } else if (primary === 'archived') {
+    route.tab = 'archived';
   }
 
   return route;
@@ -105,6 +107,10 @@ export function buildHash(tab, { type = null, name = null } = {}) {
       return '#/settings/guides';
     }
     return '#/settings';
+  }
+
+  if (tab === 'archived') {
+    return '#/archived';
   }
 
   return '#/locations';
