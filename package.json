@@ -1,11 +1,11 @@
 {
   "name": "travelbuff",
-  "version": "7.4.0",
+  "version": "7.4.1",
   "description": "Self-hosted travel log, planning and trip app",
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "audit": "npm audit --audit-level=high",
+    "audit": "osv-scanner scan source -L package-lock.json",
     "prebuild": "npm run audit",
     "postinstall": "node -e \"try{require.resolve('vite'); require('child_process').execSync('npm run build',{stdio:'inherit'})}catch(e){}\"",
     "start": "cross-env PORT=3000 node server.js",
@@ -28,7 +28,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.395.0",
     "mammoth": "^1.12.0",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.3.0",
     "pdf-parse": "^2.4.5",
     "pdf2md": "^1.0.2",
     "playwright": "^1.61.1",

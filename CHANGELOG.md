@@ -2,6 +2,11 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.4.1] - 2026-09-04
+
+### 🐛 Bug Fixes
+- **Locations View Crash**: Fixed `ReferenceError: Sparkles is not defined` runtime exception on the Locations home screen by importing `Sparkles` from `lucide-react` in `src/components/Locations.jsx`.
+
 ## [v7.4.0] - 2026-09-03
 
 ### 🚀 Major Features & Enhancements

@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   MapPin, Plus, Check, Square, Star, Image as ImageIcon, Trash2, Archive, 
   Search, X, Edit, Edit2, Eye, Navigation, PlusCircle, Compass, RefreshCw,
-  Folder, FolderPlus, FolderInput, Layers, CheckSquare, Filter
+  Folder, FolderPlus, FolderInput, Layers, CheckSquare, Filter, Sparkles
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID, populateLocalDb } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
