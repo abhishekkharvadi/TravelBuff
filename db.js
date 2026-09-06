@@ -351,6 +351,7 @@ export async function initDatabase() {
   await db.run("ALTER TABLE user_configs ADD COLUMN owntracks_recorder_auth_type TEXT DEFAULT 'none'").catch(() => {});
   await db.run('ALTER TABLE user_configs ADD COLUMN owntracks_recorder_username TEXT').catch(() => {});
   await db.run('ALTER TABLE user_configs ADD COLUMN owntracks_recorder_password TEXT').catch(() => {});
+  await db.run('ALTER TABLE user_configs ADD COLUMN last_seen_version TEXT').catch(() => {});
 
   // Auto-promote earliest registered user to Admin if no admin exists yet
   try {

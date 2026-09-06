@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Sparkles, Folder, Settings, CheckSquare, Layers, ShieldCheck } from 'lucide-react';
+import { X, Sparkles, MapPin, ArrowUpDown, Trash2, Cloud, Navigation } from 'lucide-react';
 import { APP_VERSION } from '../version.js';
 
 export default function WhatsNewModal({ isOpen, onClose, onNavigateTab }) {
@@ -7,39 +7,39 @@ export default function WhatsNewModal({ isOpen, onClose, onNavigateTab }) {
 
   const features = [
     {
-      icon: <Folder size={22} style={{ color: '#38bdf8' }} />,
-      title: 'Unified Duplicate Detection',
-      badge: 'New Feature',
+      icon: <MapPin size={22} style={{ color: '#38bdf8' }} />,
+      title: 'Places Bank Retention & Multi-Visit Support',
+      badge: 'Planning',
       badgeColor: '#0284c7',
-      desc: 'Smart duplicate detection across all database folders and locations. Evaluates matches instantly upon search selection or typing, warning you if an entry already exists anywhere in your hierarchy.'
+      desc: 'Places remain in the Places Bank after scheduling so you can visit favorite spots more than once. Visual confirmation badges clearly display when places are already in your itinerary.'
     },
     {
-      icon: <CheckSquare size={22} style={{ color: '#a855f7' }} />,
-      title: 'Collection Multi-Select & Bulk Delete',
-      badge: 'Productivity',
+      icon: <ArrowUpDown size={22} style={{ color: '#a855f7' }} />,
+      title: 'Reliable Stop Reordering & Drag-and-Drop',
+      badge: 'Workflow',
       badgeColor: '#7e22ce',
-      desc: 'Select multiple collections at once using checkboxes and bulk delete them via the floating action bar without affecting your underlying saved locations or places.'
+      desc: 'Seamlessly reorder daily stops using Up/Down buttons or interactive Drag-and-Drop across days with clear insertion targets and continuous sequence sync.'
     },
     {
-      icon: <Settings size={22} style={{ color: '#ec4899' }} />,
-      title: 'Hybrid 6-Tab Settings with Global Search',
-      badge: 'UI Redesign',
+      icon: <Trash2 size={22} style={{ color: '#ec4899' }} />,
+      title: 'Delete Sync Integrity',
+      badge: 'Data Integrity',
       badgeColor: '#be185d',
-      desc: 'Settings is now categorized into 6 focused tabs (General, Integrations & AI, Taxonomy & Tags, Data & Backups, Account, and System) paired with a live fuzzy search bar for instant navigation.'
+      desc: 'Fixed sync race conditions to prevent deleted itinerary items from ghost-resurrecting during background server synchronization.'
     },
     {
-      icon: <Layers size={22} style={{ color: '#eab308' }} />,
-      title: 'Archived Items & Data Safety',
-      badge: 'Data Management',
+      icon: <Cloud size={22} style={{ color: '#eab308' }} />,
+      title: 'Server-Side What\'s New Persistence',
+      badge: 'Sync',
       badgeColor: '#ca8a04',
-      desc: 'Centralized Archived Items management in Data & Backups with single/bulk restore and permanent deletion for archived locations and orphaned places.'
+      desc: 'What\'s New notification dismissals are now persisted directly on your server profile, preventing dismissed release notes from reopening across different browsers and laptops.'
     },
     {
-      icon: <ShieldCheck size={22} style={{ color: '#10b981' }} />,
-      title: 'Circular Reference Prevention & Hierarchical Moves',
-      badge: 'Resilience',
+      icon: <Navigation size={22} style={{ color: '#10b981' }} />,
+      title: 'Smart Hotel Checkout End-Stop Routing',
+      badge: 'Navigation',
       badgeColor: '#059669',
-      desc: 'Move folders and locations safely with recursive child-tree detection to prevent circular folder nesting, complete with full breadcrumb hierarchy display.'
+      desc: 'When selecting "Checkout from hotel" on a day, the day\'s closing endpoint automatically routes to your next day\'s hotel or assigned location.'
     }
   ];
 

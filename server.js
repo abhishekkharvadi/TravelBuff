@@ -503,37 +503,40 @@ app.post('/api/config', authenticateToken, async (req, res) => {
     owntracks_recorder_device,
     owntracks_recorder_auth_type,
     owntracks_recorder_username,
-    owntracks_recorder_password
+    owntracks_recorder_password,
+    last_seen_version
   } = req.body;
   try {
     await db.run(
       `UPDATE user_configs SET 
-        immich_url = ?, 
-        immich_key = ?, 
-        immich_alt_url = ?, 
-        base_currency = ?, 
-        ai_settings = ?,
+        immich_url = COALESCE(?, immich_url), 
+        immich_key = COALESCE(?, immich_key), 
+        immich_alt_url = COALESCE(?, immich_alt_url), 
+        base_currency = COALESCE(?, base_currency, 'USD'), 
+        ai_settings = COALESCE(?, ai_settings),
         owntracks_mode = COALESCE(?, owntracks_mode, 'webhook'),
-        owntracks_recorder_url = ?,
-        owntracks_recorder_user = ?,
-        owntracks_recorder_device = ?,
-        owntracks_recorder_auth_type = COALESCE(?, 'none'),
-        owntracks_recorder_username = ?,
-        owntracks_recorder_password = ?
+        owntracks_recorder_url = COALESCE(?, owntracks_recorder_url),
+        owntracks_recorder_user = COALESCE(?, owntracks_recorder_user),
+        owntracks_recorder_device = COALESCE(?, owntracks_recorder_device),
+        owntracks_recorder_auth_type = COALESCE(?, owntracks_recorder_auth_type, 'none'),
+        owntracks_recorder_username = COALESCE(?, owntracks_recorder_username),
+        owntracks_recorder_password = COALESCE(?, owntracks_recorder_password),
+        last_seen_version = COALESCE(?, last_seen_version)
        WHERE user_id = ?`,
       [
-        immich_url || null, 
-        immich_key || null, 
-        immich_alt_url || null, 
-        base_currency || 'USD', 
-        ai_settings || null,
-        owntracks_mode || null,
-        owntracks_recorder_url || null,
-        owntracks_recorder_user || null,
-        owntracks_recorder_device || null,
-        owntracks_recorder_auth_type || 'none',
-        owntracks_recorder_username || null,
-        owntracks_recorder_password || null,
+        immich_url !== undefined ? immich_url : null, 
+        immich_key !== undefined ? immich_key : null, 
+        immich_alt_url !== undefined ? immich_alt_url : null, 
+        base_currency !== undefined ? base_currency : null, 
+        ai_settings !== undefined ? ai_settings : null,
+        owntracks_mode !== undefined ? owntracks_mode : null,
+        owntracks_recorder_url !== undefined ? owntracks_recorder_url : null,
+        owntracks_recorder_user !== undefined ? owntracks_recorder_user : null,
+        owntracks_recorder_device !== undefined ? owntracks_recorder_device : null,
+        owntracks_recorder_auth_type !== undefined ? owntracks_recorder_auth_type : null,
+        owntracks_recorder_username !== undefined ? owntracks_recorder_username : null,
+        owntracks_recorder_password !== undefined ? owntracks_recorder_password : null,
+        last_seen_version !== undefined ? last_seen_version : null,
         req.user.id
       ]
     );

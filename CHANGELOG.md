@@ -2,6 +2,22 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.4.2] - 2026-09-06
+
+### 🚀 Enhancements & 🐛 Bug Fixes
+- **Places Bank Retention & Multi-Visit Support**:
+  - Places are retained in the Places Bank even after being scheduled on an itinerary day, allowing places to be scheduled across multiple days/visits.
+  - Added a visual `✓ Added` / `✓ Added (Nx)` badge on scheduled places in the bank for quick visual confirmation.
+- **Reliable Stop Reordering (Buttons & Drag-and-Drop)**:
+  - Fixed Up/Down button reordering with contiguous sequence re-indexing across local Dexie and server SQLite databases.
+  - Added full intra-day and cross-day Drag-and-Drop with visual drop insertion target indicators on stops and day drop zones.
+- **Delete Ghost Resurrections Fixed**:
+  - Eliminated sync race conditions where locally deleted stops were re-inserted by stale background server sync fetches.
+- **Server-Side "What's New" Persistence**:
+  - Added `last_seen_version` column to `user_configs` in the SQLite database and sync endpoints, ensuring "What's New" modal dismissals persist across multiple browsers and devices.
+- **Hotel Checkout Day End-Stop Routing**:
+  - When a day is marked with "Checkout from hotel", the closing endpoint and route calculations now navigate to the next day's hotel (1st preference) or next day's assigned location (2nd preference).
+
 ## [v7.4.1] - 2026-09-04
 
 ### 🐛 Bug Fixes

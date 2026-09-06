@@ -341,14 +341,22 @@ function checkResponseAuth(res) {
 export async function populateLocalDb(token) {
   const headers = { Authorization: `Bearer ${token}` };
   
-  // Extract all pending ids to prevent overwriting them during populate
-  const pendingActions = await db.sync_queue.toArray();
-  const pendingIds = new Set();
-  for (const act of pendingActions) {
-    if (act.data && act.data.id) {
-      pendingIds.add(act.data.id.toString());
+  // Dynamic pending IDs resolver to prevent overwriting pending mutations/deletions during populate
+  const getFreshPendingSets = async () => {
+    const pendingActions = await db.sync_queue.toArray();
+    const pendingIds = new Set();
+    const pendingDeleteIds = new Set();
+    for (const act of pendingActions) {
+      if (act.data && act.data.id) {
+        const idStr = act.data.id.toString();
+        pendingIds.add(idStr);
+        if (typeof act.action === 'string' && (act.action.startsWith('delete') || act.action.startsWith('archive'))) {
+          pendingDeleteIds.add(idStr);
+        }
+      }
     }
-  }
+    return { pendingIds, pendingDeleteIds };
+  };
 
   const tables = [
     { url: '/api/locations', table: 'locations' },
@@ -376,6 +384,7 @@ export async function populateLocalDb(token) {
 
       if (res.ok) {
         const rows = await res.json();
+        const { pendingIds, pendingDeleteIds } = await getFreshPendingSets();
         
         if (item.table === 'entity_tags') {
           await db.transaction('rw', [db.entity_tags], async () => {
@@ -387,7 +396,7 @@ export async function populateLocalDb(token) {
             const localRows = await db[item.table].toArray();
             const serverIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
             const idsToDelete = localRows.map(r => r.id).filter(id => id !== undefined && id !== null && !serverIds.has(id.toString()) && !pendingIds.has(id.toString()));
-            const rowsToPut = rows.filter(r => r.id === undefined || r.id === null || !pendingIds.has(r.id.toString()));
+            const rowsToPut = rows.filter(r => r.id === undefined || r.id === null || (!pendingIds.has(r.id.toString()) && !pendingDeleteIds.has(r.id.toString())));
 
             await db[item.table].bulkPut(rowsToPut);
             if (idsToDelete.length > 0) {
@@ -416,11 +425,12 @@ export async function populateLocalDb(token) {
       }
       if (itinRes.ok) {
         const rows = await itinRes.json();
+        const { pendingIds, pendingDeleteIds } = await getFreshPendingSets();
         await db.transaction('rw', [db.itinerary_items], async () => {
           const localItinRows = (await db.itinerary_items.toArray()).filter(i => String(i.trip_id) === String(t.id));
           const serverItinIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
           const itinIdsToDelete = localItinRows.map(r => r.id).filter(id => id && !serverItinIds.has(id.toString()) && !pendingIds.has(id.toString()));
-          const itinRowsToPut = rows.filter(r => !pendingIds.has(r.id.toString()));
+          const itinRowsToPut = rows.filter(r => r.id && !pendingIds.has(r.id.toString()) && !pendingDeleteIds.has(r.id.toString()));
 
           await db.itinerary_items.bulkPut(itinRowsToPut);
           if (itinIdsToDelete.length > 0) {

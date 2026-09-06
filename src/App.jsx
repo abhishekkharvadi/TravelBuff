@@ -86,20 +86,42 @@ export default function App() {
     }
   }, []);
 
-  const handleOpenWhatsNew = () => {
+  const handleOpenWhatsNew = async () => {
     setShowWhatsNewModal(true);
     setHasUpdateNotification(false);
     try {
       localStorage.setItem('tb_last_seen_version', APP_VERSION);
     } catch (e) {}
+    if (user?.token) {
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
+          body: JSON.stringify({ last_seen_version: APP_VERSION })
+        });
+      } catch (err) {
+        console.warn('Failed to persist last_seen_version to server:', err);
+      }
+    }
   };
 
-  const handleDismissUpdateNotification = (e) => {
+  const handleDismissUpdateNotification = async (e) => {
     if (e) e.stopPropagation();
     setHasUpdateNotification(false);
     try {
       localStorage.setItem('tb_last_seen_version', APP_VERSION);
     } catch (e) {}
+    if (user?.token) {
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
+          body: JSON.stringify({ last_seen_version: APP_VERSION })
+        });
+      } catch (err) {
+        console.warn('Failed to persist last_seen_version to server:', err);
+      }
+    }
   };
 
   // Auto-launch tour & checklist on user session
@@ -476,14 +498,20 @@ export default function App() {
             });
             localStorage.setItem('tb_isAdmin', data.isAdmin ? '1' : '0');
           }
-          if (data.config && data.config.ai_settings) {
-            try {
-              const aiOpts = JSON.parse(data.config.ai_settings);
-              if (aiOpts.activeMode && aiOpts.activeMode !== activeMode) {
-                setActiveMode(aiOpts.activeMode);
+          if (data.config) {
+            if (data.config.last_seen_version !== undefined && data.config.last_seen_version !== null) {
+              localStorage.setItem('tb_last_seen_version', data.config.last_seen_version);
+              setHasUpdateNotification(data.config.last_seen_version !== APP_VERSION);
+            }
+            if (data.config.ai_settings) {
+              try {
+                const aiOpts = JSON.parse(data.config.ai_settings);
+                if (aiOpts.activeMode && aiOpts.activeMode !== activeMode) {
+                  setActiveMode(aiOpts.activeMode);
+                }
+              } catch (e) {
+                console.error('Failed to parse ai_settings in App.jsx:', e);
               }
-            } catch (e) {
-              console.error('Failed to parse ai_settings in App.jsx:', e);
             }
           }
         }
