@@ -1570,115 +1570,203 @@ app.post('/api/immich/execute-import', authenticateToken, async (req, res) => {
     });
   };
 
-  try {
-    addLog('General', `Starting server-side import (${createHierarchy ? 'Hierarchical Organization' : 'Root-Level Import'})...`, 'info');
-    await db.exec('BEGIN TRANSACTION');
+  await dbMutex.run(async () => {
+    try {
+      addLog('General', `Starting server-side import (${createHierarchy ? 'Hierarchical Organization' : 'Root-Level Import'})...`, 'info');
+      await db.exec('BEGIN TRANSACTION');
 
-    let totalImported = 0;
-    let totalRelocated = 0;
+      let totalImported = 0;
+      let totalRelocated = 0;
 
-    for (const [countryName, countryObj] of Object.entries(countryTree)) {
-      const cleanCountry = countryName.trim();
-      const statesToProcess = Object.entries(countryObj.states || {}).filter(([_, s]) =>
-        Object.values(s.cities || {}).some(c => (c.actionState === 'CREATE_NEW' && c.selected) || (c.actionState === 'RELOCATE_EXISTING' && c.relocateSelected))
-      );
-      const directCitiesToProcess = Object.values(countryObj.directCities || {}).filter(c =>
-        (c.actionState === 'CREATE_NEW' && c.selected) || (c.actionState === 'RELOCATE_EXISTING' && c.relocateSelected)
-      );
+      for (const [countryName, countryObj] of Object.entries(countryTree)) {
+        const cleanCountry = countryName.trim();
+        const statesToProcess = Object.entries(countryObj.states || {}).filter(([_, s]) =>
+          Object.values(s.cities || {}).some(c => (c.actionState === 'CREATE_NEW' && c.selected) || (c.actionState === 'RELOCATE_EXISTING' && c.relocateSelected))
+        );
+        const directCitiesToProcess = Object.values(countryObj.directCities || {}).filter(c =>
+          (c.actionState === 'CREATE_NEW' && c.selected) || (c.actionState === 'RELOCATE_EXISTING' && c.relocateSelected)
+        );
 
-      if (statesToProcess.length === 0 && directCitiesToProcess.length === 0) continue;
+        if (statesToProcess.length === 0 && directCitiesToProcess.length === 0) continue;
 
-      let countryFolderId = null;
-
-      if (createHierarchy) {
-        // 1. Resolve or Create Country Folder
-        let countryFolder = null;
-        if (cleanCountry !== 'Uncategorized / Other') {
-          countryFolder = await db.get(
-            'SELECT * FROM locations WHERE is_folder = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND user_id = ? LIMIT 1',
-            [cleanCountry, userId]
-          );
-        }
-
-        countryFolderId = countryFolder ? countryFolder.id : null;
-        if (!countryFolder && cleanCountry !== 'Uncategorized / Other') {
-          countryFolderId = randomUUID();
-          let countryPhotoUrl = null;
-          let countryNotes = `Auto-created country folder from Immich photo import.`;
-
-          if (fetchImages) {
-            addLog('Photos', `Fetching cover photo for Country "${cleanCountry}"...`, 'info');
-            const photoRes = await resolvePhotoAndDescription({
-              query: cleanCountry,
-              locationContext: '',
-              loggerPrefix: 'Country-Photo'
-            });
-            if (photoRes && photoRes.fileUrl) {
-              countryPhotoUrl = photoRes.fileUrl;
-              if (photoRes.description) countryNotes = photoRes.description;
-              addLog('Photos', `Attached cover photo for Country "${cleanCountry}"`, 'success', { img: countryPhotoUrl });
-            }
-          }
-
-          await db.run(
-            `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
-             VALUES (?, ?, ?, NULL, ?, NULL, NULL, 1, ?, ?, NULL, 1, 0, 'completed', ?)`,
-            [countryFolderId, userId, cleanCountry, cleanCountry, countryNotes, countryPhotoUrl, new Date().toISOString()]
-          );
-          addLog('Hierarchy', `Created Country folder "${cleanCountry}" at Root level.`, 'success');
-        } else if (countryFolder) {
-          addLog('Hierarchy', `Reusing existing Country folder "${cleanCountry}".`, 'info');
-        }
-      }
-
-      // 2. Process States under Country
-      for (const [stateName, stateObj] of statesToProcess) {
-        const cleanState = stateName.trim();
-        let stateFolderId = null;
+        let countryFolderId = null;
 
         if (createHierarchy) {
-          let stateFolder = await db.get(
-            'SELECT * FROM locations WHERE is_folder = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND (parent_id = ? OR parent_id IS NULL) AND user_id = ? LIMIT 1',
-            [cleanState, countryFolderId, userId]
-          );
+          // 1. Resolve or Create Country Folder
+          let countryFolder = null;
+          if (cleanCountry !== 'Uncategorized / Other') {
+            countryFolder = await db.get(
+              'SELECT * FROM locations WHERE is_folder = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND user_id = ? LIMIT 1',
+              [cleanCountry, userId]
+            );
+          }
 
-          stateFolderId = stateFolder ? stateFolder.id : null;
-          if (!stateFolder) {
-            stateFolderId = randomUUID();
-            let statePhotoUrl = null;
-            let stateNotes = `Auto-created state folder under ${cleanCountry} from Immich photo import.`;
+          countryFolderId = countryFolder ? countryFolder.id : null;
+          if (!countryFolder && cleanCountry !== 'Uncategorized / Other') {
+            countryFolderId = randomUUID();
+            let countryPhotoUrl = null;
+            let countryNotes = `Auto-created country folder from Immich photo import.`;
 
             if (fetchImages) {
-              addLog('Photos', `Fetching cover photo for State "${cleanState}"...`, 'info');
+              addLog('Photos', `Fetching cover photo for Country "${cleanCountry}"...`, 'info');
               const photoRes = await resolvePhotoAndDescription({
-                query: cleanState,
-                locationContext: cleanCountry !== 'Uncategorized / Other' ? cleanCountry : '',
-                loggerPrefix: 'State-Photo'
+                query: cleanCountry,
+                loggerPrefix: 'Country-Photo'
               });
               if (photoRes && photoRes.fileUrl) {
-                statePhotoUrl = photoRes.fileUrl;
-                if (photoRes.description) stateNotes = photoRes.description;
-                addLog('Photos', `Attached cover photo for State "${cleanState}"`, 'success', { img: statePhotoUrl });
+                countryPhotoUrl = photoRes.fileUrl;
+                if (photoRes.description) countryNotes = photoRes.description;
+                addLog('Photos', `Attached cover photo for Country "${cleanCountry}"`, 'success', { img: countryPhotoUrl });
               }
             }
 
             await db.run(
-              `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
-               VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, ?, ?, ?, 1, 0, 'completed', ?)`,
-              [stateFolderId, userId, cleanState, cleanState, cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null, stateNotes, statePhotoUrl, countryFolderId, new Date().toISOString()]
+              `INSERT INTO locations (id, user_id, name, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
+               VALUES (?, ?, ?, ?, NULL, NULL, 1, ?, ?, NULL, 1, 0, 'completed', ?)`,
+              [countryFolderId, userId, cleanCountry, cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null, countryNotes, countryPhotoUrl, new Date().toISOString()]
             );
-            addLog('Hierarchy', `Created State folder "${cleanState}" under Country "${cleanCountry}".`, 'success');
-          } else {
-            if (countryFolderId && stateFolder.parent_id !== countryFolderId) {
-              await db.run('UPDATE locations SET parent_id = ? WHERE id = ? AND user_id = ?', [countryFolderId, stateFolderId, userId]);
-              addLog('Hierarchy', `Linked existing State folder "${cleanState}" under Country "${cleanCountry}".`, 'info');
+            addLog('Hierarchy', `Created Country folder "${cleanCountry}".`, 'success');
+          }
+        }
+
+        // 2. States / Regions under Country
+        for (const [stateName, stateObj] of statesToProcess) {
+          const cleanState = stateName.trim();
+          let stateFolderId = null;
+
+          if (createHierarchy) {
+            let stateFolder = await db.get(
+              'SELECT * FROM locations WHERE is_folder = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND (parent_id = ? OR parent_id IS NULL) AND user_id = ? LIMIT 1',
+              [cleanState, countryFolderId, userId]
+            );
+
+            stateFolderId = stateFolder ? stateFolder.id : null;
+            if (!stateFolder) {
+              stateFolderId = randomUUID();
+              let statePhotoUrl = null;
+              let stateNotes = `Auto-created state folder under ${cleanCountry} from Immich photo import.`;
+
+              if (fetchImages) {
+                addLog('Photos', `Fetching cover photo for State "${cleanState}"...`, 'info');
+                const photoRes = await resolvePhotoAndDescription({
+                  query: cleanState,
+                  locationContext: cleanCountry !== 'Uncategorized / Other' ? cleanCountry : '',
+                  loggerPrefix: 'State-Photo'
+                });
+                if (photoRes && photoRes.fileUrl) {
+                  statePhotoUrl = photoRes.fileUrl;
+                  if (photoRes.description) stateNotes = photoRes.description;
+                  addLog('Photos', `Attached cover photo for State "${cleanState}"`, 'success', { img: statePhotoUrl });
+                }
+              }
+
+              await db.run(
+                `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
+                 VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, ?, ?, ?, 1, 0, 'completed', ?)`,
+                [stateFolderId, userId, cleanState, cleanState, cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null, stateNotes, statePhotoUrl, countryFolderId, new Date().toISOString()]
+              );
+              addLog('Hierarchy', `Created State folder "${cleanState}" under Country "${cleanCountry}".`, 'success');
+            } else {
+              if (countryFolderId && stateFolder.parent_id !== countryFolderId) {
+                await db.run('UPDATE locations SET parent_id = ? WHERE id = ? AND user_id = ?', [countryFolderId, stateFolderId, userId]);
+                addLog('Hierarchy', `Linked existing State folder "${cleanState}" under Country "${cleanCountry}".`, 'info');
+              }
+            }
+          }
+
+          // Cities under State
+          for (const city of Object.values(stateObj.cities || {})) {
+            const targetParentId = createHierarchy ? stateFolderId : null;
+
+            if (city.actionState === 'CREATE_NEW' && city.selected) {
+              const newCityId = randomUUID();
+              let finalName = city.name.trim();
+              if (cleanCountry && cleanCountry !== 'Uncategorized / Other' && !finalName.toLowerCase().includes(cleanCountry.toLowerCase())) {
+                finalName = `${finalName}, ${cleanCountry}`;
+              }
+
+              let cityPhotoUrl = null;
+              let cityNotes = `Imported from Immich (${city.count || 1} photos taken here).`;
+
+              if (fetchImages) {
+                addLog('Photos', `Fetching cover photo for "${city.name}"...`, 'info');
+                const photoRes = await resolvePhotoAndDescription({
+                  query: city.name.trim(),
+                  locationContext: `${cleanState}, ${cleanCountry}`,
+                  latitude: city.lat || null,
+                  longitude: city.lon || null,
+                  loggerPrefix: 'City-Photo'
+                });
+                if (photoRes && photoRes.fileUrl) {
+                  cityPhotoUrl = photoRes.fileUrl;
+                  if (photoRes.description) cityNotes = photoRes.description;
+                  addLog('Photos', `Attached cover photo for "${finalName}"`, 'success', { img: cityPhotoUrl });
+                }
+              }
+
+              await db.run(
+                `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, 0, 'completed', ?)`,
+                [
+                  newCityId,
+                  userId,
+                  finalName,
+                  cleanState,
+                  cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null,
+                  city.lat || null,
+                  city.lon || null,
+                  cityNotes,
+                  cityPhotoUrl,
+                  targetParentId,
+                  new Date().toISOString()
+                ]
+              );
+              totalImported++;
+              addLog('Hierarchy', createHierarchy ? `Created city "${finalName}" inside State folder "${cleanState}".` : `Created city "${finalName}".`, 'success');
+            } else if (city.actionState === 'RELOCATE_EXISTING' && city.relocateSelected && city.existingLoc) {
+              const locId = city.existingLoc.id;
+              const updates = [];
+              const vals = [];
+
+              if (createHierarchy && targetParentId) {
+                updates.push('parent_id = ?');
+                vals.push(targetParentId);
+              }
+              if (cleanState) {
+                updates.push('state = ?');
+                vals.push(cleanState);
+              }
+              if (cleanCountry !== 'Uncategorized / Other') {
+                updates.push('country = ?');
+                vals.push(cleanCountry);
+              }
+
+              if (fetchImages && !city.existingLoc.local_file_data) {
+                const photoRes = await resolvePhotoAndDescription({
+                  query: city.name.trim(),
+                  locationContext: `${cleanState}, ${cleanCountry}`,
+                  latitude: city.lat || city.existingLoc.latitude || null,
+                  longitude: city.lon || city.existingLoc.longitude || null,
+                  loggerPrefix: 'Relocate-Photo'
+                });
+                if (photoRes && photoRes.fileUrl) {
+                  updates.push('local_file_data = ?');
+                  vals.push(photoRes.fileUrl);
+                  addLog('Photos', `Attached cover photo for relocated "${city.existingLoc.name}"`, 'success', { img: photoRes.fileUrl });
+                }
+              }
+
+              vals.push(locId, userId);
+              await db.run(`UPDATE locations SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, vals);
+              totalRelocated++;
+              addLog('Hierarchy', createHierarchy ? `Relocated existing location "${city.existingLoc.name}" into State folder "${cleanState}".` : `Updated location "${city.existingLoc.name}".`, 'success');
             }
           }
         }
 
-        // Cities under State
-        for (const city of Object.values(stateObj.cities || {})) {
-          const targetParentId = createHierarchy ? stateFolderId : null;
+        // 3. Direct Cities under Country (No State Tag)
+        for (const city of directCitiesToProcess) {
+          const targetParentId = createHierarchy ? countryFolderId : null;
 
           if (city.actionState === 'CREATE_NEW' && city.selected) {
             const newCityId = randomUUID();
@@ -1694,7 +1782,7 @@ app.post('/api/immich/execute-import', authenticateToken, async (req, res) => {
               addLog('Photos', `Fetching cover photo for "${city.name}"...`, 'info');
               const photoRes = await resolvePhotoAndDescription({
                 query: city.name.trim(),
-                locationContext: cleanState ? `${cleanState}, ${cleanCountry}` : cleanCountry,
+                locationContext: cleanCountry,
                 latitude: city.lat || null,
                 longitude: city.lon || null,
                 loggerPrefix: 'City-Photo'
@@ -1703,23 +1791,19 @@ app.post('/api/immich/execute-import', authenticateToken, async (req, res) => {
                 cityPhotoUrl = photoRes.fileUrl;
                 if (photoRes.description) cityNotes = photoRes.description;
                 addLog('Photos', `Attached cover photo for "${finalName}"`, 'success', { img: cityPhotoUrl });
-              } else {
-                addLog('Photos', `No public image found for "${finalName}"`, 'warning');
               }
             }
 
             await db.run(
               `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'completed', ?)`,
+               VALUES (?, ?, ?, NULL, ?, ?, ?, 1, ?, ?, ?, 0, 0, 'completed', ?)`,
               [
                 newCityId,
                 userId,
                 finalName,
-                cleanState,
                 cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null,
                 city.lat || null,
                 city.lon || null,
-                city.visited ? 1 : 0,
                 cityNotes,
                 cityPhotoUrl,
                 targetParentId,
@@ -1727,17 +1811,16 @@ app.post('/api/immich/execute-import', authenticateToken, async (req, res) => {
               ]
             );
             totalImported++;
-            addLog('Hierarchy', createHierarchy ? `Created location "${finalName}" inside State folder "${cleanState}".` : `Created location "${finalName}" at Root level.`, 'success');
+            addLog('Hierarchy', createHierarchy ? `Created city "${finalName}" inside Country folder "${cleanCountry}".` : `Created city "${finalName}".`, 'success');
           } else if (city.actionState === 'RELOCATE_EXISTING' && city.relocateSelected && city.existingLoc) {
             const locId = city.existingLoc.id;
-            let updates = ['state = ?'];
-            let vals = [cleanState];
+            const updates = [];
+            const vals = [];
 
-            if (createHierarchy) {
+            if (createHierarchy && targetParentId) {
               updates.push('parent_id = ?');
               vals.push(targetParentId);
             }
-
             if (cleanCountry !== 'Uncategorized / Other') {
               updates.push('country = ?');
               vals.push(cleanCountry);
@@ -1746,7 +1829,7 @@ app.post('/api/immich/execute-import', authenticateToken, async (req, res) => {
             if (fetchImages && !city.existingLoc.local_file_data) {
               const photoRes = await resolvePhotoAndDescription({
                 query: city.name.trim(),
-                locationContext: cleanState ? `${cleanState}, ${cleanCountry}` : cleanCountry,
+                locationContext: cleanCountry,
                 latitude: city.lat || city.existingLoc.latitude || null,
                 longitude: city.lon || city.existingLoc.longitude || null,
                 loggerPrefix: 'Relocate-Photo'
@@ -1758,120 +1841,32 @@ app.post('/api/immich/execute-import', authenticateToken, async (req, res) => {
               }
             }
 
-            vals.push(locId, userId);
-            await db.run(`UPDATE locations SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, vals);
-            totalRelocated++;
-            addLog('Hierarchy', createHierarchy ? `Relocated existing location "${city.existingLoc.name}" into State folder "${cleanState}".` : `Updated location "${city.existingLoc.name}".`, 'success');
+            if (updates.length > 0) {
+              vals.push(locId, userId);
+              await db.run(`UPDATE locations SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, vals);
+              totalRelocated++;
+              addLog('Hierarchy', createHierarchy ? `Relocated existing location "${city.existingLoc.name}" into Country folder "${cleanCountry}".` : `Updated location "${city.existingLoc.name}".`, 'success');
+            }
           }
         }
       }
 
-      // 3. Direct Cities under Country (No State Tag)
-      for (const city of directCitiesToProcess) {
-        const targetParentId = createHierarchy ? countryFolderId : null;
+      await db.exec('COMMIT');
+      addLog('General', `Successfully finished import: ${totalImported} created, ${totalRelocated} relocated.`, 'success');
 
-        if (city.actionState === 'CREATE_NEW' && city.selected) {
-          const newCityId = randomUUID();
-          let finalName = city.name.trim();
-          if (cleanCountry && cleanCountry !== 'Uncategorized / Other' && !finalName.toLowerCase().includes(cleanCountry.toLowerCase())) {
-            finalName = `${finalName}, ${cleanCountry}`;
-          }
-
-          let cityPhotoUrl = null;
-          let cityNotes = `Imported from Immich (${city.count || 1} photos taken here).`;
-
-          if (fetchImages) {
-            addLog('Photos', `Fetching cover photo for "${city.name}"...`, 'info');
-            const photoRes = await resolvePhotoAndDescription({
-              query: city.name.trim(),
-              locationContext: cleanCountry,
-              latitude: city.lat || null,
-              longitude: city.lon || null,
-              loggerPrefix: 'City-Photo'
-            });
-            if (photoRes && photoRes.fileUrl) {
-              cityPhotoUrl = photoRes.fileUrl;
-              if (photoRes.description) cityNotes = photoRes.description;
-              addLog('Photos', `Attached cover photo for "${finalName}"`, 'success', { img: cityPhotoUrl });
-            } else {
-              addLog('Photos', `No public image found for "${finalName}"`, 'warning');
-            }
-          }
-
-          await db.run(
-            `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, parent_id, is_folder, is_archived, photo_sync_status, created_at)
-             VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'completed', ?)`,
-            [
-              newCityId,
-              userId,
-              finalName,
-              cleanCountry !== 'Uncategorized / Other' ? cleanCountry : null,
-              city.lat || null,
-              city.lon || null,
-              city.visited ? 1 : 0,
-              cityNotes,
-              cityPhotoUrl,
-              targetParentId,
-              new Date().toISOString()
-            ]
-          );
-          totalImported++;
-          addLog('Hierarchy', createHierarchy ? `Created location "${finalName}" inside Country folder "${cleanCountry}".` : `Created location "${finalName}" at Root level.`, 'success');
-        } else if (city.actionState === 'RELOCATE_EXISTING' && city.relocateSelected && city.existingLoc) {
-          const locId = city.existingLoc.id;
-          let updates = [];
-          let vals = [];
-
-          if (createHierarchy) {
-            updates.push('parent_id = ?');
-            vals.push(targetParentId);
-          }
-
-          if (cleanCountry !== 'Uncategorized / Other') {
-            updates.push('country = ?');
-            vals.push(cleanCountry);
-          }
-
-          if (fetchImages && !city.existingLoc.local_file_data) {
-            const photoRes = await resolvePhotoAndDescription({
-              query: city.name.trim(),
-              locationContext: cleanCountry,
-              latitude: city.lat || city.existingLoc.latitude || null,
-              longitude: city.lon || city.existingLoc.longitude || null,
-              loggerPrefix: 'Relocate-Photo'
-            });
-            if (photoRes && photoRes.fileUrl) {
-              updates.push('local_file_data = ?');
-              vals.push(photoRes.fileUrl);
-              addLog('Photos', `Attached cover photo for relocated "${city.existingLoc.name}"`, 'success', { img: photoRes.fileUrl });
-            }
-          }
-
-          if (updates.length > 0) {
-            vals.push(locId, userId);
-            await db.run(`UPDATE locations SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, vals);
-            totalRelocated++;
-            addLog('Hierarchy', createHierarchy ? `Relocated existing location "${city.existingLoc.name}" into Country folder "${cleanCountry}".` : `Updated location "${city.existingLoc.name}".`, 'success');
-          }
-        }
-      }
+      res.json({
+        success: true,
+        totalImported,
+        totalRelocated,
+        logs
+      });
+    } catch (err) {
+      await db.exec('ROLLBACK').catch(() => {});
+      console.error('Error during atomic Immich import pipeline:', err);
+      addLog('General', `ERROR during import: ${err.message}`, 'error');
+      res.status(500).json({ error: err.message, logs });
     }
-
-    await db.exec('COMMIT');
-    addLog('General', `Successfully finished import: ${totalImported} created, ${totalRelocated} relocated.`, 'success');
-
-    res.json({
-      success: true,
-      totalImported,
-      totalRelocated,
-      logs
-    });
-  } catch (err) {
-    await db.exec('ROLLBACK').catch(() => {});
-    console.error('Error during atomic Immich import pipeline:', err);
-    addLog('General', `ERROR during import: ${err.message}`, 'error');
-    res.status(500).json({ error: err.message, logs });
-  }
+  });
 });
 
 // ==========================================
@@ -3575,85 +3570,89 @@ app.get('/api/trips', authenticateToken, async (req, res) => {
 app.post('/api/trips', authenticateToken, async (req, res) => {
   const { id, name, start_date, end_date, length, visited, notes, rates, companions, start_address_id, stop_address_id } = req.body;
   const tId = id || crypto.randomUUID();
-  try {
-    await db.exec('BEGIN TRANSACTION');
-
-    const companionsStr = typeof companions === 'string' ? companions : (Array.isArray(companions) ? JSON.stringify(companions) : null);
-
-    await db.run(
-      'INSERT INTO trips (id, user_id, name, start_date, end_date, length, visited, notes, companions, start_address_id, stop_address_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [tId, req.user.id, name, start_date || null, end_date || null, length || 1, visited || 0, notes || '', companionsStr, start_address_id || null, stop_address_id || null]
-    );
-
-    // Save rates
-    if (rates && typeof rates === 'object') {
-      for (const cur of Object.keys(rates)) {
-        await db.run(
-          'INSERT INTO trip_currency_rates (id, trip_id, currency, rate) VALUES (?, ?, ?, ?)',
-          [crypto.randomUUID(), tId, cur, rates[cur]]
-        );
-      }
-    }
-
-    // Auto-propagate default Visited tag to locations & places if trip is marked visited on creation
-    if (visited) {
-      await autoPropagateVisited(tId, req.user.id);
-    }
-
-    await db.exec('COMMIT');
-    const result = await db.get('SELECT * FROM trips WHERE id = ?', [tId]);
-    res.json(result);
-  } catch (err) {
+  await dbMutex.run(async () => {
     try {
-      await db.exec('ROLLBACK');
-    } catch (rollbackErr) {
-      console.warn('Rollback failed (possibly no transaction active):', rollbackErr.message);
+      await db.exec('BEGIN TRANSACTION');
+
+      const companionsStr = typeof companions === 'string' ? companions : (Array.isArray(companions) ? JSON.stringify(companions) : null);
+
+      await db.run(
+        'INSERT INTO trips (id, user_id, name, start_date, end_date, length, visited, notes, companions, start_address_id, stop_address_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [tId, req.user.id, name, start_date || null, end_date || null, length || 1, visited || 0, notes || '', companionsStr, start_address_id || null, stop_address_id || null]
+      );
+
+      // Save rates
+      if (rates && typeof rates === 'object') {
+        for (const cur of Object.keys(rates)) {
+          await db.run(
+            'INSERT INTO trip_currency_rates (id, trip_id, currency, rate) VALUES (?, ?, ?, ?)',
+            [crypto.randomUUID(), tId, cur, rates[cur]]
+          );
+        }
+      }
+
+      // Auto-propagate default Visited tag to locations & places if trip is marked visited on creation
+      if (visited) {
+        await autoPropagateVisited(tId, req.user.id);
+      }
+
+      await db.exec('COMMIT');
+      const result = await db.get('SELECT * FROM trips WHERE id = ?', [tId]);
+      res.json(result);
+    } catch (err) {
+      try {
+        await db.exec('ROLLBACK');
+      } catch (rollbackErr) {
+        console.warn('Rollback failed (possibly no transaction active):', rollbackErr.message);
+      }
+      res.status(500).json({ error: err.message });
     }
-    res.status(500).json({ error: err.message });
-  }
+  });
 });
 
 app.put('/api/trips/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { name, start_date, end_date, length, visited, notes, rates, companions, start_address_id, stop_address_id } = req.body;
-  try {
-    await db.exec('BEGIN TRANSACTION');
-
-    const companionsStr = typeof companions === 'string' ? companions : (Array.isArray(companions) ? JSON.stringify(companions) : null);
-
-    await db.run(
-      `UPDATE trips SET name = ?, start_date = ?, end_date = ?, length = ?, visited = ?, notes = ?, companions = ?, start_address_id = ?, stop_address_id = ? 
-       WHERE id = ? AND user_id = ?`,
-      [name, start_date, end_date, length || 1, visited, notes, companionsStr, start_address_id || null, stop_address_id || null, id, req.user.id]
-    );
-
-    // Update rates
-    if (rates && typeof rates === 'object') {
-      await db.run('DELETE FROM trip_currency_rates WHERE trip_id = ?', [id]);
-      for (const cur of Object.keys(rates)) {
-        await db.run(
-          'INSERT INTO trip_currency_rates (id, trip_id, currency, rate) VALUES (?, ?, ?, ?)',
-          [crypto.randomUUID(), id, cur, rates[cur]]
-        );
-      }
-    }
-
-    // Auto-propagate visited tag if changed to visited
-    if (visited) {
-      await autoPropagateVisited(id, req.user.id);
-    }
-
-    await db.exec('COMMIT');
-    const result = await db.get('SELECT * FROM trips WHERE id = ?', [id]);
-    res.json(result);
-  } catch (err) {
+  await dbMutex.run(async () => {
     try {
-      await db.exec('ROLLBACK');
-    } catch (rollbackErr) {
-      console.warn('Rollback failed (possibly no transaction active):', rollbackErr.message);
+      await db.exec('BEGIN TRANSACTION');
+
+      const companionsStr = typeof companions === 'string' ? companions : (Array.isArray(companions) ? JSON.stringify(companions) : null);
+
+      await db.run(
+        `UPDATE trips SET name = ?, start_date = ?, end_date = ?, length = ?, visited = ?, notes = ?, companions = ?, start_address_id = ?, stop_address_id = ? 
+         WHERE id = ? AND user_id = ?`,
+        [name, start_date, end_date, length || 1, visited, notes, companionsStr, start_address_id || null, stop_address_id || null, id, req.user.id]
+      );
+
+      // Update rates
+      if (rates && typeof rates === 'object') {
+        await db.run('DELETE FROM trip_currency_rates WHERE trip_id = ?', [id]);
+        for (const cur of Object.keys(rates)) {
+          await db.run(
+            'INSERT INTO trip_currency_rates (id, trip_id, currency, rate) VALUES (?, ?, ?, ?)',
+            [crypto.randomUUID(), id, cur, rates[cur]]
+          );
+        }
+      }
+
+      // Auto-propagate visited tag if changed to visited
+      if (visited) {
+        await autoPropagateVisited(id, req.user.id);
+      }
+
+      await db.exec('COMMIT');
+      const result = await db.get('SELECT * FROM trips WHERE id = ?', [id]);
+      res.json(result);
+    } catch (err) {
+      try {
+        await db.exec('ROLLBACK');
+      } catch (rollbackErr) {
+        console.warn('Rollback failed (possibly no transaction active):', rollbackErr.message);
+      }
+      res.status(500).json({ error: err.message });
     }
-    res.status(500).json({ error: err.message });
-  }
+  });
 });
 
 app.delete('/api/trips/:id', authenticateToken, async (req, res) => {

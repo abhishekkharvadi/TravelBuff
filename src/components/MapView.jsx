@@ -321,7 +321,9 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
         trek: '🥾',
         hotel: '🏨',
         airport: '✈️',
-        station: '🚉'
+        station: '🚉',
+        'transit hub': '🛫',
+        transit: '🚆'
       };
       return map[category?.toLowerCase()] || '📍';
     };

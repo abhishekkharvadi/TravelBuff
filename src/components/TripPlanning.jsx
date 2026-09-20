@@ -11,6 +11,8 @@ import { trackApiCall } from '../utils/apiTracker.js';
 import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
 import { getDayColor } from '../utils/dayColors.js';
 import MapView from './MapView.jsx';
+import JourneyTransitBanner, { JourneyTransitManagerModal } from './JourneyTransitBanner.jsx';
+import { getFeaturedPhotoUrl } from '../utils/photoResolver.js';
 
 const getBrowserCurrencies = () => {
   let codes = [];
@@ -91,6 +93,37 @@ const formatDuration = (mins) => {
   const remainingMins = numMins % 60;
   if (remainingMins === 0) return `${hours} hr${hours > 1 ? 's' : ''}`;
   return `${hours} hr${hours > 1 ? 's' : ''} ${remainingMins} min${remainingMins > 1 ? 's' : ''}`;
+};
+
+const formatJourneyTagText = (journey, isOutbound, startAddrObj, stopAddrObj) => {
+  if (!journey) return isOutbound ? 'Outbound Journey' : 'Return Journey';
+  const mode = journey.mode || 'drive';
+  if (mode === 'drive') {
+    if (isOutbound) return startAddrObj ? `Start at 🏠 ${startAddrObj.label}` : 'Drive from Origin';
+    return stopAddrObj ? `Return to 🏠 ${stopAddrObj.label}` : 'Return Home';
+  }
+  if (mode === 'flight') {
+    const legs = Array.isArray(journey.legs) && journey.legs.length > 0
+      ? journey.legs
+      : (journey.originHub || journey.destinationHub ? [journey] : []);
+    
+    if (legs.length > 0) {
+      const origCode = legs[0].originHub?.code || legs[0].originHub?.name || 'DEP';
+      const destCode = legs[legs.length - 1].destinationHub?.code || legs[legs.length - 1].destinationHub?.name || 'ARR';
+      const routeText = legs.length > 1
+        ? `${origCode} ➔ ${legs.slice(0, -1).map(l => l.destinationHub?.code || l.destinationHub?.name || 'LAY').join(' ➔ ')} ➔ ${destCode}`
+        : `${origCode} ➔ ${destCode}`;
+      
+      const timeText = isOutbound
+        ? (legs[legs.length - 1].arrivalTime ? ` (Arrives ${legs[legs.length - 1].arrivalTime})` : (legs[0].departureTime ? ` (Departs ${legs[0].departureTime})` : ''))
+        : (legs[0].departureTime ? ` (Departs ${legs[0].departureTime})` : (legs[legs.length - 1].arrivalTime ? ` (Arrives ${legs[legs.length - 1].arrivalTime})` : ''));
+
+      const flightCode = legs[0].flightNumber ? ` [${legs[0].carrier ? `${legs[0].carrier} ` : ''}${legs[0].flightNumber}]` : '';
+      return `${isOutbound ? 'Flight' : 'Return Flight'}${flightCode}: ${routeText}${timeText}`;
+    }
+    return isOutbound ? 'Outbound Flight Configured' : 'Return Flight Configured';
+  }
+  return `${mode.toUpperCase()} ${isOutbound ? 'to Destination' : 'Return'}`;
 };
 
 const isStayPlace = (place) => {
@@ -313,16 +346,17 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
       people: await (db.people ? db.people.toArray() : Promise.resolve([])),
       userAddresses: await (db.user_addresses ? db.user_addresses.toArray() : Promise.resolve([])),
       customCategories: await (db.custom_categories ? db.custom_categories.where('type').equals('place').toArray() : Promise.resolve([])),
+      photos: await (db.entity_photos ? db.entity_photos.toArray() : Promise.resolve([])),
       syncQueue: await db.sync_queue.toArray()
     };
   }) || {
     trips: [], locations: [], places: [], tags: [], entityTags: [],
-    collections: [], reservations: [], itineraries: [], expenses: [], rates: [], tripNotes: [], people: [], userAddresses: [], customCategories: [], syncQueue: []
+    collections: [], reservations: [], itineraries: [], expenses: [], rates: [], tripNotes: [], people: [], userAddresses: [], customCategories: [], photos: [], syncQueue: []
   };
 
   const { 
     trips, locations: rawLocations = [], places: rawPlaces = [], tags, entityTags, collections, 
-    reservations, itineraries, expenses, rates, tripNotes: notesList, people = [], userAddresses = [], customCategories = [], syncQueue 
+    reservations, itineraries, expenses, rates, tripNotes: notesList, people = [], userAddresses = [], customCategories = [], photos = [], syncQueue 
   } = syncData;
 
   const locations = useMemo(() => rawLocations.filter(l => Number(l.is_archived) !== 1), [rawLocations]);
@@ -399,6 +433,10 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
     }
   };
   
+  // Flights & Transit Modal states
+  const [showTransitModal, setShowTransitModal] = useState(false);
+  const [transitModalTab, setTransitModalTab] = useState('outbound');
+
   // Trip Notes states
   const [showTripNoteModal, setShowTripNoteModal] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
@@ -1214,8 +1252,13 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
     if (!p1 || !p2 || !p1.latitude || !p1.longitude || !p2.latitude || !p2.longitude) return null;
     const key = `${p1.id}-${p2.id}`;
     if (distancesRef.current[key]) return { key, value: distancesRef.current[key] };
-    if (pendingOSRMFetches.current.has(key)) return null;
-    pendingOSRMFetches.current.add(key);
+    if (p2.transportMode === 'flight' || p1.transportMode === 'flight') {
+      const distKm = getHaversine(p1, p2);
+      const durationMins = Math.round((distKm / 800) * 60 + 30);
+      const valObj = { distance: distKm, duration: durationMins, mode: 'flight' };
+      distancesRef.current[key] = valObj;
+      return { key, value: valObj };
+    }
 
     try {
       const apiKey = localStorage.getItem('google_maps_api_key');
@@ -1367,6 +1410,9 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
     const dayStayBehaviors = notesObj.dayStayBehaviors || {};
     const segmentTransport = notesObj.segmentTransport || {};
 
+    const outboundJourney = notesObj.outboundJourney || { mode: 'drive' };
+    const returnJourney = notesObj.returnJourney || { mode: 'drive' };
+
     const pointsList = [];
 
     itineraryDays.forEach((day, dIdx) => {
@@ -1394,10 +1440,11 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
 
       let lastAddedPointId = null;
 
-      // 1. Start from Home on Day 1
+      // 1. Start from Home & Outbound Journey on Day 1
       const startAddr = (isFirstDay && activeTripObj.start_address_id && startFromHome) ? findUserAddress(activeTripObj.start_address_id) : null;
       const isDay1StartingFromHome = Boolean(startAddr);
       const driveToStayFirst = dayEndpoints[day.date]?.driveToStayFirst ?? false;
+      const isMultiModalOutbound = isFirstDay && outboundJourney.mode && outboundJourney.mode !== 'drive';
 
       if (isDay1StartingFromHome && startAddr.latitude && startAddr.longitude) {
         const startPtId = `home_start_${startAddr.id}`;
@@ -1412,20 +1459,77 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
           sequenceOrder: -1,
           sequenceLabel: '🏠',
           isHome: true,
-          date: day.date
+          date: day.date,
+          transportMode: isMultiModalOutbound ? (outboundJourney.originTransitMode || 'cab') : 'drive'
         });
         lastAddedPointId = startPtId;
       }
 
-      // 2. Day Origin Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked)
+      if (isMultiModalOutbound) {
+        const outLegs = Array.isArray(outboundJourney.legs) && outboundJourney.legs.length > 0
+          ? outboundJourney.legs
+          : (outboundJourney.originHub || outboundJourney.destinationHub ? [{
+              originHub: outboundJourney.originHub,
+              destinationHub: outboundJourney.destinationHub,
+              carrier: outboundJourney.carrier,
+              flightNumber: outboundJourney.flightNumber
+            }] : []);
+
+        outLegs.forEach((leg, lIdx) => {
+          if (leg.originHub && leg.originHub.lat && leg.originHub.lon) {
+            const oHub = leg.originHub;
+            const oHubId = `outbound_orig_${day.date}_${lIdx}`;
+            if (lastAddedPointId !== `outbound_dest_${day.date}_${lIdx - 1}`) {
+              pointsList.push({
+                id: oHubId,
+                name: outboundJourney.mode === 'flight' ? `🛫 ${oHub.code ? `[${oHub.code}] ` : ''}${oHub.name}` : `🚆 ${oHub.name}`,
+                category: 'Transit Hub',
+                latitude: parseFloat(oHub.lat),
+                longitude: parseFloat(oHub.lon),
+                dayLabel: dayLabelText,
+                color: dayColor,
+                sequenceOrder: -0.7 + (lIdx * 0.2),
+                sequenceLabel: outboundJourney.mode === 'flight' ? '🛫' : '🚆',
+                isTransitHub: true,
+                date: day.date,
+                transportMode: lIdx === 0 ? (outboundJourney.originTransitMode || 'cab') : 'transit'
+              });
+              lastAddedPointId = oHubId;
+            }
+          }
+
+          if (leg.destinationHub && leg.destinationHub.lat && leg.destinationHub.lon) {
+            const dHub = leg.destinationHub;
+            const dHubId = `outbound_dest_${day.date}_${lIdx}`;
+            pointsList.push({
+              id: dHubId,
+              name: outboundJourney.mode === 'flight' ? `🛬 ${dHub.code ? `[${dHub.code}] ` : ''}${dHub.name}` : `🚉 ${dHub.name}`,
+              category: 'Transit Hub',
+              latitude: parseFloat(dHub.lat),
+              longitude: parseFloat(dHub.lon),
+              dayLabel: dayLabelText,
+              color: dayColor,
+              sequenceOrder: -0.6 + (lIdx * 0.2),
+              sequenceLabel: outboundJourney.mode === 'flight' ? '🛬' : '🚉',
+              isTransitHub: true,
+              date: day.date,
+              transportMode: outboundJourney.mode || 'flight'
+            });
+            lastAddedPointId = dHubId;
+          }
+        });
+      }
+
+      // 2. Day Origin Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked / multi-modal)
       const shouldIncludeStayOrigin = (!isFirstDay && hotelPlace && hotelPlace.latitude && hotelPlace.longitude && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) ||
-        (isFirstDay && isDay1StartingFromHome && hotelPlace && hotelPlace.latitude && hotelPlace.longitude && driveToStayFirst);
+        (isFirstDay && hotelPlace && hotelPlace.latitude && hotelPlace.longitude && (driveToStayFirst || isMultiModalOutbound));
 
       if (shouldIncludeStayOrigin) {
         const firstItemIsHotel = dayItems.length > 0 && dayItems[0].place_id === hotelPlace.id;
         if (!firstItemIsHotel) {
           const segKey = lastAddedPointId ? `${day.date}_${lastAddedPointId}_${hotelPlace.id}` : null;
-          const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : 'drive';
+          const defaultSegMode = isMultiModalOutbound ? (outboundJourney.destinationTransitMode || 'rental') : 'drive';
+          const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : defaultSegMode;
           const originLabel = isFirstDay
             ? `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
             : (stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`);
@@ -1469,11 +1573,69 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
         }
       });
 
-      // 4. Closing Endpoints (Go Home or Return to Stay)
+      // 4. Closing Endpoints (Return Journey or Return to Stay)
       const stopAddr = (isLastDay && lastDayGoHome && activeTripObj.stop_address_id) ? findUserAddress(activeTripObj.stop_address_id) : null;
+      const isMultiModalReturn = isLastDay && returnJourney.mode && returnJourney.mode !== 'drive';
+
+      if (isMultiModalReturn) {
+        const retLegs = Array.isArray(returnJourney.legs) && returnJourney.legs.length > 0
+          ? returnJourney.legs
+          : (returnJourney.originHub || returnJourney.destinationHub ? [{
+              originHub: returnJourney.originHub,
+              destinationHub: returnJourney.destinationHub,
+              carrier: returnJourney.carrier,
+              flightNumber: returnJourney.flightNumber
+            }] : []);
+
+        retLegs.forEach((leg, lIdx) => {
+          if (leg.originHub && leg.originHub.lat && leg.originHub.lon) {
+            const roHub = leg.originHub;
+            const roHubId = `return_orig_${day.date}_${lIdx}`;
+            if (lastAddedPointId !== `return_dest_${day.date}_${lIdx - 1}`) {
+              pointsList.push({
+                id: roHubId,
+                name: returnJourney.mode === 'flight' ? `🛫 ${roHub.code ? `[${roHub.code}] ` : ''}${roHub.name}` : `🚆 ${roHub.name}`,
+                category: 'Transit Hub',
+                latitude: parseFloat(roHub.lat),
+                longitude: parseFloat(roHub.lon),
+                dayLabel: dayLabelText,
+                color: dayColor,
+                sequenceOrder: currentDaySeq + 70 + (lIdx * 2),
+                sequenceLabel: returnJourney.mode === 'flight' ? '🛫' : '🚆',
+                isTransitHub: true,
+                date: day.date,
+                transportMode: lIdx === 0 ? (returnJourney.originTransitMode || 'transit') : 'transit'
+              });
+              lastAddedPointId = roHubId;
+            }
+          }
+
+          if (leg.destinationHub && leg.destinationHub.lat && leg.destinationHub.lon) {
+            const rdHub = leg.destinationHub;
+            const rdHubId = `return_dest_${day.date}_${lIdx}`;
+            pointsList.push({
+              id: rdHubId,
+              name: returnJourney.mode === 'flight' ? `🛬 ${rdHub.code ? `[${rdHub.code}] ` : ''}${rdHub.name}` : `🚉 ${rdHub.name}`,
+              category: 'Transit Hub',
+              latitude: parseFloat(rdHub.lat),
+              longitude: parseFloat(rdHub.lon),
+              dayLabel: dayLabelText,
+              color: dayColor,
+              sequenceOrder: currentDaySeq + 71 + (lIdx * 2),
+              sequenceLabel: returnJourney.mode === 'flight' ? '🛬' : '🚉',
+              isTransitHub: true,
+              date: day.date,
+              transportMode: returnJourney.mode || 'flight'
+            });
+            lastAddedPointId = rdHubId;
+          }
+        });
+      }
+
       if (stopAddr && stopAddr.latitude && stopAddr.longitude) {
         const segKey = lastAddedPointId ? `${day.date}_${lastAddedPointId}_home_stop_${stopAddr.id}` : null;
-        const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : 'drive';
+        const defaultStopMode = isMultiModalReturn ? (returnJourney.destinationTransitMode || 'cab') : 'drive';
+        const segMode = segKey && segmentTransport[segKey]?.mode ? segmentTransport[segKey].mode : defaultStopMode;
         pointsList.push({
           id: `stop_home_${stopAddr.id}_${day.date}`,
           name: `🏠 Stop: ${stopAddr.label}`,
@@ -1575,6 +1737,7 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   const [showAddExpenseForm, setShowAddExpenseForm] = useState(false);
   const [showRatesForm, setShowRatesForm] = useState(false);
   const [showPrintOptions, setShowPrintOptions] = useState(false);
+  const [printOptBudget, setPrintOptBudget] = useState(true);
   const [printOptItinerary, setPrintOptItinerary] = useState(true);
   const [printOptReservations, setPrintOptReservations] = useState(true);
   const [printOptExpenses, setPrintOptExpenses] = useState(true);
@@ -3679,7 +3842,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
       </div>
 
       {selectedTrip && !showAddForm && !show3ColumnWorkspace && (
-        <div className="trip-details-overlay" style={{ overflowY: 'auto' }}>
+        <div className="trip-details-overlay" style={{ overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', isolation: 'isolate' }}>
           <div style={{
             background: 'var(--bg-surface)', width: '100%',
             display: 'flex', flexDirection: 'column'
@@ -3887,7 +4050,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
             <div className="dialog-body" style={{ flexGrow: 1, padding: '24px', maxHeight: 'none', overflowY: 'visible' }}>
               
               {/* Budget Spend Tracker */}
-              <div style={{ background: 'var(--bg-surface-elevated)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
+              <div className={!printOptBudget ? 'no-print' : ''} style={{ background: 'var(--bg-surface-elevated)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                   <div>
                     <h3 style={{ margin: 0 }}>Budget Spend Tracker</h3>
@@ -4164,8 +4327,10 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                       dayColor={getDayColor(dIdx)}
                       userAddresses={userAddresses}
                       locations={locations}
+                      photos={photos}
                       isFirstDay={dIdx === 0}
                       isLastDay={dIdx === itineraryDays.length - 1}
+                      prevDay={itineraryDays[dIdx - 1] || null}
                       nextDay={itineraryDays[dIdx + 1] || null}
                     />
                   );
@@ -4680,9 +4845,18 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
           background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
           padding: '20px'
         }}>
-          <div className="login-card" style={{ maxWidth: '400px', width: '100%', padding: '24px' }}>
-            <h3 style={{ marginBottom: '16px', color: '#fff' }}>Select Sections to Print</h3>
+          <div className="login-card" style={{ maxWidth: '400px', width: '100%', padding: '24px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)' }}>
+            <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Select Sections to Print</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input 
+                  type="checkbox" 
+                  checked={printOptBudget} 
+                  onChange={(e) => setPrintOptBudget(e.target.checked)}
+                  style={{ width: '16px', height: '16px', accentColor: 'var(--accent-primary)' }}
+                />
+                <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>Budget Spend Tracker</span>
+              </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input 
                   type="checkbox" 
@@ -4690,7 +4864,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   onChange={(e) => setPrintOptItinerary(e.target.checked)}
                   style={{ width: '16px', height: '16px', accentColor: 'var(--accent-primary)' }}
                 />
-                <span style={{ color: '#fff', fontSize: '0.9rem' }}>Chronological Daily Itinerary</span>
+                <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>Chronological Daily Itinerary</span>
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input 
@@ -4699,7 +4873,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   onChange={(e) => setPrintOptReservations(e.target.checked)}
                   style={{ width: '16px', height: '16px', accentColor: 'var(--accent-primary)' }}
                 />
-                <span style={{ color: '#fff', fontSize: '0.9rem' }}>Trip Reservations</span>
+                <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>Trip Reservations</span>
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input 
@@ -4708,7 +4882,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   onChange={(e) => setPrintOptExpenses(e.target.checked)}
                   style={{ width: '16px', height: '16px', accentColor: 'var(--accent-primary)' }}
                 />
-                 <span style={{ color: '#fff', fontSize: '0.9rem' }}>Trip Expenses</span>
+                <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>Trip Expenses</span>
               </label>
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
@@ -4765,7 +4939,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
               <button className="btn btn-secondary" onClick={() => setShowFullScreenMap(false)} style={{ width: 'auto', padding: '4px 10px', margin: 0 }}>Done</button>
             </div>
 
-            <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px' }}>
+            <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', isolation: 'isolate' }}>
               {itineraryDays.map(day => {
                 const dayItems = itineraries
                   .filter(i => i.trip_id === selectedTrip.id && i.date === day.date)
@@ -4847,7 +5021,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'var(--bg-app)', display: 'flex', zIndex: 1100,
-          flexDirection: 'column'
+          flexDirection: 'column', isolation: 'isolate'
         }}>
           <div style={{
             padding: '16px 24px', background: 'var(--bg-surface)',
@@ -4860,17 +5034,60 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                 Drag places/folders from Column 3 to assign them to itinerary days in Column 2. All updates are auto-saved.
               </p>
             </div>
-            <button 
-              className="btn btn-primary" 
-              onClick={() => {
-                setShow3ColumnWorkspace(false);
-                setSelectedTrip(selectedTrip);
-              }}
-              style={{ width: 'auto', padding: '8px 24px', margin: 0 }}
-            >
-              Done
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setTransitModalTab('outbound');
+                  setShowTransitModal(true);
+                }}
+                style={{ width: 'auto', padding: '6px 14px', fontSize: '0.8rem', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '6px', height: '34px' }}
+                title="Manage Outbound & Return Flights, Connections, and Transit"
+              >
+                <span>✈️</span>
+                <span>Flights & Transit</span>
+              </button>
+              <button 
+                className="btn btn-primary" 
+                onClick={() => {
+                  setShow3ColumnWorkspace(false);
+                  setSelectedTrip(selectedTrip);
+                }}
+                style={{ width: 'auto', padding: '6px 20px', fontSize: '0.8rem', margin: 0, height: '34px' }}
+              >
+                Done
+              </button>
+            </div>
           </div>
+
+          {/* Flights & Logistics Modal */}
+          {showTransitModal && selectedTrip && (
+            <JourneyTransitManagerModal
+              trip={selectedTrip}
+              onUpdateTrip={async (updatedTrip) => {
+                await db.trips.update(updatedTrip.id, updatedTrip);
+                await queueSyncAction('trips', 'update', updatedTrip);
+                setSelectedTrip(updatedTrip);
+              }}
+              userAddresses={userAddresses}
+              firstDayDate={itineraryDays[0]?.date}
+              lastDayDate={itineraryDays[itineraryDays.length - 1]?.date}
+              totalDays={itineraryDays.length || selectedTrip.length || 1}
+              firstDayStayName={(() => {
+                const hId = safeParseNotes(selectedTrip?.notes)?.hotels?.[itineraryDays[0]?.date];
+                const h = hId ? combinedPlaces.find(p => String(p.id) === String(hId)) : null;
+                return h ? h.name : 'Hotel / Stay';
+              })()}
+              lastDayStayName={(() => {
+                const hId = safeParseNotes(selectedTrip?.notes)?.hotels?.[itineraryDays[itineraryDays.length - 1]?.date];
+                const h = hId ? combinedPlaces.find(p => String(p.id) === String(hId)) : null;
+                return h ? h.name : 'Hotel / Stay';
+              })()}
+              initialTab={transitModalTab}
+              onClose={() => setShowTransitModal(false)}
+            />
+          )}
 
           {isMobile && (
             <div style={{
@@ -4940,7 +5157,8 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
               display: isMobile && activeMobilePane !== 'map' ? 'none' : 'flex',
               flexDirection: 'column',
               height: '100%',
-              position: 'relative'
+              position: 'relative',
+              isolation: 'isolate'
             }}>
               <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-glass)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -4978,7 +5196,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   </button>
                 </div>
               </div>
-              <div style={{ flexGrow: 1, position: 'relative', height: isMobile ? 'calc(100vh - 190px)' : 'auto', minHeight: isMobile ? '350px' : '0' }}>
+              <div style={{ flexGrow: 1, position: 'relative', height: isMobile ? 'calc(100vh - 190px)' : 'auto', minHeight: isMobile ? '350px' : '0', isolation: 'isolate' }}>
                 <MapView 
                   points={mapPoints} 
                   drawLine={showNavigationLines} 
@@ -5092,7 +5310,8 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   })()}
                 </div>
               </div>
-              <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+              <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', isolation: 'isolate' }}>
                 {itineraryDays.map((day, dIdx) => {
                   const dayItems = itineraries
                     .filter(i => i.trip_id === selectedTrip.id && i.date === day.date)
@@ -5104,6 +5323,8 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   const dayEndpoints = notesObj.dayEndpoints || {};
                   const dayStayBehaviors = notesObj.dayStayBehaviors || {};
                   const segmentTransport = notesObj.segmentTransport || {};
+                  const outboundJourney = notesObj.outboundJourney || { mode: 'drive' };
+                  const returnJourney = notesObj.returnJourney || { mode: 'drive' };
 
                   const isFirstDay = dIdx === 0;
                   const isLastDay = dIdx === itineraryDays.length - 1;
@@ -5111,54 +5332,73 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   const lastDayGoHome = dayEndpoints[day.date]?.lastDayGoHome ?? (isLastDay && Boolean(selectedTrip.stop_address_id));
                   const driveToStayFirst = dayEndpoints[day.date]?.driveToStayFirst ?? false;
                   const stayBehavior = dayStayBehaviors[day.date] || 'stay_night';
+                  const isMultiModalOutbound = isFirstDay && outboundJourney.mode && outboundJourney.mode !== 'drive';
+                  const isMultiModalReturn = isLastDay && returnJourney.mode && returnJourney.mode !== 'drive';
 
                   const hotelPlaceId = hotelsObj[day.date];
                   const hotelPlace = hotelPlaceId ? combinedPlaces.find(p => String(p.id) === String(hotelPlaceId)) : null;
                   const startAddrObj = (isFirstDay && selectedTrip.start_address_id && startFromHome) ? findUserAddress(selectedTrip.start_address_id) : null;
                   const stopAddrObj = (isLastDay && selectedTrip.stop_address_id && lastDayGoHome) ? findUserAddress(selectedTrip.stop_address_id) : null;
 
+                  // Inter-day location & stay transition detection
+                  const prevDay = dIdx > 0 ? itineraryDays[dIdx - 1] : null;
+                  const prevHotelId = prevDay ? (hotelsObj[prevDay.date] || null) : null;
+                  const prevHotelPlace = prevHotelId ? combinedPlaces.find(p => String(p.id) === String(prevHotelId)) : null;
+                  const prevLocId = prevDay ? (notesObj.dayLocations ? notesObj.dayLocations[prevDay.date] : null) : null;
+                  const curLocId = notesObj.dayLocations ? notesObj.dayLocations[day.date] : null;
+
+                  const isLocationOrStayChanged = dIdx > 0 && (
+                    (curLocId && prevLocId && String(curLocId) !== String(prevLocId)) ||
+                    (hotelPlaceId && prevHotelId && String(hotelPlaceId) !== String(prevHotelId)) ||
+                    (!prevHotelId && Boolean(hotelPlaceId) && Boolean(prevLocId || curLocId))
+                  );
+
                   // Assemble complete day elements in chronological flow
                   const dayElements = [];
 
-                  // 1. Start from Home (Day 1)
-                  const isDay1StartingFromHome = Boolean(startAddrObj);
-                  if (isDay1StartingFromHome) {
-                    dayElements.push({
-                      place: {
-                        ...startAddrObj,
-                        id: `home_start_${startAddrObj.id}`,
-                        name: `🏠 Start: ${startAddrObj.label}`,
-                        category: 'Home Address',
-                        latitude: (startAddrObj.latitude !== null && startAddrObj.latitude !== undefined && startAddrObj.latitude !== '' && !isNaN(Number(startAddrObj.latitude))) ? parseFloat(startAddrObj.latitude) : null,
-                        longitude: (startAddrObj.longitude !== null && startAddrObj.longitude !== undefined && startAddrObj.longitude !== '' && !isNaN(Number(startAddrObj.longitude))) ? parseFloat(startAddrObj.longitude) : null,
-                        is_home: true
-                      },
-                      isFixedEndpoint: true,
-                      endpointType: 'start_home',
-                      label: `🏠 Journey Start (${startAddrObj.label})`
-                    });
-                  }
-
-                  // 2. Depart Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked)
-                  const shouldIncludeStayOrigin = (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) ||
-                    (isFirstDay && isDay1StartingFromHome && hotelPlace && driveToStayFirst);
-
-                  if (shouldIncludeStayOrigin) {
-                    const firstItemIsHotel = dayItems.length > 0 && String(dayItems[0].place_id) === String(hotelPlace.id);
-                    if (!firstItemIsHotel) {
-                      const originLabel = isFirstDay
-                        ? `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
-                        : (stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`);
+                  // 1. Depart Stay / Check-in
+                  if (isFirstDay) {
+                    if (hotelPlace && Boolean(driveToStayFirst)) {
                       dayElements.push({
                         place: hotelPlace,
                         isFixedEndpoint: true,
                         endpointType: 'stay_origin',
-                        label: originLabel
+                        label: `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+                      });
+                    }
+                  } else if (isLocationOrStayChanged) {
+                    // Transition Day: Depart from previous hotel/stay if available
+                    if (prevHotelPlace) {
+                      dayElements.push({
+                        place: prevHotelPlace,
+                        isFixedEndpoint: true,
+                        endpointType: 'stay_origin',
+                        label: `🏨 Depart: ${prevHotelPlace.name}`
+                      });
+                    }
+                    // If Transit to Stay First is checked, drop bags / check-in at new hotel first
+                    if (hotelPlace && Boolean(driveToStayFirst)) {
+                      dayElements.push({
+                        place: hotelPlace,
+                        isFixedEndpoint: true,
+                        endpointType: 'stay_checkin',
+                        label: `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+                      });
+                    }
+                  } else if (hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+                    // Regular Day (same hotel/location)
+                    const firstItemIsHotel = dayItems.length > 0 && String(dayItems[0].place_id) === String(hotelPlace.id);
+                    if (!firstItemIsHotel) {
+                      dayElements.push({
+                        place: hotelPlace,
+                        isFixedEndpoint: true,
+                        endpointType: 'stay_origin',
+                        label: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
                       });
                     }
                   }
 
-                  // 3. Sightseeing Stops
+                  // 2. Sightseeing Stops
                   dayItems.forEach(item => {
                     const stopPlace = combinedPlaces.find(p => String(p.id) === String(item.place_id));
                     if (stopPlace) {
@@ -5166,23 +5406,8 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     }
                   });
 
-                  // 4. Closing Endpoints (Go Home or Return to Stay)
-                  if (isLastDay && lastDayGoHome && stopAddrObj) {
-                    dayElements.push({
-                      place: {
-                        ...stopAddrObj,
-                        id: `home_stop_${stopAddrObj.id}`,
-                        name: `🏠 Stop: ${stopAddrObj.label}`,
-                        category: 'Home Address',
-                        latitude: (stopAddrObj.latitude !== null && stopAddrObj.latitude !== undefined && stopAddrObj.latitude !== '' && !isNaN(Number(stopAddrObj.latitude))) ? parseFloat(stopAddrObj.latitude) : null,
-                        longitude: (stopAddrObj.longitude !== null && stopAddrObj.longitude !== undefined && stopAddrObj.longitude !== '' && !isNaN(Number(stopAddrObj.longitude))) ? parseFloat(stopAddrObj.longitude) : null,
-                        is_home: true
-                      },
-                      isFixedEndpoint: true,
-                      endpointType: 'stop_home',
-                      label: `🏠 Last Day (${stopAddrObj.label})`
-                    });
-                  } else if (hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
+                  // 3. Closing Endpoints (Stay overnight / Next stay for intermediate days)
+                  if (!isLastDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
                     const lastItem = dayItems[dayItems.length - 1];
                     const lastItemIsHotel = lastItem && String(lastItem.place_id) === String(hotelPlace.id);
                     if (!lastItemIsHotel) {
@@ -5383,6 +5608,47 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                         </span>
                       </h4>
 
+                      {/* Subtle 1-Line Outbound Transit Tag for Day 1 */}
+                      {isFirstDay && (
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '4px 8px',
+                          marginBottom: '8px',
+                          background: 'rgba(59, 130, 246, 0.08)',
+                          border: '1px solid rgba(59, 130, 246, 0.25)',
+                          borderRadius: '4px',
+                          fontSize: '0.73rem'
+                        }}>
+                          <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span>{outboundJourney.mode === 'flight' ? '🛫' : outboundJourney.mode === 'train' ? '🚆' : outboundJourney.mode === 'bus' ? '🚌' : '🚗'}</span>
+                            <span style={{ fontWeight: 500 }}>
+                              {formatJourneyTagText(outboundJourney, true, startAddrObj, null)}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTransitModalTab('outbound');
+                              setShowTransitModal(true);
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--accent-primary)',
+                              fontSize: '0.72rem',
+                              cursor: 'pointer',
+                              padding: '2px 4px',
+                              fontWeight: 500,
+                              flexShrink: 0
+                            }}
+                          >
+                            ✏️ Edit
+                          </button>
+                        </div>
+                      )}
+
                       {/* Compact Day Configuration Toolbar */}
                       <div style={{
                         background: 'rgba(255,255,255,0.02)',
@@ -5472,68 +5738,6 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                               </select>
                             </div>
                           </div>
-
-                          {/* 3. Day 1: Journey Start row */}
-                          {isFirstDay && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <label style={{ fontSize: '0.65rem', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-muted)', margin: 0 }}>🏠 Journey Start</label>
-                              <div style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '2px 6px', height: '30px', display: 'flex', alignItems: 'center' }}>
-                                <select
-                                  className="form-control"
-                                  value={(() => {
-                                    const matched = findUserAddress(selectedTrip.start_address_id);
-                                    return matched ? matched.id : (selectedTrip.start_address_id || '');
-                                  })()}
-                                  onChange={async (e) => {
-                                    const val = e.target.value;
-                                    const curNotes = safeParseNotes(selectedTrip.notes);
-                                    curNotes.dayEndpoints = curNotes.dayEndpoints || {};
-                                    curNotes.dayEndpoints[day.date] = { ...(curNotes.dayEndpoints[day.date] || {}), startFromHome: Boolean(val) };
-                                    const updated = { ...selectedTrip, start_address_id: val || null, notes: JSON.stringify(curNotes) };
-                                    await queueSyncAction('trips', 'update', updated);
-                                    setSelectedTrip(updated);
-                                  }}
-                                  style={{ width: '100%', height: '24px', fontSize: '0.75rem', padding: '0', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0, outline: 'none' }}
-                                >
-                                  <option value="" style={{ background: 'var(--bg-surface)' }}>-- Start at First Stop --</option>
-                                  {userAddresses.map(addr => (
-                                    <option key={addr.id} value={addr.id} style={{ background: 'var(--bg-surface)' }}>🏠 {addr.label} {addr.address ? `(${addr.address})` : ''}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Final Day: Journey End / Go Home row */}
-                          {isLastDay && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <label style={{ fontSize: '0.65rem', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-muted)', margin: 0 }}>🏠 Journey End</label>
-                              <div style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '2px 6px', height: '30px', display: 'flex', alignItems: 'center' }}>
-                                <select
-                                  className="form-control"
-                                  value={(() => {
-                                    const matched = findUserAddress(selectedTrip.stop_address_id);
-                                    return matched ? matched.id : (selectedTrip.stop_address_id || '');
-                                  })()}
-                                  onChange={async (e) => {
-                                    const val = e.target.value;
-                                    const curNotes = safeParseNotes(selectedTrip.notes);
-                                    curNotes.dayEndpoints = curNotes.dayEndpoints || {};
-                                    curNotes.dayEndpoints[day.date] = { ...(curNotes.dayEndpoints[day.date] || {}), lastDayGoHome: Boolean(val) };
-                                    const updated = { ...selectedTrip, stop_address_id: val || null, notes: JSON.stringify(curNotes) };
-                                    await queueSyncAction('trips', 'update', updated);
-                                    setSelectedTrip(updated);
-                                  }}
-                                  style={{ width: '100%', height: '24px', fontSize: '0.75rem', padding: '0', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0, outline: 'none' }}
-                                >
-                                  <option value="" style={{ background: 'var(--bg-surface)' }}>-- End at Last Stop --</option>
-                                  {userAddresses.map(addr => (
-                                    <option key={addr.id} value={addr.id} style={{ background: 'var(--bg-surface)' }}>🏠 {addr.label} {addr.address ? `(${addr.address})` : ''}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                          )}
                         </div>
 
                         {/* Stay Behavior Pill Buttons & Drive-to-Stay Toggle Row */}
@@ -5578,7 +5782,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                               </div>
                             )}
 
-                            {isFirstDay && Boolean(startAddrObj) && Boolean(hotelPlace) && (
+                            {(isFirstDay || isLocationOrStayChanged) && Boolean(hotelPlace) && (
                               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', cursor: 'pointer', margin: 0, color: 'var(--text-secondary)', userSelect: 'none' }}>
                                 <input 
                                   type="checkbox" 
@@ -5594,7 +5798,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                   }}
                                   style={{ width: '13px', height: '13px', accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
                                 />
-                                <span>🏨 Drive to stay first</span>
+                                <span>{(isFirstDay ? isMultiModalOutbound : true) ? '🏨 Transit to stay first' : '🏨 Drive to stay first'}</span>
                               </label>
                             )}
                           </div>
@@ -5608,8 +5812,16 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                             <React.Fragment key={`${place.id}-${idx}`}>
                               {el.isFixedEndpoint ? (
                                 <div style={{
-                                  background: el.endpointType?.includes('home') ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' : 'rgba(139, 92, 246, 0.08)',
-                                  border: el.endpointType?.includes('home') ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' : `1px solid ${color}`,
+                                  background: el.endpointType?.includes('home') 
+                                    ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' 
+                                    : el.endpointType === 'transit_hub'
+                                    ? 'rgba(59, 130, 246, 0.08)'
+                                    : 'rgba(139, 92, 246, 0.08)',
+                                  border: el.endpointType?.includes('home') 
+                                    ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' 
+                                    : el.endpointType === 'transit_hub'
+                                    ? '1px solid rgba(59, 130, 246, 0.35)'
+                                    : `1px solid ${color}`,
                                   padding: '8px 12px',
                                   borderRadius: '4px',
                                   display: 'flex',
@@ -5619,10 +5831,24 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                   fontWeight: 500
                                 }}>
                                   <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                    <span style={{ color: el.endpointType?.includes('home') ? 'var(--endpoint-color, #4ade80)' : 'inherit', fontWeight: 600 }}>{el.label || place.name}</span>
+                                    <span style={{ 
+                                      color: el.endpointType?.includes('home') 
+                                        ? 'var(--endpoint-color, #4ade80)' 
+                                        : el.endpointType === 'transit_hub'
+                                        ? '#60a5fa'
+                                        : 'inherit', 
+                                      fontWeight: 600 
+                                    }}>
+                                      {el.label || place.name}
+                                    </span>
                                     {place.category && (
                                       <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
                                         ({place.category})
+                                      </span>
+                                    )}
+                                    {el.details && (
+                                      <span style={{ fontSize: '0.7rem', color: '#93c5fd', background: 'rgba(59, 130, 246, 0.15)', padding: '1px 6px', borderRadius: '4px', fontWeight: 500 }}>
+                                        {el.details}
                                       </span>
                                     )}
                                   </span>
@@ -5862,6 +6088,47 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                           </div>
                         )}
                       </div>
+
+                      {/* Subtle 1-Line Return Transit Tag for Last Day */}
+                      {isLastDay && (
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '4px 8px',
+                          marginTop: '8px',
+                          background: 'rgba(168, 85, 247, 0.08)',
+                          border: '1px solid rgba(168, 85, 247, 0.25)',
+                          borderRadius: '4px',
+                          fontSize: '0.73rem'
+                        }}>
+                          <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span>{returnJourney.mode === 'flight' ? '🛬' : returnJourney.mode === 'train' ? '🚆' : returnJourney.mode === 'bus' ? '🚌' : '🚗'}</span>
+                            <span style={{ fontWeight: 500 }}>
+                              {formatJourneyTagText(returnJourney, false, null, stopAddrObj)}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTransitModalTab('return');
+                              setShowTransitModal(true);
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--accent-primary)',
+                              fontSize: '0.72rem',
+                              cursor: 'pointer',
+                              padding: '2px 4px',
+                              fontWeight: 500,
+                              flexShrink: 0
+                            }}
+                          >
+                            ✏️ Edit
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -6025,7 +6292,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                 />
               </div>
 
-              <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ flexGrow: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', isolation: 'isolate' }}>
                 {locations
                   .filter(l => stopFilterLocationIds.includes(l.id))
                   .map(loc => {
@@ -6975,8 +7242,10 @@ const ItineraryDay = ({
   dayColor,
   userAddresses = [],
   locations = [],
+  photos = [],
   isFirstDay = false,
   isLastDay = false,
+  prevDay = null,
   nextDay = null
 }) => {
   const combinedPlaces = useMemo(() => {
@@ -7009,59 +7278,80 @@ const ItineraryDay = ({
   const dayEndpoints = notesObj.dayEndpoints || {};
   const dayStayBehaviors = notesObj.dayStayBehaviors || {};
   const segmentTransport = notesObj.segmentTransport || {};
+  const outboundJourney = notesObj.outboundJourney || { mode: 'drive' };
+  const returnJourney = notesObj.returnJourney || { mode: 'drive' };
 
   const startFromHome = dayEndpoints[date]?.startFromHome ?? (isFirstDay && Boolean(selectedTrip?.start_address_id));
   const lastDayGoHome = dayEndpoints[date]?.lastDayGoHome ?? (isLastDay && Boolean(selectedTrip?.stop_address_id));
   const driveToStayFirst = dayEndpoints[date]?.driveToStayFirst ?? false;
   const stayBehavior = dayStayBehaviors[date] || 'stay_night';
+  const isMultiModalOutbound = isFirstDay && outboundJourney.mode && outboundJourney.mode !== 'drive';
+  const isMultiModalReturn = isLastDay && returnJourney.mode && returnJourney.mode !== 'drive';
 
   const hotelPlaceId = hotelsObj[date];
   const hotelPlace = hotelPlaceId ? combinedPlaces.find(p => String(p.id) === String(hotelPlaceId)) : null;
   const startAddrObj = (isFirstDay && selectedTrip?.start_address_id && startFromHome) ? findUserAddress(selectedTrip.start_address_id) : null;
   const stopAddrObj = (isLastDay && selectedTrip?.stop_address_id && lastDayGoHome) ? findUserAddress(selectedTrip.stop_address_id) : null;
 
+  // Inter-day location & stay transition detection
+  const prevHotelId = prevDay ? (hotelsObj[prevDay.date] || null) : null;
+  const prevHotelPlace = prevHotelId ? combinedPlaces.find(p => String(p.id) === String(prevHotelId)) : null;
+  const prevLocId = prevDay ? (notesObj.dayLocations ? notesObj.dayLocations[prevDay.date] : null) : null;
+  const curLocId = notesObj.dayLocations ? notesObj.dayLocations[date] : null;
+
+  const isLocationOrStayChanged = Boolean(prevDay) && (
+    (curLocId && prevLocId && String(curLocId) !== String(prevLocId)) ||
+    (hotelPlaceId && prevHotelId && String(hotelPlaceId) !== String(prevHotelId)) ||
+    (!prevHotelId && Boolean(hotelPlaceId) && Boolean(prevLocId || curLocId))
+  );
+
   // Assemble complete day elements in chronological flow
   const dayElements = useMemo(() => {
     const elems = [];
 
-    // 1. Start from Home (Day 1)
-    if (isFirstDay && startAddrObj) {
-      elems.push({
-        place: {
-          ...startAddrObj,
-          id: `home_start_${startAddrObj.id}`,
-          name: `🏠 Start: ${startAddrObj.label}`,
-          category: 'Home Address',
-          latitude: (startAddrObj.latitude !== null && startAddrObj.latitude !== undefined && startAddrObj.latitude !== '' && !isNaN(Number(startAddrObj.latitude))) ? parseFloat(startAddrObj.latitude) : null,
-          longitude: (startAddrObj.longitude !== null && startAddrObj.longitude !== undefined && startAddrObj.longitude !== '' && !isNaN(Number(startAddrObj.longitude))) ? parseFloat(startAddrObj.longitude) : null,
-          is_home: true
-        },
-        isFixedEndpoint: true,
-        endpointType: 'start_home',
-        label: `🏠 Journey Start (${startAddrObj.label})`
-      });
-    }
-
-    // 2. Depart Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked)
-    const shouldIncludeStayOrigin = (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) ||
-      (isFirstDay && Boolean(startAddrObj) && hotelPlace && driveToStayFirst);
-
-    if (shouldIncludeStayOrigin) {
-      const firstItemIsHotel = items.length > 0 && items[0].place_id === hotelPlace.id;
-      if (!firstItemIsHotel) {
-        const originLabel = isFirstDay
-          ? `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
-          : (stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`);
+    // 1. Depart Stay / Check-in
+    if (isFirstDay) {
+      if (hotelPlace && Boolean(driveToStayFirst)) {
         elems.push({
           place: hotelPlace,
           isFixedEndpoint: true,
           endpointType: 'stay_origin',
-          label: originLabel
+          label: `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+        });
+      }
+    } else if (isLocationOrStayChanged) {
+      // Transition Day: Depart from previous hotel/stay if available
+      if (prevHotelPlace) {
+        elems.push({
+          place: prevHotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'stay_origin',
+          label: `🏨 Depart: ${prevHotelPlace.name}`
+        });
+      }
+      // If Transit to Stay First is checked, drop bags / check-in at new hotel first
+      if (hotelPlace && Boolean(driveToStayFirst)) {
+        elems.push({
+          place: hotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'stay_checkin',
+          label: `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+        });
+      }
+    } else if (hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+      // Regular Day (same hotel/location)
+      const firstItemIsHotel = items.length > 0 && String(items[0].place_id) === String(hotelPlace.id);
+      if (!firstItemIsHotel) {
+        elems.push({
+          place: hotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'stay_origin',
+          label: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
         });
       }
     }
 
-    // 3. Sightseeing Stops
+    // 2. Sightseeing Stops
     items.forEach(item => {
       const stopPlace = combinedPlaces.find(p => p.id === item.place_id);
       if (stopPlace) {
@@ -7069,23 +7359,8 @@ const ItineraryDay = ({
       }
     });
 
-    // 4. Closing Endpoints (Go Home or Return to Stay)
-    if (isLastDay && stopAddrObj) {
-      elems.push({
-        place: {
-          ...stopAddrObj,
-          id: `home_stop_${stopAddrObj.id}`,
-          name: `🏠 Stop: ${stopAddrObj.label}`,
-          category: 'Home Address',
-          latitude: (stopAddrObj.latitude !== null && stopAddrObj.latitude !== undefined && stopAddrObj.latitude !== '' && !isNaN(Number(stopAddrObj.latitude))) ? parseFloat(stopAddrObj.latitude) : null,
-          longitude: (stopAddrObj.longitude !== null && stopAddrObj.longitude !== undefined && stopAddrObj.longitude !== '' && !isNaN(Number(stopAddrObj.longitude))) ? parseFloat(stopAddrObj.longitude) : null,
-          is_home: true
-        },
-        isFixedEndpoint: true,
-        endpointType: 'stop_home',
-        label: `🏠 Last Day (${stopAddrObj.label})`
-      });
-    } else if (hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
+    // 3. Closing Endpoints (Stay overnight / Next stay for intermediate days)
+    if (!isLastDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
       const lastItem = items[items.length - 1];
       const lastItemIsHotel = lastItem && lastItem.place_id === hotelPlace.id;
       if (!lastItemIsHotel) {
@@ -7126,7 +7401,7 @@ const ItineraryDay = ({
     }
 
     return elems;
-  }, [isFirstDay, isLastDay, startAddrObj, stopAddrObj, hotelPlace, stayBehavior, items, combinedPlaces, nextDay, hotelsObj, notesObj, locations]);
+  }, [isFirstDay, isLastDay, isLocationOrStayChanged, prevHotelPlace, driveToStayFirst, hotelPlace, stayBehavior, items, combinedPlaces, nextDay, hotelsObj, notesObj, locations]);
 
   // Compute segment distances
   const dayDistancesList = useMemo(() => {
@@ -7209,33 +7484,93 @@ const ItineraryDay = ({
   const assignedDayLocName = (locations || []).find(l => l.id === assignedDayLocId)?.name || '';
 
   return (
-    <div style={{ marginBottom: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '6px', marginBottom: '8px' }}>
-        <h4 style={{ margin: 0, color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', flexWrap: 'wrap', gap: '8px' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            🗓️ {date} 
-            {assignedDayLocName && (
-              <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', background: 'rgba(139, 92, 246, 0.15)', padding: '2px 8px', borderRadius: '4px', fontWeight: '500' }}>
-                📍 {assignedDayLocName}
-              </span>
-            )}
-            {stayLocation && (
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'normal' }}>
-                🏨 Stay: {stayLocation}
-              </span>
-            )}
+    <div 
+      className="itinerary-day-card"
+      style={{ 
+        marginBottom: '20px',
+        background: `linear-gradient(135deg, ${dayColor}0f 0%, var(--bg-surface-elevated) 100%)`,
+        border: '1px solid var(--border-glass)',
+        borderLeft: `4px solid ${dayColor}`,
+        borderRadius: 'var(--radius-md)',
+        padding: '18px 20px',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
+        pageBreakInside: 'avoid',
+        breakInside: 'avoid'
+      }}
+    >
+      {/* Day Header Banner */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <span 
+            className="itinerary-day-badge"
+            style={{ 
+              background: dayColor, 
+              color: '#fff', 
+              padding: '5px 12px', 
+              borderRadius: '6px', 
+              fontWeight: 'bold', 
+              fontSize: '0.85rem', 
+              display: 'inline-flex', 
+              alignItems: 'center', 
+              gap: '6px', 
+              boxShadow: `0 2px 8px ${dayColor}40`,
+              letterSpacing: '0.02em'
+            }}
+          >
+            🗓️ {label || date}
           </span>
-          {dayTotalDistance > 0 && (
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.04)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'normal' }}>
-              Total: {dayTotalDistance} km {dayTotalDuration > 0 ? `(${formatDuration(dayTotalDuration)})` : ''}
+          {assignedDayLocName && (
+            <span style={{ 
+              fontSize: '0.8rem', 
+              color: dayColor, 
+              background: `${dayColor}18`, 
+              border: `1px solid ${dayColor}35`, 
+              padding: '4px 10px', 
+              borderRadius: '6px', 
+              fontWeight: '600',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}>
+              📍 {assignedDayLocName}
             </span>
           )}
-        </h4>
+          {stayLocation && (
+            <span style={{ 
+              fontSize: '0.8rem', 
+              color: 'var(--text-secondary)', 
+              background: 'rgba(255,255,255,0.06)', 
+              border: '1px solid var(--border-glass)', 
+              padding: '4px 10px', 
+              borderRadius: '6px', 
+              fontWeight: 'normal',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}>
+              🏨 Stay: {stayLocation}
+            </span>
+          )}
+        </div>
+        
+        {dayTotalDistance > 0 && (
+          <span style={{ 
+            fontSize: '0.78rem', 
+            color: 'var(--text-secondary)', 
+            background: 'rgba(255,255,255,0.05)', 
+            border: '1px solid var(--border-glass)', 
+            padding: '4px 10px', 
+            borderRadius: '6px', 
+            fontWeight: '500' 
+          }}>
+            {dayElements.filter(e => !e.isFixedEndpoint).length} {dayElements.filter(e => !e.isFixedEndpoint).length === 1 ? 'stop' : 'stops'} • {dayTotalDistance} km {dayTotalDuration > 0 ? `(${formatDuration(dayTotalDuration)})` : ''}
+          </span>
+        )}
       </div>
 
       {/* Display reservations directly below the date */}
       {dayReservations.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
           {dayReservations.map(r => {
             let fileExt = '';
             if (r.file_path) {
@@ -7281,11 +7616,25 @@ const ItineraryDay = ({
           })}
         </div>
       )}
+
+      {/* Boarding Pass / Outbound Transit Card for Day 1 */}
+      {isFirstDay && selectedTrip && (
+        <div style={{ marginBottom: '14px' }}>
+          <JourneyTransitBanner
+            trip={selectedTrip}
+            type="outbound"
+            title="Day 1 Outbound Journey"
+            userAddresses={userAddresses}
+            firstDayDate={date}
+            firstDayStayName={stayLocation}
+          />
+        </div>
+      )}
       
       {dayElements.length === 0 ? (
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '8px 0' }}>No stops planned for this day.</p>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '8px 0', margin: 0 }}>No stops planned for this day.</p>
       ) : (
-        <div className="timeline">
+        <div className="timeline" style={{ position: 'relative', paddingLeft: '22px', marginTop: '14px', borderLeft: `2px solid ${dayColor}40`, marginLeft: '6px' }}>
           {dayElements.map((el, idx) => {
             const place = el.place;
             const dist = dayDistancesList[idx - 1];
@@ -7296,7 +7645,7 @@ const ItineraryDay = ({
             const placeNum = placeIdx !== -1 ? placeIdx + 1 : (idx + 1);
 
             return (
-              <div key={`${place?.id || 'elem'}-${idx}`} className="timeline-item">
+              <div key={`${place?.id || 'elem'}-${idx}`} className="timeline-item" style={{ paddingBottom: idx === dayElements.length - 1 ? '4px' : '18px' }}>
                 {idx > 0 && dist !== undefined && (() => {
                   const isUsingGmaps = typeof window !== 'undefined' && 
                     localStorage.getItem('google_maps_api_key') && 
@@ -7307,7 +7656,7 @@ const ItineraryDay = ({
                   const modeIcon = mode === 'walk' ? '🚶' : (mode === 'flight' ? '✈️' : (mode === 'train' ? '🚆' : (mode === 'ferry' ? '⛴️' : '🚗')));
 
                   return (
-                    <div className="timeline-distance" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <div className="timeline-distance" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: dayColor || 'var(--accent-secondary)' }}>
                       <span>{modeIcon}</span>
                       <img 
                         src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
@@ -7324,56 +7673,118 @@ const ItineraryDay = ({
                 
                 {el.isFixedEndpoint ? (
                   <div style={{
-                    background: isHomePlace ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' : 'rgba(139, 92, 246, 0.08)',
-                    border: isHomePlace ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' : `1px solid ${dayColor || 'var(--accent-primary)'}`,
-                    padding: '8px 12px',
-                    borderRadius: '4px',
+                    background: isHomePlace ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' : `${dayColor}12`,
+                    border: isHomePlace ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' : `1px solid ${dayColor}55`,
+                    padding: '10px 14px',
+                    borderRadius: '8px',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'space-between',
-                    fontSize: '0.8rem',
-                    color: isHomePlace ? 'var(--endpoint-color, #15803d)' : 'var(--accent-secondary)',
-                    fontWeight: 500,
-                    margin: '4px 0'
+                    gap: '12px',
+                    fontSize: '0.85rem',
+                    color: isHomePlace ? 'var(--endpoint-color, #15803d)' : dayColor,
+                    fontWeight: 600,
+                    margin: '6px 0'
                   }}>
+                    {(() => {
+                      const endpointPhotoUrl = (!isHomePlace && place?.id) ? getFeaturedPhotoUrl(place.id, photos, locations, places) : null;
+                      if (!endpointPhotoUrl) return null;
+                      return (
+                        <img 
+                          src={endpointPhotoUrl} 
+                          alt={place?.name || ''} 
+                          style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border-glass)', boxShadow: '0 2px 6px rgba(0,0,0,0.18)' }} 
+                          loading="lazy" 
+                        />
+                      );
+                    })()}
                     <span>{el.label}</span>
                   </div>
                 ) : (
-                  <div className="timeline-card" style={isHomePlace ? { borderLeft: '3px solid #4ade80' } : {}}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{
-                          width: '22px',
-                          height: '22px',
-                          borderRadius: '50%',
-                          background: isHomePlace ? '#4ade80' : (dayColor || 'var(--accent-primary)'),
-                          color: isHomePlace ? '#000' : '#fff',
-                          fontSize: '0.75rem',
-                          fontWeight: 'bold',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0
-                        }}>
-                          {isHomePlace ? '🏠' : placeNum}
-                        </span>
-                        <b style={{ color: 'var(--text-primary)' }}>
-                          {place ? place.name : 'Unknown Stop'}
-                        </b>
-                      </div>
-                      {!tripModeActive && el.itemObj && (
-                        <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(el.itemObj.id)}>
-                          <X size={12} />
-                        </button>
-                      )}
-                    </div>
-                    {place && <span style={{ fontSize: '0.75rem', color: isHomePlace ? '#4ade80' : 'var(--text-secondary)' }}>{place.category}</span>}
-                    {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{place.notes}</p>}
+                  <div className="timeline-card" style={{
+                    background: 'var(--bg-surface-elevated)',
+                    border: '1px solid var(--border-glass)',
+                    borderLeft: isHomePlace ? '4px solid #4ade80' : `4px solid ${dayColor}`,
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '12px 14px',
+                    marginTop: '6px'
+                  }}>
+                    {(() => {
+                      const stopPhotoUrl = (!isHomePlace && place?.id) ? getFeaturedPhotoUrl(place.id, photos, locations, places) : null;
+                      return (
+                        <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+                          {stopPhotoUrl && (
+                            <img 
+                              src={stopPhotoUrl} 
+                              alt={place ? place.name : 'Place thumbnail'} 
+                              style={{
+                                width: '64px',
+                                height: '64px',
+                                borderRadius: '8px',
+                                objectFit: 'cover',
+                                flexShrink: 0,
+                                border: '1px solid var(--border-glass)',
+                                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
+                              }}
+                              loading="lazy"
+                            />
+                          )}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                <span style={{
+                                  width: '22px',
+                                  height: '22px',
+                                  borderRadius: '50%',
+                                  background: isHomePlace ? '#4ade80' : (dayColor || 'var(--accent-primary)'),
+                                  color: isHomePlace ? '#000' : '#fff',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 'bold',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0
+                                }}>
+                                  {isHomePlace ? '🏠' : placeNum}
+                                </span>
+                                <b style={{ color: 'var(--text-primary)', fontSize: '0.95rem' }}>
+                                  {place ? place.name : 'Unknown Stop'}
+                                </b>
+                              </div>
+                              {!tripModeActive && el.itemObj && (
+                                <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(el.itemObj.id)}>
+                                  <X size={12} />
+                                </button>
+                              )}
+                            </div>
+                            {place && (
+                              <div style={{ marginTop: '3px' }}>
+                                <span style={{ fontSize: '0.75rem', color: isHomePlace ? '#4ade80' : 'var(--text-secondary)' }}>{place.category}</span>
+                              </div>
+                            )}
+                            {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>{place.notes}</p>}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Boarding Pass / Return Transit Card for Final Day */}
+      {isLastDay && selectedTrip && (
+        <div style={{ marginTop: '14px' }}>
+          <JourneyTransitBanner
+            trip={selectedTrip}
+            type="return"
+            title={selectedTrip.length > 1 ? `Day ${selectedTrip.length} Return Journey` : "Return Journey"}
+            userAddresses={userAddresses}
+            lastDayDate={date}
+            lastDayStayName={stayLocation}
+          />
         </div>
       )}
     </div>

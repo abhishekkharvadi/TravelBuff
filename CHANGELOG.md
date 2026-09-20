@@ -2,6 +2,14 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.5.1] - 2026-09-20
+
+### 🚀 Enhancements
+- **Photo Thumbnails in Chronological Daily Itinerary & Trip Mode**:
+  - Added rich photo thumbnails for places and destination locations across the Chronological Daily Itinerary and Trip Mode timeline.
+  - Sourced automatically via cascade priority (explicitly featured photo, local file data, entity photo, or child spot fallback).
+  - Preserves compact drag-and-drop handles and full offline capabilities in PWA mode.
+
 ## [v7.4.2] - 2026-09-06
 
 ### 🚀 Enhancements & 🐛 Bug Fixes

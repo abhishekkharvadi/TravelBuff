@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { performSync } from '../sync.js';
 import { getDayColor } from '../utils/dayColors.js';
+import JourneyTransitBanner from './JourneyTransitBanner.jsx';
+import { getFeaturedPhotoUrl } from '../utils/photoResolver.js';
 
 const formatDuration = (mins) => {
   if (!mins || isNaN(mins) || mins <= 0) return '';
@@ -55,11 +57,12 @@ export default function TripMode({ token }) {
       reservations: await db.reservations.toArray(),
       tripNotes: await db.trip_notes.toArray(),
       people: await (db.people ? db.people.toArray() : Promise.resolve([])),
-      userAddresses: await (db.user_addresses ? db.user_addresses.toArray() : Promise.resolve([]))
+      userAddresses: await (db.user_addresses ? db.user_addresses.toArray() : Promise.resolve([])),
+      photos: await (db.entity_photos ? db.entity_photos.toArray() : Promise.resolve([]))
     };
-  }) || { trips: [], places: [], itineraries: [], expenses: [], rates: [], locations: [], reservations: [], tripNotes: [], people: [], userAddresses: [] };
+  }) || { trips: [], places: [], itineraries: [], expenses: [], rates: [], locations: [], reservations: [], tripNotes: [], people: [], userAddresses: [], photos: [] };
 
-  const { trips, places: rawPlaces = [], itineraries, expenses, rates, locations: rawLocations = [], reservations, tripNotes, people = [], userAddresses = [] } = syncData;
+  const { trips, places: rawPlaces = [], itineraries, expenses, rates, locations: rawLocations = [], reservations, tripNotes, people = [], userAddresses = [], photos = [] } = syncData;
 
   const locations = rawLocations.filter(l => Number(l.is_archived) !== 1);
   const places = rawPlaces.filter(p => Number(p.is_archived) !== 1);
@@ -829,48 +832,68 @@ export default function TripMode({ token }) {
   const assignedDayLocId = dayLocations[displayDayStr] || (activeDayObj ? dayLocations[activeDayObj.label] : null) || (activeDayObj ? dayLocations[`Day ${activeDayObj.dayNumber}`] : null) || '';
   const assignedDayLocName = (locations || []).find(l => String(l.id) === String(assignedDayLocId))?.name || '';
 
+  // Inter-day location & stay transition detection for Trip Mode
+  const prevDay = activeDayIndex > 0 ? itineraryDays[activeDayIndex - 1] : null;
+  const nextDay = activeDayIndex < itineraryDays.length - 1 ? itineraryDays[activeDayIndex + 1] : null;
+
+  const prevHotelId = prevDay ? (hotelsObj[prevDay.date] || (prevDay.label ? hotelsObj[prevDay.label] : null) || hotelsObj[`Day ${prevDay.dayNumber}`] || null) : null;
+  const prevHotelPlace = prevHotelId ? combinedPlaces.find(p => String(p.id) === String(prevHotelId)) : null;
+  const prevLocId = prevDay ? (dayLocations[prevDay.date] || (prevDay.label ? dayLocations[prevDay.label] : null) || dayLocations[`Day ${prevDay.dayNumber}`] || null) : null;
+  const curLocId = assignedDayLocId;
+
+  const isLocationOrStayChanged = Boolean(prevDay) && (
+    (curLocId && prevLocId && String(curLocId) !== String(prevLocId)) ||
+    (hotelPlaceId && prevHotelId && String(hotelPlaceId) !== String(prevHotelId)) ||
+    (!prevHotelId && Boolean(hotelPlaceId) && Boolean(prevLocId || curLocId))
+  );
+
   // Assemble complete day elements in chronological flow
   const dayElements = useMemo(() => {
     const elems = [];
 
-    // 1. Start from Home (Day 1)
-    if (isFirstDay && startAddrObj) {
-      elems.push({
-        place: {
-          ...startAddrObj,
-          id: `home_start_${startAddrObj.id}`,
-          name: `🏠 Start: ${startAddrObj.label}`,
-          category: 'Home Address',
-          latitude: (startAddrObj.latitude !== null && startAddrObj.latitude !== undefined && startAddrObj.latitude !== '' && !isNaN(Number(startAddrObj.latitude))) ? parseFloat(startAddrObj.latitude) : null,
-          longitude: (startAddrObj.longitude !== null && startAddrObj.longitude !== undefined && startAddrObj.longitude !== '' && !isNaN(Number(startAddrObj.longitude))) ? parseFloat(startAddrObj.longitude) : null,
-          is_home: true
-        },
-        isFixedEndpoint: true,
-        endpointType: 'start_home',
-        label: `🏠 Start from Home (${startAddrObj.label})`
-      });
-    }
-
-    // 2. Depart Stay (Day 2+ onwards for stay_night/checkout OR Day 1 when driveToStayFirst is checked)
-    const shouldIncludeStayOrigin = (!isFirstDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) ||
-      (isFirstDay && Boolean(startAddrObj) && hotelPlace && driveToStayFirst);
-
-    if (shouldIncludeStayOrigin) {
-      const firstItemIsHotel = activeDayStops.length > 0 && String(activeDayStops[0].place_id) === String(hotelPlace.id);
-      if (!firstItemIsHotel) {
-        const originLabel = isFirstDay
-          ? `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
-          : (stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`);
+    // 1. Depart Stay / Check-in
+    if (isFirstDay) {
+      if (hotelPlace && Boolean(driveToStayFirst)) {
         elems.push({
           place: hotelPlace,
           isFixedEndpoint: true,
           endpointType: 'stay_origin',
-          label: originLabel
+          label: `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+        });
+      }
+    } else if (isLocationOrStayChanged) {
+      // Transition Day: Depart from previous hotel/stay if available
+      if (prevHotelPlace) {
+        elems.push({
+          place: prevHotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'stay_origin',
+          label: `🏨 Depart: ${prevHotelPlace.name}`
+        });
+      }
+      // If Transit to Stay First is checked, drop bags / check-in at new hotel first
+      if (hotelPlace && Boolean(driveToStayFirst)) {
+        elems.push({
+          place: hotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'stay_checkin',
+          label: `🏨 Check-in / Bag Drop: ${hotelPlace.name}`
+        });
+      }
+    } else if (hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'checkout')) {
+      // Regular Day (same hotel/location)
+      const firstItemIsHotel = activeDayStops.length > 0 && String(activeDayStops[0].place_id) === String(hotelPlace.id);
+      if (!firstItemIsHotel) {
+        elems.push({
+          place: hotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'stay_origin',
+          label: stayBehavior === 'checkout' ? `🏨 Checkout: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
         });
       }
     }
 
-    // 3. Sightseeing Stops
+    // 2. Sightseeing Stops
     activeDayStops.forEach(item => {
       const stopPlace = combinedPlaces.find(p => String(p.id) === String(item.place_id)) || {
         id: item.place_id || item.id,
@@ -880,23 +903,8 @@ export default function TripMode({ token }) {
       elems.push({ place: stopPlace, itemObj: item, isHotel: false });
     });
 
-    // 4. Closing Endpoints (Go Home or Return to Stay)
-    if (isLastDay && stopAddrObj) {
-      elems.push({
-        place: {
-          ...stopAddrObj,
-          id: `home_stop_${stopAddrObj.id}`,
-          name: `🏠 Stop: ${stopAddrObj.label}`,
-          category: 'Home Address',
-          latitude: (stopAddrObj.latitude !== null && stopAddrObj.latitude !== undefined && stopAddrObj.latitude !== '' && !isNaN(Number(stopAddrObj.latitude))) ? parseFloat(stopAddrObj.latitude) : null,
-          longitude: (stopAddrObj.longitude !== null && stopAddrObj.longitude !== undefined && stopAddrObj.longitude !== '' && !isNaN(Number(stopAddrObj.longitude))) ? parseFloat(stopAddrObj.longitude) : null,
-          is_home: true
-        },
-        isFixedEndpoint: true,
-        endpointType: 'stop_home',
-        label: `🏠 Last Day (${stopAddrObj.label})`
-      });
-    } else if (hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
+    // 3. Closing Endpoints (Stay overnight / Next stay for intermediate days)
+    if (!isLastDay && hotelPlace && (stayBehavior === 'stay_night' || stayBehavior === 'late_checkin')) {
       const lastItem = activeDayStops[activeDayStops.length - 1];
       const lastItemIsHotel = lastItem && String(lastItem.place_id) === String(hotelPlace.id);
       if (!lastItemIsHotel) {
@@ -907,10 +915,37 @@ export default function TripMode({ token }) {
           label: stayBehavior === 'late_checkin' ? `🏨 Late Check-in: ${hotelPlace.name}` : `🏨 Stay: ${hotelPlace.name}`
         });
       }
+    } else if (stayBehavior === 'checkout' && !isLastDay && nextDay) {
+      const nextHotelId = hotelsObj[nextDay.date] || (nextDay.label ? hotelsObj[nextDay.label] : null) || hotelsObj[`Day ${nextDay.dayNumber}`];
+      const nextHotelPlace = nextHotelId ? combinedPlaces.find(p => String(p.id) === String(nextHotelId)) : null;
+      const nextLocId = dayLocations[nextDay.date] || (nextDay.label ? dayLocations[nextDay.label] : null) || dayLocations[`Day ${nextDay.dayNumber}`];
+      const nextLocObj = nextLocId ? (locations || []).find(l => String(l.id) === String(nextLocId)) : null;
+
+      if (nextHotelPlace) {
+        elems.push({
+          place: nextHotelPlace,
+          isFixedEndpoint: true,
+          endpointType: 'next_stay',
+          label: `🏨 Next Stay: ${nextHotelPlace.name}`
+        });
+      } else if (nextLocObj) {
+        elems.push({
+          place: {
+            ...nextLocObj,
+            id: `next_loc_${nextLocObj.id}`,
+            name: nextLocObj.name,
+            category: 'Location',
+            is_location: true
+          },
+          isFixedEndpoint: true,
+          endpointType: 'next_location',
+          label: `📍 Next Location: ${nextLocObj.name}`
+        });
+      }
     }
 
     return elems;
-  }, [isFirstDay, isLastDay, startAddrObj, stopAddrObj, hotelPlace, stayBehavior, activeDayStops, combinedPlaces]);
+  }, [isFirstDay, isLastDay, isLocationOrStayChanged, prevHotelPlace, driveToStayFirst, hotelPlace, stayBehavior, activeDayStops, combinedPlaces, nextDay, hotelsObj, dayLocations, locations]);
 
   // Compute segment distances across dayElements
   const distancesList = useMemo(() => {
@@ -1235,6 +1270,25 @@ export default function TripMode({ token }) {
               </div>
             )}
 
+            {/* Outbound Transit Card for Day 1 */}
+            {isFirstDay && currentTrip && (
+              <div style={{ marginBottom: '14px' }}>
+                <JourneyTransitBanner
+                  trip={currentTrip}
+                  type="outbound"
+                  title="Day 1 Outbound Journey"
+                  userAddresses={userAddresses}
+                  firstDayDate={activeDayObj?.date || displayDayStr}
+                  firstDayStayName={hotelPlace ? hotelPlace.name : 'Destination Stay'}
+                  onUpdateTrip={async (updatedTrip) => {
+                    await db.trips.update(updatedTrip.id, updatedTrip);
+                    await queueSyncAction('trips', 'update', updatedTrip);
+                    setActiveTrip(updatedTrip);
+                  }}
+                />
+              </div>
+            )}
+
             {dayElements.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '40px 20px', border: '1px dashed var(--border-glass)', borderRadius: 'var(--radius-md)', color: 'var(--text-secondary)' }}>
                 <MapPin size={24} style={{ marginBottom: '8px', color: 'var(--text-muted)' }} />
@@ -1300,8 +1354,8 @@ export default function TripMode({ token }) {
                         <div style={{
                           background: isHomePlace ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' : 'rgba(139, 92, 246, 0.08)',
                           border: isHomePlace ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' : `1px solid ${currentDayColor}`,
-                          padding: '10px 12px',
-                          borderRadius: '6px',
+                          padding: '10px 14px',
+                          borderRadius: '8px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
@@ -1309,7 +1363,21 @@ export default function TripMode({ token }) {
                           fontWeight: 600,
                           fontSize: '0.85rem'
                         }}>
-                          <span>{el.label}</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {(() => {
+                              const endpointPhotoUrl = (!isHomePlace && place?.id) ? getFeaturedPhotoUrl(place.id, photos, locations, places) : null;
+                              if (!endpointPhotoUrl) return null;
+                              return (
+                                <img 
+                                  src={endpointPhotoUrl} 
+                                  alt={place?.name || ''} 
+                                  style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border-glass)', boxShadow: '0 2px 6px rgba(0,0,0,0.18)' }} 
+                                  loading="lazy" 
+                                />
+                              );
+                            })()}
+                            <span>{el.label}</span>
+                          </span>
                           {place && (
                             <button 
                               onClick={handleNavigate}
@@ -1321,74 +1389,118 @@ export default function TripMode({ token }) {
                           )}
                         </div>
                       ) : (
-                        <div className="timeline-card" style={{ padding: '12px', background: 'var(--bg-surface-elevated)', border: isHomePlace ? '1px solid rgba(74, 222, 128, 0.4)' : (isVisited ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid var(--border-glass)') }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            {(() => {
-                              const placeIdx = sortedActivePlaces.findIndex(x => x.id === place?.id);
-                              const placeNum = placeIdx !== -1 ? placeIdx + 1 : (idx + 1);
-                              return (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <span style={{
-                                    width: '22px',
-                                    height: '22px',
-                                    borderRadius: '50%',
-                                    background: isHomePlace ? '#4ade80' : (isVisited ? 'var(--success)' : currentDayColor),
-                                    color: isHomePlace ? '#000' : '#fff',
-                                    fontSize: '0.75rem',
-                                    fontWeight: 'bold',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    flexShrink: 0
-                                  }}>
-                                    {isHomePlace ? '🏠' : placeNum}
-                                  </span>
-                                  <b style={{ fontSize: '0.95rem', textDecoration: isVisited ? 'line-through' : 'none', color: isVisited ? 'var(--text-muted)' : 'var(--text-primary)' }}>
-                                    {place ? place.name : 'Unknown Stop'}
-                                  </b>
+                        <div className="timeline-card" style={{ padding: '14px', background: 'var(--bg-surface-elevated)', border: isHomePlace ? '1px solid rgba(74, 222, 128, 0.4)' : (isVisited ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid var(--border-glass)') }}>
+                          {(() => {
+                            const placeIdx = sortedActivePlaces.findIndex(x => x.id === place?.id);
+                            const placeNum = placeIdx !== -1 ? placeIdx + 1 : (idx + 1);
+                            const stopPhotoUrl = (!isHomePlace && place?.id) ? getFeaturedPhotoUrl(place.id, photos, locations, places) : null;
+                            return (
+                              <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+                                {stopPhotoUrl && (
+                                  <img 
+                                    src={stopPhotoUrl} 
+                                    alt={place?.name || ''} 
+                                    style={{
+                                      width: '64px',
+                                      height: '64px',
+                                      borderRadius: '8px',
+                                      objectFit: 'cover',
+                                      flexShrink: 0,
+                                      border: '1px solid var(--border-glass)',
+                                      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
+                                    }}
+                                    loading="lazy"
+                                  />
+                                )}
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                      <span style={{
+                                        width: '22px',
+                                        height: '22px',
+                                        borderRadius: '50%',
+                                        background: isHomePlace ? '#4ade80' : (isVisited ? 'var(--success)' : currentDayColor),
+                                        color: isHomePlace ? '#000' : '#fff',
+                                        fontSize: '0.75rem',
+                                        fontWeight: 'bold',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        flexShrink: 0
+                                      }}>
+                                        {isHomePlace ? '🏠' : placeNum}
+                                      </span>
+                                      <b style={{ fontSize: '0.95rem', textDecoration: isVisited ? 'line-through' : 'none', color: isVisited ? 'var(--text-muted)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {place ? place.name : 'Unknown Stop'}
+                                      </b>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                                      {place && (
+                                        <button 
+                                          onClick={handleNavigate}
+                                          title={`Navigate using ${actualProvider === 'apple' ? 'Apple Maps' : 'Google Maps'}`}
+                                          style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '4px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+                                        >
+                                          <Navigation size={12} style={{ color: 'var(--accent-secondary)' }} />
+                                        </button>
+                                      )}
+                                      {place && !isVisited && (
+                                        <button 
+                                          onClick={async () => {
+                                            await queueSyncAction('places', 'update', { ...place, visited: 1 });
+                                            const parentLoc = locations.find(l => l.id === place.location_id);
+                                            if (parentLoc && parentLoc.visited !== 1) {
+                                              await queueSyncAction('locations', 'update', { ...parentLoc, visited: 1 });
+                                            }
+                                          }}
+                                          title="Mark Done"
+                                          style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '0 8px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', height: '24px' }}
+                                        >
+                                          <Check size={12} style={{ color: 'var(--success)' }} />
+                                          <span style={{ fontSize: '0.7rem', color: 'var(--text-primary)' }}>Done</span>
+                                        </button>
+                                      )}
+                                      {isVisited && (
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '2px', fontWeight: 'bold' }}>
+                                          <Check size={12} /> Visited
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {place && (
+                                    <div style={{ marginTop: '3px' }}>
+                                      <span style={{ fontSize: '0.75rem', color: isHomePlace ? '#4ade80' : 'var(--text-secondary)' }}>{place.category}</span>
+                                    </div>
+                                  )}
+                                  {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>{place.notes}</p>}
                                 </div>
-                              );
-                            })()}
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                              {place && (
-                                <button 
-                                  onClick={handleNavigate}
-                                  title={`Navigate using ${actualProvider === 'apple' ? 'Apple Maps' : 'Google Maps'}`}
-                                  style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '4px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
-                                >
-                                  <Navigation size={12} style={{ color: 'var(--accent-secondary)' }} />
-                                </button>
-                              )}
-                              {place && !isVisited && (
-                                <button 
-                                  onClick={async () => {
-                                    await queueSyncAction('places', 'update', { ...place, visited: 1 });
-                                    const parentLoc = locations.find(l => l.id === place.location_id);
-                                    if (parentLoc && parentLoc.visited !== 1) {
-                                      await queueSyncAction('locations', 'update', { ...parentLoc, visited: 1 });
-                                    }
-                                  }}
-                                  title="Mark Done"
-                                  style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '0 8px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', height: '24px' }}
-                                >
-                                  <Check size={12} style={{ color: 'var(--success)' }} />
-                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-primary)' }}>Done</span>
-                                </button>
-                              )}
-                              {isVisited && (
-                                <span style={{ fontSize: '0.75rem', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '2px', fontWeight: 'bold' }}>
-                                  <Check size={12} /> Visited
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          {place && <span style={{ fontSize: '0.7rem', color: 'var(--accent-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>{place.category}</span>}
-                          {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>{place.notes}</p>}
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Return Transit Card for Last Day */}
+            {isLastDay && currentTrip && (
+              <div style={{ marginTop: '14px' }}>
+                <JourneyTransitBanner
+                  trip={currentTrip}
+                  type="return"
+                  title={currentTrip.length > 1 ? `Day ${currentTrip.length} Return Journey` : "Return Journey"}
+                  userAddresses={userAddresses}
+                  lastDayDate={activeDayObj?.date || displayDayStr}
+                  lastDayStayName={hotelPlace ? hotelPlace.name : 'Destination Stay'}
+                  onUpdateTrip={async (updatedTrip) => {
+                    await db.trips.update(updatedTrip.id, updatedTrip);
+                    await queueSyncAction('trips', 'update', updatedTrip);
+                    setActiveTrip(updatedTrip);
+                  }}
+                />
               </div>
             )}
           </div>

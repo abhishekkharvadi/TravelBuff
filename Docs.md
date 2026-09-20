@@ -359,8 +359,8 @@ Trips can be flagged as "International". This enables multi-currency conversions
 
 ### Trip Mode vs Planning Mode
 Toggle modes in the header:
-* **Planning Mode**: Open workspace to edit descriptions, drag-and-drop days, query AI itineraries, and edit reservations.
-* **Trip Mode**: Clean, streamlined mobile-first layout that hides editing panels. Focuses solely on the active day's timeline, pending reservations, and quick-add expense forms.
+* **Planning Mode**: Open workspace to edit descriptions, drag-and-drop days, view stop photo thumbnails in the Chronological Daily Itinerary, query AI itineraries, and edit reservations.
+* **Trip Mode**: Clean, streamlined mobile-first layout that hides editing panels. Focuses solely on the active day's timeline with visual spot thumbnails, navigation shortcuts, pending reservations, and quick-add expense forms.
 
 ### Create Trip Itinerary (Manual vs AI)
 * **Manual**: Click **+ Add Stop** on any itinerary day list to search for sights in your locations.

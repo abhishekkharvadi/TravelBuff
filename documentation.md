@@ -503,10 +503,22 @@ When editing a trip, TravelBuff opens an interactive 3-column workspace:
 
 ---
 
+### Special Handling: Multi-Modal Journey Start (Flights, Rail, Buses, Ferries & Road Trips)
+
+* **2-Column Outbound & Return Banner**: Located at the top of your Itinerary Schedule, this banner lets you configure long-distance travel at the start (Day 1) and end (Last Day) of your trip without cluttering daily sightseeing stops:
+  - **✈️ Flight**: Search 5,600+ world commercial airports via the instant offline **Worldwide Airport Directory** (by 3-letter IATA code, city, or airport name). Specify airline, flight number, departure/arrival times, gate/terminal info, and ground connection modes (e.g. Taxi from Home $\rightarrow$ Airport, and Airport Express Train / Car Rental from Arrival Airport $\rightarrow$ Hotel).
+  - **🚆 Train / High-Speed Rail**: Specify departure/arrival railway stations, train lines/numbers, and local transit.
+  - **🚌 Long-Distance Bus / Coach**: Specify origin/destination coach terminals (FlixBus, Greyhound, etc.).
+  - **⛴️ Ferry / Boat**: Specify departure/arrival ferry wharves and cruise ports.
+  - **🚗 Drive / Road Trip**: Direct vehicle routing between your origin address and destination.
+* **Geodesic Flight Arc Mapping**: The interactive trip map automatically visualizes flights as curved geodesic flight arcs across the globe, and ground legs as turn-by-turn road routes.
+
+---
+
 ### Special Handling: Home Addresses & Hotel Anchors
 
-* **Home Address Handling**: Save your primary origin under **Settings** -> **Saved Home Addresses**. Starting a trip calculates exact driving distances and travel times from your home to your first stop.
-* **Hotel / Stay / Resort Anchors**: Places categorized as stays (hotels, resorts, Airbnb) can be selected as overnight lodging anchors for each day, automatically linking booking confirmations and establishing return points for the evening.
+* **Home Address Handling**: Save your primary origin under **Settings** -> **Saved Home Addresses**. Starting a trip calculates exact distances and travel times from your home to your first stop or departure airport/station.
+* **Hotel / Stay / Resort Anchors**: Places categorized as stays (hotels, resorts, Airbnb) can be selected as overnight lodging anchors for each day, automatically linking booking confirmations, baggage drop points, and evening returns.
 
 ---
 
