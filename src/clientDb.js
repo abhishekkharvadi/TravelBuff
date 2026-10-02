@@ -472,6 +472,7 @@ export async function populateLocalDb(token) {
           });
         }
 
+        const { pendingIds } = await getFreshPendingSets();
         await db.transaction('rw', [db.reservations], async () => {
           const localResRows = (await db.reservations.toArray()).filter(r => String(r.trip_id) === String(t.id));
           const serverResIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));

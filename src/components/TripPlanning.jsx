@@ -403,6 +403,7 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   // Local State
   const [selectedTrip, setSelectedTrip] = useState(null);
 
+
   useEffect(() => {
     if (selectedTripId && trips && trips.length > 0) {
       const matched = trips.find(t => String(t.id) === String(selectedTripId));
