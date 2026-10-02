@@ -928,6 +928,13 @@ body.light-theme .leaflet-control-attribution a {
   background: var(--error);
 }
 
+.itinerary-day-divider {
+  border: none;
+  border-top: 1px dashed var(--border-glass, rgba(255, 255, 255, 0.15));
+  margin: 24px 0;
+  opacity: 0.7;
+}
+
 /* Printing styling */
 @page {
   size: portrait;
@@ -944,6 +951,10 @@ body.light-theme .leaflet-control-attribution a {
     background: #ffffff !important;
     color: #000000 !important;
   }
+  html, body, #root, .app-shell, main, .trip-details-overlay, .itinerary-day-card, .itinerary-day-badge, .timeline-card, .timeline-stop-badge {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
   .app-nav, .app-header, .btn, .no-print, .no-print-force {
     display: none !important;
   }
@@ -951,9 +962,8 @@ body.light-theme .leaflet-control-attribution a {
     max-width: 100%;
     padding: 0;
   }
-  .card, .timeline-card, .itinerary-day-card {
+  .card {
     border: 1px solid #d1d5db !important;
-    border-left: 1px solid #d1d5db !important;
     box-shadow: none !important;
     background: #ffffff !important;
     color: #000000 !important;
@@ -961,40 +971,96 @@ body.light-theme .leaflet-control-attribution a {
     break-inside: avoid !important;
   }
   .itinerary-day-card {
-    border: 1px solid #d1d5db !important;
-    border-left: 1px solid #d1d5db !important;
-    margin-bottom: 20px !important;
-    padding: 16px !important;
+    border: 2px solid #cbd5e1 !important;
+    border-left: 6px solid var(--day-accent-color, #3b82f6) !important;
+    border-radius: 8px !important;
+    margin-bottom: 24px !important;
+    padding: 16px 18px !important;
     background: #ffffff !important;
-  }
-  .itinerary-day-badge {
-    background: #f1f5f9 !important;
     color: #0f172a !important;
-    border: 1px solid #cbd5e1 !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
     box-shadow: none !important;
   }
+  .print-page-break-day {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+  .itinerary-day-divider {
+    display: block !important;
+    border: none !important;
+    border-top: 2px dashed #94a3b8 !important;
+    margin: 24px 0 !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+  .itinerary-day-header {
+    border-bottom: 2px solid #e2e8f0 !important;
+    padding-bottom: 10px !important;
+    margin-bottom: 14px !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+  .itinerary-day-badge {
+    background: var(--day-accent-color, #0f172a) !important;
+    color: #ffffff !important;
+    border: 1px solid var(--day-accent-color, #0f172a) !important;
+    font-size: 0.95rem !important;
+    font-weight: 800 !important;
+    padding: 5px 12px !important;
+    border-radius: 6px !important;
+    box-shadow: none !important;
+  }
+  .itinerary-day-loc-badge, .itinerary-day-stay-badge {
+    background: #f1f5f9 !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #1e293b !important;
+    font-size: 0.8rem !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+    border-radius: 6px !important;
+  }
+  .itinerary-day-metrics {
+    background: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+    color: #475569 !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+    border-radius: 6px !important;
+  }
   .timeline {
-    border-left: none !important;
-    margin-left: 0 !important;
-    padding-left: 0 !important;
+    border-left: 2px dashed #cbd5e1 !important;
+    margin-left: 8px !important;
+    padding-left: 18px !important;
+    margin-top: 12px !important;
   }
   .timeline::before {
     display: none !important;
   }
   .timeline-item {
-    padding-bottom: 10px !important;
+    padding-bottom: 12px !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
   .timeline-item::before {
     display: none !important;
   }
   .timeline-card {
-    border: 1px solid #e5e7eb !important;
-    border-left: 1px solid #e5e7eb !important;
+    border: 1px solid #cbd5e1 !important;
+    border-left: 4px solid var(--day-accent-color, #64748b) !important;
     box-shadow: none !important;
-    background: #ffffff !important;
-    color: #000000 !important;
-    margin-top: 4px !important;
-    padding: 8px 12px !important;
+    background: #f8fafc !important;
+    color: #0f172a !important;
+    margin-top: 6px !important;
+    padding: 10px 14px !important;
+    border-radius: 6px !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .timeline-stop-badge {
+    background: var(--day-accent-color, #3b82f6) !important;
+    color: #ffffff !important;
   }
   h1, h2, h3, h4, h5, h6 {
     color: #000000;
@@ -1014,6 +1080,66 @@ body.light-theme .leaflet-control-attribution a {
     box-shadow: none !important;
     background: #ffffff !important;
     color: #000000 !important;
+  }
+  /* Expenses & Reservations Table Print Styling */
+  .expenses-table,
+  .reservations-table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+    margin-top: 12px !important;
+    font-size: 0.8rem !important;
+    box-sizing: border-box !important;
+  }
+  .expenses-table th,
+  .expenses-table td,
+  .reservations-table th,
+  .reservations-table td {
+    padding: 6px 8px !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    white-space: normal !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+    color: #0f172a !important;
+    vertical-align: top !important;
+  }
+  .expenses-table th:nth-child(1),
+  .expenses-table td:nth-child(1) {
+    width: 22% !important;
+  }
+  .expenses-table th:nth-child(2),
+  .expenses-table td:nth-child(2) {
+    width: 38% !important;
+  }
+  .expenses-table th:nth-child(3),
+  .expenses-table td:nth-child(3) {
+    width: 25% !important;
+  }
+  .expenses-table th:nth-child(4),
+  .expenses-table td:nth-child(4) {
+    width: 15% !important;
+  }
+  .reservations-table th:nth-child(1),
+  .reservations-table td:nth-child(1) {
+    width: 18% !important;
+  }
+  .reservations-table th:nth-child(2),
+  .reservations-table td:nth-child(2) {
+    width: 34% !important;
+  }
+  .reservations-table th:nth-child(3),
+  .reservations-table td:nth-child(3) {
+    width: 40% !important;
+  }
+  .reservations-table th:nth-child(4),
+  .reservations-table td:nth-child(4) {
+    width: 8% !important;
+  }
+  .expenses-table tr,
+  .reservations-table tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 }
 

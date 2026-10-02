@@ -359,15 +359,12 @@ export async function populateLocalDb(token) {
   };
 
   const tables = [
-    { url: '/api/locations', table: 'locations' },
+    { url: '/api/trips', table: 'trips' },
     { url: '/api/places', table: 'places' },
+    { url: '/api/locations', table: 'locations' },
     { url: '/api/tags', table: 'tags' },
     { url: '/api/entity-tags', table: 'entity_tags' },
-    { url: '/api/collections', table: 'collections' },
     { url: '/api/categories', table: 'custom_categories' },
-    { url: '/api/trips', table: 'trips' },
-    { url: '/api/ai_imports', table: 'ai_imports' },
-    { url: '/api/import/saved-markdowns', table: 'saved_markdowns' },
     { url: '/api/people', table: 'people' },
     { url: '/api/user-addresses', table: 'user_addresses' }
   ];
@@ -496,6 +493,7 @@ export async function populateLocalDb(token) {
       }
       if (expRes.ok) {
         const rows = await expRes.json();
+        const { pendingIds } = await getFreshPendingSets();
         await db.transaction('rw', [db.expenses], async () => {
           const localExpRows = (await db.expenses.toArray()).filter(e => String(e.trip_id) === String(t.id));
           const serverExpIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
@@ -517,6 +515,7 @@ export async function populateLocalDb(token) {
       }
       if (rateRes.ok) {
         const rows = await rateRes.json();
+        const { pendingIds } = await getFreshPendingSets();
         await db.transaction('rw', [db.trip_currency_rates], async () => {
           const localRateRows = (await db.trip_currency_rates.toArray()).filter(r => String(r.trip_id) === String(t.id));
           const serverRateIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
@@ -538,6 +537,7 @@ export async function populateLocalDb(token) {
       }
       if (notesRes.ok) {
         const rows = await notesRes.json();
+        const { pendingIds } = await getFreshPendingSets();
         await db.transaction('rw', [db.trip_notes], async () => {
           const localNoteRows = await db.trip_notes.where({ trip_id: t.id }).toArray();
           const serverNoteIds = new Set(rows.map(r => r.id ? r.id.toString() : null).filter(Boolean));
@@ -556,26 +556,6 @@ export async function populateLocalDb(token) {
       throw err;
     }
     console.warn('Unable to prefetch trip itineraries/expenses/notes (offline):', err);
-  }
-
-  // Pre-fetch all photos in bulk atomically
-  try {
-    const photoRes = await fetch('/api/photos', { headers });
-    checkResponseAuth(photoRes);
-    if (photoRes.status === 401 || photoRes.status === 403) {
-      throw new Error('AUTH_EXPIRED');
-    }
-    if (photoRes.ok) {
-      const photos = await photoRes.json();
-      await db.transaction('rw', [db.entity_photos], async () => {
-        await db.entity_photos.bulkPut(photos);
-      });
-    }
-  } catch (err) {
-    if (err.message === 'AUTH_EXPIRED') {
-      throw err;
-    }
-    console.warn('Unable to prefetch entity photos (offline):', err);
   }
 }
 

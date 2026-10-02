@@ -35,9 +35,15 @@
   <!-- Service Worker Bootstrapper -->
   <script type="module">
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js')
-        .then((reg) => console.log('[PWA] Service Worker registered successfully', reg.scope))
-        .catch((err) => console.error('[PWA] Service Worker registration failed', err));
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((reg) => {
+            console.log('[PWA] Service Worker registered successfully', reg.scope);
+            // Check for service worker updates periodically or on registration
+            reg.update().catch(() => {});
+          })
+          .catch((err) => console.error('[PWA] Service Worker registration failed', err));
+      });
     }
   </script>
 </body>

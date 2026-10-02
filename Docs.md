@@ -10,7 +10,8 @@ Welcome to the comprehensive documentation for **TravelBuff** — your ultimate 
 * **Maps (Google Maps)**: High-performance map canvas integrations. Enabling Google Maps unlocks Places Autocomplete, Geocoding APIs, and distance matrices.
 * **OSM (OpenStreetMap)**: The default, open-source mapping engine powered by Leaflet and Nominatim. Used as the automatic fallback if no Google Maps API key is configured.
 * **JWT Secret (`JWT_SECRET`)**: A cryptographically secure random string used by the server to sign and verify user authentication tokens.
-* **Offline-First**: All data is saved instantly to your browser's IndexedDB (via Dexie.js). You can continue adding locations, photos, and expenses without internet access.
+* **Trip-Scoped Offline Architecture**: Active and upcoming trips (including daily schedules, ticket/booking vouchers, expense ledgers, notes, and route coordinates) are cached locally in your browser's IndexedDB (via Dexie.js). You can navigate, check off stops, and log expenses completely offline without cellular data.
+* **Online-First Library**: Locations, collections, and AI import queues operate directly against the server to keep your mobile device storage and memory fast and lightweight.
 * **WebSocket Sync**: A persistent network channel that pushes local updates to the backend and synchronizes changes in real-time across multiple devices.
 * **Curation Queue (Review Data)**: A temporary staging area where scraped travel destinations are formatted and reviewed before being saved to your permanent location list.
 
@@ -359,12 +360,18 @@ Trips can be flagged as "International". This enables multi-currency conversions
 
 ### Trip Mode vs Planning Mode
 Toggle modes in the header:
-* **Planning Mode**: Open workspace to edit descriptions, drag-and-drop days, view stop photo thumbnails in the Chronological Daily Itinerary, query AI itineraries, and edit reservations.
-* **Trip Mode**: Clean, streamlined mobile-first layout that hides editing panels. Focuses solely on the active day's timeline with visual spot thumbnails, navigation shortcuts, pending reservations, and quick-add expense forms.
+* **Planning Mode**: Open workspace to edit descriptions, drag-and-drop days, view stop photo thumbnails in the Chronological Daily Itinerary, query AI itineraries, and edit reservations. Requires an active server connection.
+* **Trip Mode (Offline-First)**: Clean, streamlined mobile-first layout designed specifically for on-the-go travel. It operates 100% offline from local browser storage, allowing you to view your daily itinerary timeline, access cached booking confirmations & tickets, calculate multi-currency exchange, and log expenses in airplane mode. Any changes made while disconnected are automatically queued and synced when internet connectivity returns.
 
 ### Create Trip Itinerary (Manual vs AI)
 * **Manual**: Click **+ Add Stop** on any itinerary day list to search for sights in your locations.
 * **AI Generation**: If an AI key is set up, enter target descriptions (e.g., "Foodie tour in Tokyo") and click **Generate with AI** to let the model build structured daily activities.
+
+### Export & Import Trips Across Instances
+* **Export Trip (.json)**: Click the **Download (Export)** button in the top action toolbar of any specific trip plan. TravelBuff generates a self-contained `.json` package with all scheduled itinerary days, stops, custom notes, currency rates, booking attachments (PDF/images), receipts, and referenced Locations and Places (with coordinates, tags, and cover photos).
+* **Import Trip**: Click **Import Trip** from the main Trips list header (or empty state) to upload any `.json` trip bundle.
+  - **Smart Resolution**: If referenced locations or places don't exist in your library, they are automatically created with full metadata and photos. If matching locations/places already exist, they are seamlessly linked.
+  - **Collision Prevention**: All primary and foreign keys are safely remapped to fresh UUIDs, and duplicate trip names are marked with `(Copy)`.
 
 ---
 
@@ -443,7 +450,18 @@ Keep your travel data safe:
 
 ## 9. Release Notes & Version History
 
-### Version 7.4.0 (Current Release)
+### Version 7.5.2 (Current Release)
+* **High-Contrast Printable Itinerary Day Differentiation & Pagination**:
+  - Distinct day header banners with bold typography, prominent date labels, and colored left-border accent bars.
+  - Clear location indicator badges (`📍 Location`) and overnight stay badges (`🏨 Stay: Hotel`) formatted cleanly in print.
+  - High-contrast dashed horizontal dividers (`<hr class="itinerary-day-divider" />`) separating days that share the same printed page.
+  - Nested timeline stops with stop numbering, dashed connector lines, and sub-item page break isolation (`break-inside: avoid`) allowing long days to naturally paginate without truncation.
+  - Added optional *"Start each day on a new page"* toggle in Print Options modal for 1-day-per-page print layouts.
+* **Printable Expenses Table Margin & Layout Constraints**:
+  - Automatically hides the interactive Edit/Delete Action column when printing.
+  - Enforced `table-layout: fixed` with proportional column widths, cell text wrapping, and row page-break protection to prevent table clipping past printable page boundaries.
+
+### Version 7.4.0
 * **Global Duplicate Prevention for Folders & Locations**:
   - Live duplicate search across all folders and locations evaluating names, country/state, and GPS proximity within 150 meters.
   - Interactive duplicate warning banner displaying parent path breadcrumbs and direct "View Existing" navigation button.

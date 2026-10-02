@@ -3865,6 +3865,567 @@ app.get('/api/locations/:locationId/visits', authenticateToken, async (req, res)
 });
 
 // ==========================================
+// Trip Export & Import API
+// ==========================================
+app.get('/api/trips/:id/export', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  try {
+    const strTripId = String(id);
+    const trip = await db.get(
+      'SELECT * FROM trips WHERE (CAST(id AS TEXT) = ? OR id = ?) AND user_id = ?',
+      [strTripId, id, userId]
+    );
+    if (!trip) {
+      return res.status(404).json({ error: 'Trip not found or unauthorized' });
+    }
+
+    const tripNotes = await db.all(
+      'SELECT * FROM trip_notes WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?',
+      [strTripId, id]
+    );
+
+    const tripRates = await db.all(
+      'SELECT * FROM trip_currency_rates WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?',
+      [strTripId, id]
+    );
+
+    const reservations = await db.all(
+      'SELECT * FROM reservations WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?',
+      [strTripId, id]
+    );
+
+    const itineraryItems = await db.all(
+      'SELECT * FROM itinerary_items WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ? ORDER BY date ASC, sequence_order ASC',
+      [strTripId, id]
+    );
+
+    const expenses = await db.all(
+      'SELECT * FROM expenses WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?',
+      [strTripId, id]
+    );
+
+    // Extract referenced place IDs and location IDs from itinerary items
+    const placeIdSet = new Set();
+    const locationIdSet = new Set();
+
+    itineraryItems.forEach(item => {
+      if (item.place_id) placeIdSet.add(item.place_id);
+      if (item.location_id) locationIdSet.add(item.location_id);
+    });
+
+    let places = [];
+    if (placeIdSet.size > 0) {
+      const pPlaceholders = Array.from(placeIdSet).map(() => '?').join(',');
+      places = await db.all(
+        `SELECT * FROM places WHERE id IN (${pPlaceholders})`,
+        Array.from(placeIdSet)
+      );
+      // Collect any locations referenced by these places
+      places.forEach(p => {
+        if (p.location_id) locationIdSet.add(p.location_id);
+      });
+    }
+
+    let locations = [];
+    if (locationIdSet.size > 0) {
+      const lPlaceholders = Array.from(locationIdSet).map(() => '?').join(',');
+      locations = await db.all(
+        `SELECT * FROM locations WHERE id IN (${lPlaceholders})`,
+        Array.from(locationIdSet)
+      );
+    }
+
+    // Entity IDs for tags & photos
+    const allEntityIds = [...locations.map(l => l.id), ...places.map(p => p.id)];
+    let entityTags = [];
+    let tags = [];
+    let entityPhotos = [];
+
+    if (allEntityIds.length > 0) {
+      const ePlaceholders = allEntityIds.map(() => '?').join(',');
+      entityTags = await db.all(
+        `SELECT * FROM entity_tags WHERE entity_id IN (${ePlaceholders})`,
+        allEntityIds
+      );
+
+      const tagIds = [...new Set(entityTags.map(et => et.tag_id))];
+      if (tagIds.length > 0) {
+        const tPlaceholders = tagIds.map(() => '?').join(',');
+        tags = await db.all(
+          `SELECT * FROM tags WHERE id IN (${tPlaceholders})`,
+          tagIds
+        );
+      }
+
+      entityPhotos = await db.all(
+        `SELECT * FROM entity_photos WHERE entity_id IN (${ePlaceholders})`,
+        allEntityIds
+      );
+    }
+
+    // Custom categories used by places
+    const categoriesUsed = [...new Set(places.map(p => p.category).filter(Boolean))];
+    let customCategories = [];
+    if (categoriesUsed.length > 0) {
+      const cPlaceholders = categoriesUsed.map(() => '?').join(',');
+      customCategories = await db.all(
+        `SELECT * FROM custom_categories WHERE user_id = ? AND name IN (${cPlaceholders})`,
+        [userId, ...categoriesUsed]
+      );
+    }
+
+    // Collect all media files to package
+    const filesToExport = new Set();
+    locations.forEach(l => { if (l.local_file_data) filesToExport.add(l.local_file_data); });
+    places.forEach(p => { if (p.local_file_data) filesToExport.add(p.local_file_data); });
+    entityPhotos.forEach(ep => { if (ep.file_path) filesToExport.add(ep.file_path); });
+    reservations.forEach(r => { if (r.file_path) filesToExport.add(r.file_path); });
+    expenses.forEach(e => { if (e.receipt_path) filesToExport.add(e.receipt_path); });
+
+    const exportFiles = [];
+    for (const relPath of filesToExport) {
+      const filename = basename(relPath);
+      const fullPath = join(UPLOADS_DIR, filename);
+      if (fs.existsSync(fullPath)) {
+        try {
+          const fileData = await fs.promises.readFile(fullPath);
+          exportFiles.push({
+            file_path: relPath,
+            base64_data: fileData.toString('base64')
+          });
+        } catch (readErr) {
+          console.warn(`Failed to read file ${filename} for trip export:`, readErr);
+        }
+      }
+    }
+
+    const bundle = {
+      type: 'travelbuff_trip_export',
+      version: '1.0',
+      exported_at: new Date().toISOString(),
+      trip,
+      data: {
+        itinerary_items: itineraryItems,
+        trip_notes: tripNotes,
+        reservations,
+        expenses,
+        trip_currency_rates: tripRates,
+        locations,
+        places,
+        custom_categories: customCategories,
+        tags,
+        entity_tags: entityTags,
+        entity_photos: entityPhotos
+      },
+      files: exportFiles
+    };
+
+    const safeName = (trip.name || 'trip').replace(/[^a-z0-9_-]/gi, '_');
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}_trip.json"`);
+    res.json(bundle);
+  } catch (err) {
+    console.error('Trip export failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/trips/import', authenticateToken, async (req, res) => {
+  const currentUserId = req.user.id;
+  const bundle = req.body.bundle || req.body;
+
+  if (!bundle || bundle.type !== 'travelbuff_trip_export' || !bundle.trip || !bundle.data) {
+    return res.status(400).json({ error: 'Invalid trip package: File is not a valid TravelBuff trip export.' });
+  }
+
+  const idMap = new Map();
+  const filePathMap = new Map();
+
+  await dbMutex.run(async () => {
+    try {
+      await db.exec('BEGIN TRANSACTION');
+
+      // 1. Extract and save media files
+      if (Array.isArray(bundle.files) && bundle.files.length > 0) {
+        if (!fs.existsSync(UPLOADS_DIR)) {
+          fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+        }
+        for (const fileObj of bundle.files) {
+          if (!fileObj.file_path || !fileObj.base64_data) continue;
+          try {
+            const rawExt = path.extname(fileObj.file_path) || '.jpg';
+            const cleanExt = rawExt.toLowerCase().replace(/[^a-z0-9.]/g, '');
+            const newFilename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${cleanExt}`;
+            const destPath = join(UPLOADS_DIR, newFilename);
+            const buffer = Buffer.from(fileObj.base64_data, 'base64');
+            await fs.promises.writeFile(destPath, buffer);
+            const normalizedNewPath = fileObj.file_path.startsWith('/') ? `/uploads/${newFilename}` : `uploads/${newFilename}`;
+            filePathMap.set(fileObj.file_path, normalizedNewPath);
+          } catch (fileErr) {
+            console.warn('[Trip Import] Failed to save media file:', fileObj.file_path, fileErr);
+          }
+        }
+      }
+
+      // Helper to remap media path
+      const resolveMedia = (pathVal) => {
+        if (!pathVal) return pathVal;
+        return filePathMap.get(pathVal) || pathVal;
+      };
+
+      // 2. Resolve / Insert Locations
+      const locations = bundle.data.locations || [];
+      let newLocationsCreated = 0;
+      for (const loc of locations) {
+        const existingLoc = await db.get(
+          'SELECT id FROM locations WHERE user_id = ? AND name = ? AND is_archived = 0 LIMIT 1',
+          [currentUserId, loc.name]
+        );
+        if (existingLoc) {
+          idMap.set(String(loc.id), String(existingLoc.id));
+        } else {
+          const newLocId = `loc_${crypto.randomUUID()}`;
+          idMap.set(String(loc.id), String(newLocId));
+          newLocationsCreated++;
+          await db.run(
+            `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, immich_album_id, local_file_data, parent_id, is_folder, is_archived, photo_sync_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              newLocId,
+              currentUserId,
+              loc.name,
+              loc.state || null,
+              loc.country || null,
+              loc.latitude || null,
+              loc.longitude || null,
+              loc.visited || 0,
+              loc.notes || '',
+              null,
+              resolveMedia(loc.local_file_data) || null,
+              null,
+              loc.is_folder || 0,
+              0,
+              'synced'
+            ]
+          );
+        }
+      }
+
+      // 3. Resolve / Insert Places
+      const places = bundle.data.places || [];
+      let newPlacesCreated = 0;
+      for (const plc of places) {
+        const targetLocId = idMap.get(String(plc.location_id)) || plc.location_id;
+        const existingPlace = await db.get(
+          'SELECT id FROM places WHERE user_id = ? AND location_id = ? AND name = ? AND is_archived = 0 LIMIT 1',
+          [currentUserId, targetLocId, plc.name]
+        );
+        if (existingPlace) {
+          idMap.set(String(plc.id), String(existingPlace.id));
+        } else {
+          const newPlaceId = `pla_${crypto.randomUUID()}`;
+          idMap.set(String(plc.id), String(newPlaceId));
+          newPlacesCreated++;
+          await db.run(
+            `INSERT INTO places (id, user_id, location_id, name, category, address, latitude, longitude, visited, notes, immich_album_id, local_file_data, is_archived, photo_sync_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              newPlaceId,
+              currentUserId,
+              targetLocId,
+              plc.name,
+              plc.category || 'Sightseeing',
+              plc.address || null,
+              plc.latitude || null,
+              plc.longitude || null,
+              plc.visited || 0,
+              plc.notes || '',
+              null,
+              resolveMedia(plc.local_file_data) || null,
+              0,
+              'synced'
+            ]
+          );
+        }
+      }
+
+      // 4. Resolve / Insert Tags
+      const tags = bundle.data.tags || [];
+      for (const tag of tags) {
+        const existingTag = await db.get(
+          'SELECT id FROM tags WHERE user_id = ? AND name = ? LIMIT 1',
+          [currentUserId, tag.name]
+        );
+        if (existingTag) {
+          idMap.set(String(tag.id), String(existingTag.id));
+        } else {
+          const newTagId = `tag_${crypto.randomUUID()}`;
+          idMap.set(String(tag.id), String(newTagId));
+          await db.run(
+            'INSERT INTO tags (id, user_id, name, color) VALUES (?, ?, ?, ?)',
+            [newTagId, currentUserId, tag.name, tag.color || '#3b82f6']
+          );
+        }
+      }
+
+      // 5. Custom Categories
+      const customCats = bundle.data.custom_categories || [];
+      for (const cat of customCats) {
+        const existingCat = await db.get(
+          'SELECT id FROM custom_categories WHERE user_id = ? AND name = ? AND type = ? LIMIT 1',
+          [currentUserId, cat.name, cat.type || 'place']
+        );
+        if (existingCat) {
+          idMap.set(String(cat.id), String(existingCat.id));
+        } else {
+          const newCatId = `cat_${crypto.randomUUID()}`;
+          idMap.set(String(cat.id), String(newCatId));
+          await db.run(
+            'INSERT INTO custom_categories (id, user_id, name, icon, type) VALUES (?, ?, ?, ?, ?)',
+            [newCatId, currentUserId, cat.name, cat.icon || null, cat.type || 'place']
+          );
+        }
+      }
+
+      // 6. Entity Photos
+      const entityPhotos = bundle.data.entity_photos || [];
+      for (const ep of entityPhotos) {
+        const mappedEntityId = idMap.get(String(ep.entity_id));
+        if (mappedEntityId) {
+          const newPhotoId = `ep_${crypto.randomUUID()}`;
+          const newPath = resolveMedia(ep.file_path);
+          if (newPath) {
+            await db.run(
+              'INSERT INTO entity_photos (id, entity_id, file_path, is_featured) VALUES (?, ?, ?, ?)',
+              [newPhotoId, mappedEntityId, newPath, ep.is_featured || 0]
+            ).catch(() => {});
+          }
+        }
+      }
+
+      // 7. Entity Tags
+      const entityTags = bundle.data.entity_tags || [];
+      for (const et of entityTags) {
+        const mappedEntityId = idMap.get(String(et.entity_id));
+        const mappedTagId = idMap.get(String(et.tag_id));
+        if (mappedEntityId && mappedTagId) {
+          await db.run(
+            'INSERT OR IGNORE INTO entity_tags (entity_id, tag_id) VALUES (?, ?)',
+            [mappedEntityId, mappedTagId]
+          ).catch(() => {});
+        }
+      }
+
+      // 8. Import Trip
+      const origTrip = bundle.trip;
+      let finalTripName = origTrip.name;
+      let isCopy = false;
+      const existingTripName = await db.get(
+        'SELECT id FROM trips WHERE user_id = ? AND name = ? LIMIT 1',
+        [currentUserId, finalTripName]
+      );
+      if (existingTripName) {
+        finalTripName = `${finalTripName} (Copy)`;
+        isCopy = true;
+      }
+
+      const newTripId = `tri_${crypto.randomUUID()}`;
+      idMap.set(String(origTrip.id), String(newTripId));
+
+      let notesStr = origTrip.notes || '';
+      try {
+        if (notesStr) {
+          const notesObj = JSON.parse(notesStr);
+          if (notesObj.dayLocations) {
+            for (const k in notesObj.dayLocations) {
+              const oldLocId = notesObj.dayLocations[k];
+              if (idMap.has(String(oldLocId))) {
+                notesObj.dayLocations[k] = idMap.get(String(oldLocId));
+              }
+            }
+          }
+          if (notesObj.hotels) {
+            for (const k in notesObj.hotels) {
+              const oldHotelId = notesObj.hotels[k];
+              if (idMap.has(String(oldHotelId))) {
+                notesObj.hotels[k] = idMap.get(String(oldHotelId));
+              }
+            }
+          }
+          if (notesObj.segmentTransport) {
+            const newSegments = {};
+            for (const k in notesObj.segmentTransport) {
+              let newK = k;
+              for (const [oldId, newId] of idMap.entries()) {
+                newK = newK.replace(oldId, newId);
+              }
+              newSegments[newK] = notesObj.segmentTransport[k];
+            }
+            notesObj.segmentTransport = newSegments;
+          }
+          notesStr = JSON.stringify(notesObj);
+        }
+      } catch (e) {
+        console.warn('Failed to parse and update imported trip notes', e);
+      }
+      let compStr = typeof origTrip.companions === 'string' ? origTrip.companions : (Array.isArray(origTrip.companions) ? JSON.stringify(origTrip.companions) : null);
+
+      await db.run(
+        `INSERT INTO trips (id, user_id, name, start_date, end_date, length, visited, notes, companions, start_address_id, stop_address_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          newTripId,
+          currentUserId,
+          finalTripName,
+          origTrip.start_date || null,
+          origTrip.end_date || null,
+          origTrip.length || 1,
+          origTrip.visited || 0,
+          notesStr,
+          compStr,
+          null,
+          null
+        ]
+      );
+
+      // 9. Trip Currency Rates
+      const rates = bundle.data.trip_currency_rates || [];
+      for (const r of rates) {
+        await db.run(
+          'INSERT INTO trip_currency_rates (id, trip_id, currency, rate) VALUES (?, ?, ?, ?)',
+          [`rate_${crypto.randomUUID()}`, newTripId, r.currency, r.rate]
+        );
+      }
+
+      // 10. Trip Notes
+      const tripNotes = bundle.data.trip_notes || [];
+      for (const n of tripNotes) {
+        await db.run(
+          `INSERT INTO trip_notes (id, trip_id, title, content, category, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            `tnote_${crypto.randomUUID()}`,
+            newTripId,
+            n.title || null,
+            n.content || '',
+            n.category || 'General',
+            n.created_at || new Date().toISOString(),
+            n.updated_at || new Date().toISOString()
+          ]
+        );
+      }
+
+      // 11. Reservations
+      const reservations = bundle.data.reservations || [];
+      for (const resItem of reservations) {
+        const newResId = `res_${crypto.randomUUID()}`;
+        idMap.set(String(resItem.id), String(newResId));
+        const newResFilePath = resolveMedia(resItem.file_path);
+        await db.run(
+          `INSERT INTO reservations (id, trip_id, type, title, details, file_path, completed)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            newResId,
+            newTripId,
+            resItem.type || 'Activity',
+            resItem.title || '',
+            typeof resItem.details === 'object' ? JSON.stringify(resItem.details) : (resItem.details || '{}'),
+            newResFilePath || null,
+            resItem.completed || 0
+          ]
+        );
+      }
+
+      // 12. Expenses
+      const expenses = bundle.data.expenses || [];
+      for (const exp of expenses) {
+        const newExpId = `exp_${crypto.randomUUID()}`;
+        const newReceiptPath = resolveMedia(exp.receipt_path);
+        const mappedResId = exp.reservation_id ? (idMap.get(String(exp.reservation_id)) || null) : null;
+        await db.run(
+          `INSERT INTO expenses (id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned, reservation_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            newExpId,
+            newTripId,
+            exp.date || new Date().toISOString().split('T')[0],
+            exp.amount || 0,
+            exp.currency || 'USD',
+            exp.category || 'Other',
+            exp.notes || '',
+            newReceiptPath || null,
+            exp.is_planned || 0,
+            mappedResId
+          ]
+        );
+      }
+
+      // 13. Itinerary Items
+      const itineraryItems = bundle.data.itinerary_items || [];
+      for (const it of itineraryItems) {
+        const newItemId = `iti_${crypto.randomUUID()}`;
+        const mappedPlaceId = it.place_id ? (idMap.get(String(it.place_id)) || it.place_id) : null;
+        const mappedLocId = it.location_id ? (idMap.get(String(it.location_id)) || it.location_id) : null;
+
+        await db.run(
+          `INSERT INTO itinerary_items (id, trip_id, date, place_id, location_id, notes, sequence_order, distance_from_prev, duration_from_prev, custom_name, custom_category, custom_lat, custom_lng)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            newItemId,
+            newTripId,
+            it.date,
+            mappedPlaceId,
+            mappedLocId,
+            it.notes || null,
+            it.sequence_order || 0,
+            it.distance_from_prev !== undefined ? it.distance_from_prev : -1,
+            it.duration_from_prev !== undefined ? it.duration_from_prev : -1,
+            it.custom_name || null,
+            it.custom_category || null,
+            it.custom_lat || null,
+            it.custom_lng || null
+          ]
+        );
+      }
+
+      await db.exec('COMMIT');
+
+      // Notify connected clients to refresh Dexie / live query
+      notifyUserClients(currentUserId);
+
+      const createdTrip = await db.get('SELECT * FROM trips WHERE id = ?', [newTripId]);
+
+      res.json({
+        success: true,
+        trip_id: newTripId,
+        trip: createdTrip,
+        is_copy: isCopy,
+        stats: {
+          stops: itineraryItems.length,
+          locations_created: newLocationsCreated,
+          locations_total: locations.length,
+          places_created: newPlacesCreated,
+          places_total: places.length,
+          notes: tripNotes.length,
+          reservations: reservations.length,
+          expenses: expenses.length,
+          files: (bundle.files || []).length
+        }
+      });
+    } catch (err) {
+      try {
+        await db.exec('ROLLBACK');
+      } catch (rollbackErr) {
+        console.warn('Rollback failed:', rollbackErr.message);
+      }
+      console.error('Trip import failed:', err);
+      res.status(500).json({ error: `Import failed: ${err.message}` });
+    }
+  });
+});
+
+// ==========================================
 // Backup & Restore API
 // ==========================================
 app.get('/api/backup/export', authenticateToken, async (req, res) => {
@@ -4046,7 +4607,7 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
 
     for (const oldId of oldUserIds) {
       if (oldId !== currentUserId) {
-        idMap.set(oldId, currentUserId);
+        idMap.set(String(oldId), String(currentUserId));
       }
     }
   }
@@ -4096,7 +4657,7 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
             const exists = await db.get(`SELECT 1 FROM ${table} WHERE ${pkCol} = ?`, [originalId]);
             if (exists) {
               const newId = `${table.slice(0, 3)}_${crypto.randomUUID()}`;
-              idMap.set(originalId, newId);
+              idMap.set(String(originalId), String(newId));
               row[pkCol] = newId;
             }
           }
@@ -4132,7 +4693,7 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
         }
 
         if (table === 'tags' && row.name && row.user_id) {
-          const finalUserId = idMap.has(row.user_id) ? idMap.get(row.user_id) : row.user_id;
+          const finalUserId = idMap.has(row.user_id) ? idMap.get(String(row.user_id)) : row.user_id;
           let currentName = row.name;
           let existing = await db.get('SELECT 1 FROM tags WHERE user_id = ? AND name = ?', [finalUserId, currentName]);
           while (existing) {
@@ -4145,14 +4706,14 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
         for (const key of Object.keys(row)) {
           const val = row[key];
           if (typeof val === 'string' && idMap.has(val)) {
-            row[key] = idMap.get(val);
+            row[key] = idMap.get(String(val));
           }
         }
 
         if (table === 'collections' && typeof row.manual_location_ids === 'string' && row.manual_location_ids) {
           const ids = row.manual_location_ids.split(',').map(id => {
             const trimmed = id.trim();
-            return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
+            return idMap.has(trimmed) ? idMap.get(String(trimmed)) : trimmed;
           });
           row.manual_location_ids = ids.join(',');
         }
@@ -4308,7 +4869,7 @@ app.post('/api/backup/restore', async (req, res) => {
     // Map all old user IDs to the current logged-in user ID
     for (const oldId of oldUserIds) {
       if (oldId !== currentUserId) {
-        idMap.set(oldId, currentUserId);
+        idMap.set(String(oldId), String(currentUserId));
       }
     }
   }
@@ -4357,7 +4918,7 @@ app.post('/api/backup/restore', async (req, res) => {
               const exists = await db.get(`SELECT 1 FROM ${table} WHERE ${pkCol} = ?`, [originalId]);
               if (exists) {
                 const newId = `${table.slice(0, 3)}_${crypto.randomUUID()}`;
-                idMap.set(originalId, newId);
+                idMap.set(String(originalId), String(newId));
                 row[pkCol] = newId;
               }
             }
@@ -4387,7 +4948,7 @@ app.post('/api/backup/restore', async (req, res) => {
             }
           }
           if (table === 'tags' && row.name && row.user_id) {
-            const finalUserId = idMap.has(row.user_id) ? idMap.get(row.user_id) : row.user_id;
+            const finalUserId = idMap.has(row.user_id) ? idMap.get(String(row.user_id)) : row.user_id;
             let currentName = row.name;
             let existing = await db.get('SELECT 1 FROM tags WHERE user_id = ? AND name = ?', [finalUserId, currentName]);
             while (existing) {
@@ -4400,14 +4961,14 @@ app.post('/api/backup/restore', async (req, res) => {
           for (const key of Object.keys(row)) {
             const val = row[key];
             if (typeof val === 'string' && idMap.has(val)) {
-              row[key] = idMap.get(val);
+              row[key] = idMap.get(String(val));
             }
           }
 
           if (table === 'collections' && typeof row.manual_location_ids === 'string' && row.manual_location_ids) {
             const ids = row.manual_location_ids.split(',').map(id => {
               const trimmed = id.trim();
-              return idMap.has(trimmed) ? idMap.get(trimmed) : trimmed;
+              return idMap.has(trimmed) ? idMap.get(String(trimmed)) : trimmed;
             });
             row.manual_location_ids = ids.join(',');
           }
@@ -4500,7 +5061,13 @@ app.post('/api/backup/restore', async (req, res) => {
 // ==========================================
 // Static Assets & SPA Fallback Route
 // ==========================================
-app.use(express.static(join(__dirname, 'dist')));
+app.use(express.static(join(__dirname, 'dist'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('sw.js') || filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  }
+}));
 app.get('*', (req, res, next) => {
   // If request begins with /api, let express route handler handle it
   if (req.path.startsWith('/api')) return next();
@@ -4508,6 +5075,7 @@ app.get('*', (req, res, next) => {
   if (req.path.startsWith('/assets') || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff|woff2|ttf|eot)$/i.test(req.path)) {
     return res.status(404).send('Asset not found');
   }
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(join(__dirname, 'dist', 'index.html'));
 });
 

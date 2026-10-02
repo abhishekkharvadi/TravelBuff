@@ -1,6 +1,6 @@
 {
   "name": "travelbuff",
-  "version": "7.5.1",
+  "version": "7.7.1",
   "description": "Self-hosted travel log, planning and trip app",
   "main": "server.js",
   "type": "module",
@@ -16,7 +16,7 @@
     "dev": "concurrently \"cross-env PORT=3001 npm run server\" \"npm run client\""
   },
   "dependencies": {
-    "axios": "^1.18.1",
+    "axios": "^1.20.0",
     "bcryptjs": "^2.4.3",
     "cheerio": "^1.2.0",
     "cors": "^2.8.5",
@@ -28,7 +28,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.395.0",
     "mammoth": "^1.12.0",
-    "multer": "^2.3.0",
+    "multer": "^2.4.0",
     "pdf-parse": "^2.4.5",
     "pdf2md": "^1.0.2",
     "playwright": "^1.61.1",
@@ -48,7 +48,20 @@
     "nodemon": "^3.1.2",
     "vite": "^7.3.0"
   },
+  "optionalDependencies": {
+    "@esbuild/linux-arm64": "0.28.2",
+    "@esbuild/linux-x64": "0.28.2",
+    "@rollup/rollup-linux-arm64-gnu": "4.63.1",
+    "@rollup/rollup-linux-x64-gnu": "4.63.1",
+    "@rollup/rollup-linux-arm64-musl": "4.63.1",
+    "@rollup/rollup-linux-x64-musl": "4.63.1"
+  },
   "overrides": {
-    "qs": "^6.15.4"
+    "qs": "^6.15.4",
+    "axios": "^1.20.0",
+    "brace-expansion": "^2.1.7",
+    "multer": "^2.4.0",
+    "busboy": "^1.6.0",
+    "undici": "^6.28.1"
   }
 }

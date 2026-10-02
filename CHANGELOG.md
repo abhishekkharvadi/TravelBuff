@@ -2,6 +2,31 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.7.1] - 2026-10-02
+
+### 🐞 Bug Fixes
+- **Trip Import Location Mapping**:
+  - Fixed an issue where trips imported with new or missing locations would silently fail to map day locations, accommodations, and segment transports within the trip's notes.
+  - Hardened string-type conversion on ID map lookups to prevent SQLite dynamic typing mismatches.
+  - Ensuring the complete itinerary and required locations render accurately upon import.
+
+## [v7.7.0] - 2026-10-02
+
+### 🚀 Major Features & Enhancements
+- **Single Trip Export & Import Across Instances**:
+  - **Self-Contained Trip Bundles**: Export any specific trip plan into a portable `.json` package containing the complete itinerary days, stops, sequence orders, notes, budget & currency rates, reservations (with attached booking files), expenses (with receipts), and referenced Locations and Places (with coordinates, addresses, notes, tags, and cover photos).
+  - **Top Plan Toolbar Export Button**: Dedicated 1-click **Export Trip (.json)** download button on the top toolbar of every trip plan view.
+  - **Smart Import & Resolution**:
+    - **Missing Locations & Places**: Automatically created in the destination user's account with full GPS coordinates, addresses, categories, and cover photos intact.
+    - **Existing Locations & Places**: Intelligently matched and linked by name to eliminate redundant duplicate location records while preserving full itinerary integrity.
+    - **Safe ID Remapping**: All primary and foreign keys are assigned new UUIDs to prevent ID collision.
+    - **Media Extraction**: Attached booking PDFs, receipts, and photos are safely extracted to `data/uploads/` on the importing instance.
+  - **Interactive Import Modal & Error Guidance**:
+    - Instant pre-validation with detail previews (days, stops, places, locations, media count).
+    - In-modal progress indicator during processing.
+    - Post-import summary breakdown with direct **"Open Trip Plan"** action button.
+    - Actionable error banners with guidance if files are invalid or storage is unreachable.
+
 ## [v7.5.1] - 2026-09-20
 
 ### 🚀 Enhancements

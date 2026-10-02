@@ -500,6 +500,9 @@ When editing a trip, TravelBuff opens an interactive 3-column workspace:
 ### Printable Trip Itineraries (Print View)
 * Click the **🖨️ Printer icon** in the trip workspace header to generate a clean, printer-friendly summary of your trip.
 * The printable format includes daily timelines, landmark names, addresses, stop notes, driving distances, and booking reference numbers — perfect for paper backups or saving as a PDF.
+* **Enhanced Day Differentiation & Dividers**: Each day is formatted with a distinct, high-contrast day header banner, per-day accent border lines, location and stay indicator pills, and nested timeline items with stop numbers. Days sharing the same printed page are separated by clear dashed horizontal dividers.
+* **Multi-Page Overflow Protection**: Long days with many stops naturally flow across pages without content truncation, while keeping individual stops intact and day headers anchored.
+* **Optional 1 Day Per Page Mode**: Enable the *"Start each day on a new page"* checkbox in the Print Options dialog to force page breaks before each day, providing dedicated daily itinerary sheets for travel binders.
 
 ---
 
@@ -519,6 +522,29 @@ When editing a trip, TravelBuff opens an interactive 3-column workspace:
 
 * **Home Address Handling**: Save your primary origin under **Settings** -> **Saved Home Addresses**. Starting a trip calculates exact distances and travel times from your home to your first stop or departure airport/station.
 * **Hotel / Stay / Resort Anchors**: Places categorized as stays (hotels, resorts, Airbnb) can be selected as overnight lodging anchors for each day, automatically linking booking confirmations, baggage drop points, and evening returns.
+
+---
+
+### Exporting & Importing Trips Across Instances
+
+TravelBuff allows you to export complete trip plans as portable `.json` files that can be shared with companions or imported into other TravelBuff installations:
+
+* **Exporting a Trip**:
+  1. Open the specific trip plan.
+  2. Click the **Download (Export)** button in the top action toolbar.
+  3. TravelBuff downloads a comprehensive bundle containing the trip itinerary, days, stops, custom notes, currency exchange rates, booking documents (PDFs/images), expense receipts, and all referenced **Locations** and **Places** (with coordinates, addresses, notes, tags, and cover photos).
+
+* **Importing a Trip**:
+  1. Go to the **Trips** list view.
+  2. Click the **Import Trip** button in the top header (or empty state).
+  3. Drag and drop or browse for your exported `.json` trip bundle.
+  4. Preview the trip name, dates, duration, stops, locations, and media files, then click **Import Trip**.
+  5. **Smart Entity Resolution**:
+     - Any Locations or Places missing from your library are automatically created with complete GPS coordinates, notes, addresses, and cover photos.
+     - Existing Locations or Places matching by name are intelligently linked to prevent duplicate entries.
+     - All foreign keys and IDs are assigned fresh UUIDs to prevent database collisions.
+     - Media files (vouchers, tickets, receipts, photos) are extracted and saved to `data/uploads/`.
+  6. Click **Open Trip Plan** to start exploring the newly imported journey immediately.
 
 ---
 
@@ -549,7 +575,7 @@ TravelBuff includes a full multi-currency budgeting engine to help you plan, tra
 
 ### Expense Analytics & Printable Reports
 - **Category Breakdown Charts**: View interactive visual charts showing how your budget is distributed across categories (Lodging vs Food vs Transportation).
-- **Printable Expense Summary**: Export or print detailed expense logs alongside your trip itineraries for tax records or business reimbursement.
+- **Printable Expense Summary**: Export or print detailed expense logs alongside your trip itineraries for tax records or business reimbursement. The printable table is automatically formatted with fixed boundary constraints, hidden action buttons, multi-currency conversion wrapping, and row page-break isolation to ensure all columns fit perfectly inside standard page margins.
 
 ---
 

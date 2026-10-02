@@ -4,7 +4,7 @@ import {
   Calendar, MapPin, Plus, Trash2, Tag, Receipt, 
   ChevronRight, Printer, AlertTriangle, FileText, 
   Map, Edit, CheckSquare, X, DollarSign, RefreshCw, Star, Compass,
-  Search, Folder
+  Search, Folder, Download, Upload, CheckCircle2, FileUp
 } from 'lucide-react';
 import { db, queueSyncAction, generateUUID } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
@@ -482,6 +482,8 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
 
   const itineraryDays = getItineraryDays(currentTrip);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showImportTripModal, setShowImportTripModal] = useState(false);
+  const [exportingTripId, setExportingTripId] = useState(null);
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardTrip, setWizardTrip] = useState(null);
   const [tripBudget, setTripBudget] = useState('');
@@ -1739,6 +1741,7 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   const [showPrintOptions, setShowPrintOptions] = useState(false);
   const [printOptBudget, setPrintOptBudget] = useState(true);
   const [printOptItinerary, setPrintOptItinerary] = useState(true);
+  const [printOptPageBreakDays, setPrintOptPageBreakDays] = useState(false);
   const [printOptReservations, setPrintOptReservations] = useState(true);
   const [printOptExpenses, setPrintOptExpenses] = useState(true);
 
@@ -2544,6 +2547,38 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
     }
   };
 
+  const handleExportTrip = async (trip) => {
+    if (!trip || !trip.id) return;
+    setExportingTripId(trip.id);
+    try {
+      const userToken = token || localStorage.getItem('token') || '';
+      const res = await fetch(`/api/trips/${trip.id}/export`, {
+        headers: {
+          'Authorization': `Bearer ${userToken}`
+        }
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Export failed with status ${res.status}`);
+      }
+      const blob = await res.blob();
+      const safeName = (trip.name || 'trip').replace(/[^a-z0-9_-]/gi, '_');
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeName}_trip.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error exporting trip:', err);
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      setExportingTripId(null);
+    }
+  };
+
   // Add inline reservation for a specific date
   const handleAddInlineReservation = async (e, date) => {
     e.preventDefault();
@@ -3135,10 +3170,21 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
             );
           })()}
         </div>
-        <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto', padding: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Compass size={18} style={{ margin: 0 }} />
-          <span className="desktop-only-text">Plan New Trip</span>
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => setShowImportTripModal(true)} 
+            style={{ width: 'auto', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}
+            title="Import a Trip Plan (.json)"
+          >
+            <Upload size={18} style={{ margin: 0 }} />
+            <span className="desktop-only-text">Import Trip</span>
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ width: 'auto', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Compass size={18} style={{ margin: 0 }} />
+            <span className="desktop-only-text">Plan New Trip</span>
+          </button>
+        </div>
       </div>
 
       {/* Search and Filter Row */}
@@ -3210,10 +3256,16 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
           <Calendar size={48} className="empty-state-icon" />
           <h3>No Planned Trips</h3>
           <p>Create a trip itinerary, log travel reservations, and plan your budget limits before departing.</p>
-          <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 auto' }}>
-            <Compass size={18} />
-            <span>Plan New Trip</span>
-          </button>
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap', marginTop: '16px' }}>
+            <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Compass size={18} />
+              <span>Plan New Trip</span>
+            </button>
+            <button className="btn btn-secondary" onClick={() => setShowImportTripModal(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Upload size={18} />
+              <span>Import Trip</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -4014,6 +4066,14 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   </button>
                   <button 
                     className="photo-action-btn" 
+                    onClick={() => handleExportTrip(currentTrip)} 
+                    disabled={exportingTripId === currentTrip.id}
+                    title={exportingTripId === currentTrip.id ? "Exporting Trip..." : "Export Trip (.json)"}
+                  >
+                    {exportingTripId === currentTrip.id ? <RefreshCw size={16} className="spinning" /> : <Download size={16} />}
+                  </button>
+                  <button 
+                    className="photo-action-btn" 
                     onClick={() => handleToggleActiveTrip(currentTrip.id)}
                     style={{ 
                       color: activeTripId === currentTrip.id.toString() ? 'var(--accent-primary-hover)' : 'var(--text-secondary)'
@@ -4308,31 +4368,36 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   const dayItems = itineraries.filter(i => activeTrip && i.trip_id === activeTrip.id && i.date === day.date)
                                               .sort((a,b) => a.sequence_order - b.sequence_order);
                   return (
-                    <ItineraryDay 
-                      key={day.date} 
-                      date={day.date} 
-                      label={day.label} 
-                      items={dayItems} 
-                      places={combinedPlaces}
-                      distances={distances}
-                      reservations={reservations}
-                      selectedTrip={activeTrip}
-                      tripModeActive={tripModeActive}
-                      handleViewAttachment={handleViewAttachment}
-                      handleDeleteReservation={handleDeleteReservation}
-                      handleDeleteItineraryItem={handleDeleteItineraryItem}
-                      fetchOSRMDistance={fetchOSRMDistance}
-                      getHaversine={getHaversine}
-                      sortedActivePlaces={sortedActivePlaces}
-                      dayColor={getDayColor(dIdx)}
-                      userAddresses={userAddresses}
-                      locations={locations}
-                      photos={photos}
-                      isFirstDay={dIdx === 0}
-                      isLastDay={dIdx === itineraryDays.length - 1}
-                      prevDay={itineraryDays[dIdx - 1] || null}
-                      nextDay={itineraryDays[dIdx + 1] || null}
-                    />
+                    <React.Fragment key={day.date}>
+                      {dIdx > 0 && (
+                        <hr className={`itinerary-day-divider ${printOptPageBreakDays ? 'no-print' : ''}`} />
+                      )}
+                      <ItineraryDay 
+                        date={day.date} 
+                        label={day.label} 
+                        items={dayItems} 
+                        places={combinedPlaces}
+                        distances={distances}
+                        reservations={reservations}
+                        selectedTrip={activeTrip}
+                        tripModeActive={tripModeActive}
+                        handleViewAttachment={handleViewAttachment}
+                        handleDeleteReservation={handleDeleteReservation}
+                        handleDeleteItineraryItem={handleDeleteItineraryItem}
+                        fetchOSRMDistance={fetchOSRMDistance}
+                        getHaversine={getHaversine}
+                        sortedActivePlaces={sortedActivePlaces}
+                        dayColor={getDayColor(dIdx)}
+                        userAddresses={userAddresses}
+                        locations={locations}
+                        photos={photos}
+                        isFirstDay={dIdx === 0}
+                        isLastDay={dIdx === itineraryDays.length - 1}
+                        prevDay={itineraryDays[dIdx - 1] || null}
+                        nextDay={itineraryDays[dIdx + 1] || null}
+                        pageBreakBefore={printOptPageBreakDays && dIdx > 0}
+                      />
+                    </React.Fragment>
                   );
                 })}
               </div>
@@ -4439,15 +4504,15 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                 )}
 
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <table className="reservations-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border-glass)', textAlign: 'left' }}>
                         <th style={{ padding: '8px' }}>Type</th>
                         <th style={{ padding: '8px' }}>Title</th>
                         <th style={{ padding: '8px' }}>Details</th>
                         <th style={{ padding: '8px' }}>Doc</th>
-                        <th style={{ padding: '8px' }}>Done</th>
-                        {!tripModeActive && <th style={{ padding: '8px' }}>Action</th>}
+                        <th className="no-print" style={{ padding: '8px' }}>Done</th>
+                        {!tripModeActive && <th className="no-print" style={{ padding: '8px' }}>Action</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -4469,7 +4534,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                               </button>
                             )}
                           </td>
-                          <td style={{ padding: '8px' }}>
+                          <td className="no-print" style={{ padding: '8px' }}>
                             <input 
                               type="checkbox" 
                               checked={res.completed === 1} 
@@ -4481,7 +4546,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                             />
                           </td>
                           {!tripModeActive && (
-                            <td style={{ padding: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <td className="no-print" style={{ padding: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
                               <button className="photo-action-btn" onClick={() => handleStartEditReservation(res)} title="Edit Reservation">
                                 <Edit size={12} />
                               </button>
@@ -4582,14 +4647,14 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   )}
 
                   <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <table className="expenses-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                       <thead>
                         <tr style={{ borderBottom: '1px solid var(--border-glass)', textAlign: 'left' }}>
                           <th style={{ padding: '8px' }}>Category</th>
                           <th style={{ padding: '8px' }}>Notes</th>
                           <th style={{ padding: '8px' }}>Amount</th>
                           <th style={{ padding: '8px' }}>Date</th>
-                          <th style={{ padding: '8px' }}>Action</th>
+                          <th className="no-print" style={{ padding: '8px' }}>Action</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -4688,7 +4753,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                   exp.date
                                 )}
                               </td>
-                              <td style={{ padding: '8px' }}>
+                              <td className="no-print" style={{ padding: '8px' }}>
                                 {isEditing ? (
                                   <div style={{ display: 'flex', gap: '8px' }}>
                                     <button className="photo-action-btn" onClick={() => handleSaveEditedExpense(exp.id)} title="Save changes">
@@ -4866,6 +4931,19 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                 />
                 <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>Chronological Daily Itinerary</span>
               </label>
+              {printOptItinerary && (
+                <div style={{ marginLeft: '24px', marginTop: '-4px', marginBottom: '2px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={printOptPageBreakDays} 
+                      onChange={(e) => setPrintOptPageBreakDays(e.target.checked)}
+                      style={{ width: '14px', height: '14px', accentColor: 'var(--accent-primary)' }}
+                    />
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>Start each day on a new page (1 day/page)</span>
+                  </label>
+                </div>
+              )}
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input 
                   type="checkbox" 
@@ -7220,6 +7298,427 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
           </div>
         </div>
       )}
+
+      {/* Import Trip Modal */}
+      <ImportTripModal
+        isOpen={showImportTripModal}
+        onClose={() => setShowImportTripModal(false)}
+        token={token}
+        onSelectTrip={handleTripCardClick}
+      />
+    </div>
+  );
+}
+
+function ImportTripModal({ isOpen, onClose, token, onSelectTrip }) {
+  const [file, setFile] = useState(null);
+  const [parsedBundle, setParsedBundle] = useState(null);
+  const [validationError, setValidationError] = useState(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [serverError, setServerError] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const resetState = () => {
+    setFile(null);
+    setParsedBundle(null);
+    setValidationError(null);
+    setIsImporting(false);
+    setImportResult(null);
+    setServerError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleClose = () => {
+    resetState();
+    onClose();
+  };
+
+  const processFile = (selectedFile) => {
+    if (!selectedFile) return;
+    setFile(selectedFile);
+    setValidationError(null);
+    setServerError(null);
+    setImportResult(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result;
+        const parsed = JSON.parse(text);
+        if (!parsed || parsed.type !== 'travelbuff_trip_export' || !parsed.trip || !parsed.data) {
+          setValidationError("Invalid trip package: The selected file does not appear to be a valid TravelBuff trip export package.");
+          setParsedBundle(null);
+          return;
+        }
+        setParsedBundle(parsed);
+      } catch (err) {
+        setValidationError(`Failed to parse JSON file: ${err.message}`);
+        setParsedBundle(null);
+      }
+    };
+    reader.onerror = () => {
+      setValidationError("Failed to read the file from disk.");
+      setParsedBundle(null);
+    };
+    reader.readAsText(selectedFile);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      processFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleExecuteImport = async () => {
+    if (!parsedBundle) return;
+    setIsImporting(true);
+    setServerError(null);
+
+    try {
+      const userToken = token || localStorage.getItem('token') || '';
+      const res = await fetch('/api/trips/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${userToken}`
+        },
+        body: JSON.stringify({ bundle: parsedBundle })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Server responded with status ${res.status}`);
+      }
+
+      setImportResult(data);
+    } catch (err) {
+      console.error('Error importing trip:', err);
+      setServerError(err.message || 'An unexpected error occurred while importing.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleOpenTrip = () => {
+    if (importResult && importResult.trip && onSelectTrip) {
+      onSelectTrip(importResult.trip);
+    }
+    handleClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0, 0, 0, 0.75)',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 1100,
+      padding: '20px',
+      backdropFilter: 'blur(6px)'
+    }}>
+      <div className="login-card" style={{
+        maxWidth: '560px',
+        width: '100%',
+        padding: '24px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        maxHeight: '90vh',
+        overflowY: 'auto'
+      }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '8px',
+              background: 'rgba(59, 130, 246, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--accent-primary)'
+            }}>
+              <Upload size={20} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-primary)' }}>
+                Import Trip Plan
+              </h3>
+              <p style={{ margin: '2px 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                Restore or import a shared TravelBuff trip (.json) package
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleClose}
+            disabled={isImporting}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '4px',
+              borderRadius: '4px'
+            }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* State 1: Success Screen */}
+        {importResult ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '8px' }}>
+            <div style={{
+              padding: '16px',
+              background: 'rgba(34, 197, 94, 0.1)',
+              border: '1px solid rgba(34, 197, 94, 0.3)',
+              borderRadius: 'var(--radius-md)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <CheckCircle2 size={24} color="var(--success)" />
+                <div>
+                  <h4 style={{ margin: 0, color: 'var(--success)', fontSize: '1.05rem' }}>
+                    Trip Imported Successfully!
+                  </h4>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                    <b>{importResult.trip?.name || parsedBundle?.trip?.name}</b>
+                    {importResult.is_copy && <span style={{ marginLeft: '6px', fontSize: '0.78rem', color: '#eab308' }}>(Renamed to avoid duplicate)</span>}
+                  </p>
+                </div>
+              </div>
+
+              {/* Stats badges */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                  📍 {importResult.stats?.stops || 0} Itinerary Stops
+                </span>
+                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                  🗺️ {importResult.stats?.locations_total || 0} Locations ({importResult.stats?.locations_created || 0} new)
+                </span>
+                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                  🏛️ {importResult.stats?.places_total || 0} Places ({importResult.stats?.places_created || 0} new)
+                </span>
+                {importResult.stats?.notes > 0 && (
+                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                    📝 {importResult.stats.notes} Notes
+                  </span>
+                )}
+                {importResult.stats?.reservations > 0 && (
+                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                    🎟️ {importResult.stats.reservations} Bookings
+                  </span>
+                )}
+                {importResult.stats?.files > 0 && (
+                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                    📁 {importResult.stats.files} Media Files
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleClose}
+                style={{ width: 'auto' }}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleOpenTrip}
+                style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <span>Open Trip Plan</span>
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* State 2: Upload / Preview Screen */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Drop Zone */}
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: '2px dashed var(--border-glass)',
+                borderRadius: 'var(--radius-md)',
+                padding: '28px 16px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: file ? 'rgba(59, 130, 246, 0.05)' : 'rgba(255, 255, 255, 0.02)',
+                transition: 'all 0.2s',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".json"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    processFile(e.target.files[0]);
+                  }
+                }}
+              />
+              <FileUp size={32} color="var(--accent-primary)" style={{ opacity: 0.8 }} />
+              <div>
+                <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.95rem' }}>
+                  {file ? file.name : 'Choose a Trip (.json) File or Drag & Drop'}
+                </p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  {file ? `${(file.size / 1024).toFixed(1)} KB` : 'Supports packages exported from TravelBuff'}
+                </p>
+              </div>
+            </div>
+
+            {/* Validation Error Alert */}
+            {validationError && (
+              <div style={{
+                padding: '12px 16px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: 'var(--radius-sm)',
+                color: '#f87171',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px'
+              }}>
+                <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div>
+                  <b>File Error:</b> {validationError}
+                  <div style={{ marginTop: '4px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                    Fix: Ensure you selected a valid exported trip JSON file generated from TravelBuff.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Server Error Alert */}
+            {serverError && (
+              <div style={{
+                padding: '12px 16px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: 'var(--radius-sm)',
+                color: '#f87171',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px'
+              }}>
+                <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div>
+                  <b>Import Failed:</b> {serverError}
+                  <div style={{ marginTop: '4px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                    Fix: Ensure the TravelBuff backend is running, has disk permissions in <code>data/uploads</code>, and retry.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Preview of Valid Bundle */}
+            {parsedBundle && !validationError && (
+              <div style={{
+                padding: '16px',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid var(--border-glass)',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1rem' }}>
+                    {parsedBundle.trip?.name || 'Untitled Trip'}
+                  </h4>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                    {parsedBundle.trip?.length || 1} {parsedBundle.trip?.length === 1 ? 'Day' : 'Days'}
+                  </span>
+                </div>
+
+                {parsedBundle.trip?.start_date && (
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                    📅 Start Date: {parsedBundle.trip.start_date} {parsedBundle.trip.end_date ? `to ${parsedBundle.trip.end_date}` : ''}
+                  </p>
+                )}
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                    📍 {(parsedBundle.data?.itinerary_items || []).length} Itinerary Stops
+                  </span>
+                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                    🗺️ {(parsedBundle.data?.locations || []).length} Locations
+                  </span>
+                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                    🏛️ {(parsedBundle.data?.places || []).length} Places
+                  </span>
+                  {(parsedBundle.files || []).length > 0 && (
+                    <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                      🖼️ {parsedBundle.files.length} Media Files
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleClose}
+                disabled={isImporting}
+                style={{ width: 'auto' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleExecuteImport}
+                disabled={!parsedBundle || Boolean(validationError) || isImporting}
+                style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                {isImporting ? (
+                  <>
+                    <RefreshCw size={14} className="spinning" />
+                    <span>Importing Trip...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload size={14} />
+                    <span>Import Trip</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -7246,7 +7745,8 @@ const ItineraryDay = ({
   isFirstDay = false,
   isLastDay = false,
   prevDay = null,
-  nextDay = null
+  nextDay = null,
+  pageBreakBefore = false
 }) => {
   const combinedPlaces = useMemo(() => {
     const homePlaces = (userAddresses || []).map(addr => ({
@@ -7485,21 +7985,20 @@ const ItineraryDay = ({
 
   return (
     <div 
-      className="itinerary-day-card"
+      className={`itinerary-day-card ${pageBreakBefore ? 'print-page-break-day' : ''}`}
       style={{ 
+        '--day-accent-color': dayColor,
         marginBottom: '20px',
         background: `linear-gradient(135deg, ${dayColor}0f 0%, var(--bg-surface-elevated) 100%)`,
         border: '1px solid var(--border-glass)',
         borderLeft: `4px solid ${dayColor}`,
         borderRadius: 'var(--radius-md)',
         padding: '18px 20px',
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
-        pageBreakInside: 'avoid',
-        breakInside: 'avoid'
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)'
       }}
     >
       {/* Day Header Banner */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+      <div className="itinerary-day-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <span 
             className="itinerary-day-badge"
@@ -7520,7 +8019,7 @@ const ItineraryDay = ({
             🗓️ {label || date}
           </span>
           {assignedDayLocName && (
-            <span style={{ 
+            <span className="itinerary-day-loc-badge" style={{ 
               fontSize: '0.8rem', 
               color: dayColor, 
               background: `${dayColor}18`, 
@@ -7536,7 +8035,7 @@ const ItineraryDay = ({
             </span>
           )}
           {stayLocation && (
-            <span style={{ 
+            <span className="itinerary-day-stay-badge" style={{ 
               fontSize: '0.8rem', 
               color: 'var(--text-secondary)', 
               background: 'rgba(255,255,255,0.06)', 
@@ -7554,7 +8053,7 @@ const ItineraryDay = ({
         </div>
         
         {dayTotalDistance > 0 && (
-          <span style={{ 
+          <span className="itinerary-day-metrics" style={{ 
             fontSize: '0.78rem', 
             color: 'var(--text-secondary)', 
             background: 'rgba(255,255,255,0.05)', 
@@ -7731,7 +8230,7 @@ const ItineraryDay = ({
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                                <span style={{
+                                <span className="timeline-stop-badge" style={{
                                   width: '22px',
                                   height: '22px',
                                   borderRadius: '50%',

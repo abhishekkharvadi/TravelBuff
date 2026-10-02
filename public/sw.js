@@ -1,4 +1,4 @@
-const CACHE_NAME = 'travelbuff-v7.3.0';
+const CACHE_NAME = 'travelbuff-v7.6.0';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -11,17 +11,44 @@ const ASSETS_TO_CACHE = [
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];
 
-// Install Event - Pre-cache core app shell with resilient error handling
+// Helper to extract and cache Vite assets from index.html
+async function cacheAssetsFromHtml(cache, htmlText) {
+  const assetRegex = /(?:src|href)=["'](\/assets\/[^"']+)["']/g;
+  let match;
+  const assetUrls = [];
+  while ((match = assetRegex.exec(htmlText)) !== null) {
+    assetUrls.push(match[1]);
+  }
+  await Promise.allSettled(
+    assetUrls.map(async (assetUrl) => {
+      try {
+        const res = await fetch(assetUrl);
+        if (res && res.status === 200) {
+          await cache.put(assetUrl, res);
+        }
+      } catch (err) {
+        console.warn('[Service Worker] Asset pre-cache skip for:', assetUrl);
+      }
+    })
+  );
+}
+
+// Install Event - Pre-cache core app shell & bundled JS/CSS with resilient error handling
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(async (cache) => {
         console.log('[Service Worker] Pre-caching core app shell');
+        let indexHtmlText = '';
         await Promise.allSettled(
           ASSETS_TO_CACHE.map(async (url) => {
             try {
               const res = await fetch(url);
               if (res && res.status === 200) {
+                if (url === '/index.html' || url === '/') {
+                  const cloned = res.clone();
+                  indexHtmlText = await cloned.text();
+                }
                 await cache.put(url, res);
               }
             } catch (err) {
@@ -29,6 +56,9 @@ self.addEventListener('install', (event) => {
             }
           })
         );
+        if (indexHtmlText) {
+          await cacheAssetsFromHtml(cache, indexHtmlText);
+        }
       })
       .then(() => self.skipWaiting())
   );
@@ -40,7 +70,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME && !cache.startsWith('travelbuff-v7.3.0')) {
+          if (cache !== CACHE_NAME) {
             console.log('[Service Worker] Clearing old cache', cache);
             return caches.delete(cache);
           }
@@ -71,10 +101,14 @@ self.addEventListener('fetch', (event) => {
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
             const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
+            caches.open(CACHE_NAME).then(async (cache) => {
               cache.put(event.request, responseToCache);
               cache.put('/index.html', responseToCache.clone());
               cache.put('/', responseToCache.clone());
+              try {
+                const text = await responseToCache.clone().text();
+                cacheAssetsFromHtml(cache, text);
+              } catch (_) {}
             });
           }
           return networkResponse;
@@ -130,6 +164,11 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       } catch (err) {
+        // As a last-resort fallback for assets when offline, search across all caches
+        try {
+          const anyCacheMatch = await caches.match(event.request, { ignoreSearch: true });
+          if (anyCacheMatch) return anyCacheMatch;
+        } catch (_) {}
         console.warn('[Service Worker] Offline resource not found:', event.request.url);
         return new Response('', {
           status: 404,

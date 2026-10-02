@@ -7,39 +7,18 @@ export default function WhatsNewModal({ isOpen, onClose, onNavigateTab }) {
 
   const features = [
     {
-      icon: <MapPin size={22} style={{ color: '#38bdf8' }} />,
-      title: 'Places Bank Retention & Multi-Visit Support',
-      badge: 'Planning',
+      icon: <Cloud size={22} style={{ color: '#38bdf8' }} />,
+      title: 'Trip Export & Import',
+      badge: 'Data Mobility',
       badgeColor: '#0284c7',
-      desc: 'Places remain in the Places Bank after scheduling so you can visit favorite spots more than once. Visual confirmation badges clearly display when places are already in your itinerary.'
+      desc: 'Seamlessly export a full trip (including locations, itineraries, notes, and photos) as a single portable JSON package, and import it into any other TravelBuff instance. Missing locations and places will be automatically created on the destination server.'
     },
     {
-      icon: <ArrowUpDown size={22} style={{ color: '#a855f7' }} />,
-      title: 'Reliable Stop Reordering & Drag-and-Drop',
-      badge: 'Workflow',
-      badgeColor: '#7e22ce',
-      desc: 'Seamlessly reorder daily stops using Up/Down buttons or interactive Drag-and-Drop across days with clear insertion targets and continuous sequence sync.'
-    },
-    {
-      icon: <Trash2 size={22} style={{ color: '#ec4899' }} />,
-      title: 'Delete Sync Integrity',
-      badge: 'Data Integrity',
-      badgeColor: '#be185d',
-      desc: 'Fixed sync race conditions to prevent deleted itinerary items from ghost-resurrecting during background server synchronization.'
-    },
-    {
-      icon: <Cloud size={22} style={{ color: '#eab308' }} />,
-      title: 'Server-Side What\'s New Persistence',
-      badge: 'Sync',
-      badgeColor: '#ca8a04',
-      desc: 'What\'s New notification dismissals are now persisted directly on your server profile, preventing dismissed release notes from reopening across different browsers and laptops.'
-    },
-    {
-      icon: <Navigation size={22} style={{ color: '#10b981' }} />,
-      title: 'Smart Hotel Checkout End-Stop Routing',
-      badge: 'Navigation',
+      icon: <Sparkles size={22} style={{ color: '#10b981' }} />,
+      title: 'Import Bug Fixes',
+      badge: 'v7.7.1',
       badgeColor: '#059669',
-      desc: 'When selecting "Checkout from hotel" on a day, the day\'s closing endpoint automatically routes to your next day\'s hotel or assigned location.'
+      desc: 'Fixed an issue where trips imported with new/missing locations would silently fail to map day locations and hotels, resulting in an empty itinerary.'
     }
   ];
 

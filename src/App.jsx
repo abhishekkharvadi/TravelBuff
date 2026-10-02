@@ -1118,9 +1118,35 @@ export default function App() {
 
         {/* Connection Offline/Reconnecting Alert Banner */}
         {syncStatus === 'offline' && (
-          <div className="offline-banner no-print">
-            <CloudLightning size={16} />
-            <span>You are currently working offline. Changes will automatically sync when connection restores.</span>
+          <div className="offline-banner no-print" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <CloudLightning size={16} />
+              <span>
+                {activeMode === 'trip' 
+                  ? 'Trip Mode is active offline. All changes are saved locally and will sync when reconnected.' 
+                  : 'Server not connected. Locations & library browsing require network, but your active journey is ready in Trip Mode.'}
+              </span>
+            </div>
+            {activeMode !== 'trip' && (
+              <button 
+                onClick={() => setActiveMode('trip')}
+                style={{
+                  background: 'var(--accent-primary, #8b5cf6)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '4px 12px',
+                  fontWeight: '600',
+                  fontSize: '0.8rem',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Compass size={14} /> Open Trip Mode
+              </button>
+            )}
           </div>
         )}
 
