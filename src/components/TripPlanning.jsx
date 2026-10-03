@@ -1905,6 +1905,14 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
     setSelectedTrip(updatedTrip);
   };
 
+  const handleFullTripUpdate = async (updatedTrip) => {
+    if (!updatedTrip) return;
+    await queueSyncAction('trips', 'update', updatedTrip);
+    if (selectedTrip && selectedTrip.id === updatedTrip.id) {
+      setSelectedTrip(updatedTrip);
+    }
+  };
+
   const getAiPromptText = () => {
     const locLines = locations
       .filter(l => selectedLocationsForAi.includes(l.id))
@@ -4397,6 +4405,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                         prevDay={itineraryDays[dIdx - 1] || null}
                         nextDay={itineraryDays[dIdx + 1] || null}
                         pageBreakBefore={printOptPageBreakDays && dIdx > 0}
+                        onUpdateTrip={handleFullTripUpdate}
                       />
                     </React.Fragment>
                   );
@@ -4977,7 +4986,13 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                 onClick={() => {
                   setShowPrintOptions(false);
                   setTimeout(() => {
+                    const activeTrip = selectedTrip || currentTrip;
+                    const originalTitle = document.title;
+                    const tripName = activeTrip?.name || 'Trip';
+                    const tripDate = activeTrip?.start_date ? activeTrip.start_date : 'No Date';
+                    document.title = `Travelbuff - ${tripName} - ${tripDate}`;
                     window.print();
+                    document.title = originalTitle;
                   }, 300);
                 }} 
                 style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
@@ -7747,7 +7762,8 @@ const ItineraryDay = ({
   isLastDay = false,
   prevDay = null,
   nextDay = null,
-  pageBreakBefore = false
+  pageBreakBefore = false,
+  onUpdateTrip
 }) => {
   const combinedPlaces = useMemo(() => {
     const homePlaces = (userAddresses || []).map(addr => ({
@@ -8127,6 +8143,7 @@ const ItineraryDay = ({
             userAddresses={userAddresses}
             firstDayDate={date}
             firstDayStayName={stayLocation}
+            onUpdateTrip={onUpdateTrip}
           />
         </div>
       )}
@@ -8284,6 +8301,7 @@ const ItineraryDay = ({
             userAddresses={userAddresses}
             lastDayDate={date}
             lastDayStayName={stayLocation}
+            onUpdateTrip={onUpdateTrip}
           />
         </div>
       )}

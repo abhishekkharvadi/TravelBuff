@@ -955,7 +955,7 @@ body.light-theme .leaflet-control-attribution a {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
-  .app-nav, .app-header, .btn, .no-print, .no-print-force {
+  .app-nav, .app-header, .btn, .no-print, .no-print-force, body .mobile-bottom-nav {
     display: none !important;
   }
   .container {

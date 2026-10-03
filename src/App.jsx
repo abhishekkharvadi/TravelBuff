@@ -25,9 +25,16 @@ import { APP_VERSION } from './version.js';
 import { parseRoute, buildHash, navigateToHash, slugify } from './router.js';
 
 const isSignificantUpdate = (lastSeen, current) => {
-  if (!lastSeen || !current) return true;
-  const lastParts = lastSeen.replace('v', '').split('.').map(Number);
+  if (!current) return false;
   const currParts = current.replace('v', '').split('.').map(Number);
+  
+  // Do not show banner for patch versions
+  if (currParts.length >= 3 && currParts[2] > 0) {
+    return false;
+  }
+
+  if (!lastSeen) return true;
+  const lastParts = lastSeen.replace('v', '').split('.').map(Number);
   
   if (lastParts.length < 2 || currParts.length < 2 || isNaN(lastParts[0]) || isNaN(currParts[0])) {
     return lastSeen !== current;

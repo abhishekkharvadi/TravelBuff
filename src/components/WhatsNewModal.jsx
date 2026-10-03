@@ -15,6 +15,13 @@ export default function WhatsNewModal({ isOpen, onClose, onNavigateTab }) {
     },
     {
       icon: <Sparkles size={22} style={{ color: '#10b981' }} />,
+      title: 'Journey & Print Fixes',
+      badge: 'v7.7.4',
+      badgeColor: '#059669',
+      desc: 'Fixed an issue preventing edits to the Outbound/Return Journey configuration from saving in the chronological itinerary view. Also fixed a rendering glitch that caused the mobile navigation bar to appear in print previews.'
+    },
+    {
+      icon: <Sparkles size={22} style={{ color: '#10b981' }} />,
       title: 'Import Bug Fixes',
       badge: 'v7.7.3',
       badgeColor: '#059669',

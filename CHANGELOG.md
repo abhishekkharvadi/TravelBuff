@@ -2,6 +2,18 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.7.4] - 2026-10-03
+
+### 🐞 Bug Fixes
+- **Trip Plan UI**:
+  - Fixed an issue where edits to the "Day 1 Outbound Journey" configuration made directly from the chronological itinerary view in the Trips section would fail to save.
+- **Print Preview Rendering**:
+  - Fixed an issue where the mobile bottom navigation bar would incorrectly overlay the print preview if the print dialog was opened on a narrow window while the "Budget Spend Tracker" section was hidden.
+  - Improved print layout filename. Printing the itinerary will now use "Travelbuff - [Trip Name] - [Date of Travel]" as the default filename.
+- **App Update Notification**:
+  - Fixed a logic bug where the "What's New" update banner would incorrectly trigger for patch releases. The banner will now correctly only automatically show for major and minor version updates.
+
+
 ## [v7.7.3] - 2026-10-03
 
 ### 🐞 Bug Fixes
