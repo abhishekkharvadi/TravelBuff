@@ -24,6 +24,21 @@ import { reconcileMissingFolderCovers } from './utils/photoReconciler.js';
 import { APP_VERSION } from './version.js';
 import { parseRoute, buildHash, navigateToHash, slugify } from './router.js';
 
+const isSignificantUpdate = (lastSeen, current) => {
+  if (!lastSeen || !current) return true;
+  const lastParts = lastSeen.replace('v', '').split('.').map(Number);
+  const currParts = current.replace('v', '').split('.').map(Number);
+  
+  if (lastParts.length < 2 || currParts.length < 2 || isNaN(lastParts[0]) || isNaN(currParts[0])) {
+    return lastSeen !== current;
+  }
+  
+  const [lastMajor, lastMinor] = lastParts;
+  const [currMajor, currMinor] = currParts;
+  
+  return (currMajor !== lastMajor) || (currMinor !== lastMinor);
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [activeMode, setActiveMode] = useState(localStorage.getItem('tb_activeMode') || 'planning'); // 'planning' or 'trip'
@@ -78,7 +93,7 @@ export default function App() {
   useEffect(() => {
     try {
       const lastSeenVersion = localStorage.getItem('tb_last_seen_version');
-      if (lastSeenVersion !== APP_VERSION) {
+      if (lastSeenVersion !== APP_VERSION && isSignificantUpdate(lastSeenVersion, APP_VERSION)) {
         setHasUpdateNotification(true);
       }
     } catch (e) {
@@ -165,6 +180,7 @@ export default function App() {
   const currentFolderIdRef = useRef(currentFolderId);
   const selectedLocationRef = useRef(selectedLocation);
   const selectedTripIdRef = useRef(selectedTripId);
+  const selectedColRef = useRef(selectedCol);
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -182,6 +198,10 @@ export default function App() {
     selectedTripIdRef.current = selectedTripId;
   }, [selectedTripId]);
 
+  useEffect(() => {
+    selectedColRef.current = selectedCol;
+  }, [selectedCol]);
+
   // Router Sync & Browser Back/Forward Navigation Handler
   useEffect(() => {
     const handleRouteSync = async () => {
@@ -194,7 +214,8 @@ export default function App() {
         if (route.folderSlug) {
           try {
             const allLocs = await db.locations.toArray();
-            const folder = allLocs.find(l => l.is_folder === 1 && (slugify(l.name) === route.folderSlug || l.id === route.folderSlug));
+            let folder = allLocs.find(l => l.id === currentFolderIdRef.current && l.is_folder === 1 && (slugify(l.name) === route.folderSlug || l.id === route.folderSlug));
+            if (!folder) folder = allLocs.find(l => l.is_folder === 1 && (slugify(l.name) === route.folderSlug || l.id === route.folderSlug));
             if (folder && folder.id !== currentFolderIdRef.current) {
               setCurrentFolderId(folder.id);
             }
@@ -206,7 +227,8 @@ export default function App() {
         if (route.locationSlug) {
           try {
             const allLocs = await db.locations.toArray();
-            const loc = allLocs.find(l => slugify(l.name) === route.locationSlug || l.id === route.locationSlug);
+            let loc = allLocs.find(l => l.id === selectedLocationRef.current && (slugify(l.name) === route.locationSlug || l.id === route.locationSlug));
+            if (!loc) loc = allLocs.find(l => slugify(l.name) === route.locationSlug || l.id === route.locationSlug);
             if (loc && loc.id !== selectedLocationRef.current) {
               setSelectedLocation(loc.id);
             }
@@ -218,7 +240,9 @@ export default function App() {
         if (route.collectionSlug) {
           try {
             const allCols = await db.collections.toArray();
-            const col = allCols.find(c => slugify(c.name) === route.collectionSlug || c.id === route.collectionSlug);
+            let col = allCols.find(c => c.id === selectedColRef?.current?.id && (slugify(c.name) === route.collectionSlug || c.id === route.collectionSlug));
+            if (!col) col = allCols.find(c => slugify(c.name) === route.collectionSlug || c.id === route.collectionSlug);
+            if (!col) col = allCols.find(c => slugify(c.name) === route.collectionSlug || c.id === route.collectionSlug);
             if (col) {
               setSelectedCol(col);
             }
@@ -230,7 +254,8 @@ export default function App() {
         if (route.tripSlug) {
           try {
             const allTrips = await db.trips.toArray();
-            const trip = allTrips.find(t => slugify(t.name) === route.tripSlug || t.id === route.tripSlug);
+            let trip = allTrips.find(t => t.id === selectedTripIdRef.current && (slugify(t.name) === route.tripSlug || t.id === route.tripSlug));
+            if (!trip) trip = allTrips.find(t => slugify(t.name) === route.tripSlug || t.id === route.tripSlug);
             if (trip && trip.id !== selectedTripIdRef.current) {
               setSelectedTripId(trip.id);
             }
@@ -501,7 +526,11 @@ export default function App() {
           if (data.config) {
             if (data.config.last_seen_version !== undefined && data.config.last_seen_version !== null) {
               localStorage.setItem('tb_last_seen_version', data.config.last_seen_version);
-              setHasUpdateNotification(data.config.last_seen_version !== APP_VERSION);
+              if (data.config.last_seen_version !== APP_VERSION && isSignificantUpdate(data.config.last_seen_version, APP_VERSION)) {
+                setHasUpdateNotification(true);
+              } else {
+                setHasUpdateNotification(false);
+              }
             }
             if (data.config.ai_settings) {
               try {

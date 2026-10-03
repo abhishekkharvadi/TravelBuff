@@ -2,6 +2,14 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.7.3] - 2026-10-03
+
+### 🐞 Bug Fixes
+- **Routing State Conflicts**:
+  - Fixed an asynchronous state overwrite bug where clicking an imported Location card required two clicks to open if a legacy Location with an identical name (and thus an identical URL slug) existed in the library. 
+- **Google Maps Marker Events**:
+  - Replaced deprecated `addListener` with `addEventListener('gmp-click')` for modern `AdvancedMarkerElement` integrations, clearing a developer console warning.
+
 ## [v7.7.2] - 2026-10-02
 
 ### 🐞 Bug Fixes

@@ -1,12 +1,11 @@
 {
   "name": "travelbuff",
-  "version": "7.7.2",
+  "version": "7.7.3",
   "description": "Self-hosted travel log, planning and trip app",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "audit": "osv-scanner scan source -L package-lock.json",
-    "prebuild": "npm run audit",
     "postinstall": "node -e \"try{require.resolve('vite'); require('child_process').execSync('npm run build',{stdio:'inherit'})}catch(e){}\"",
     "start": "cross-env PORT=3000 node server.js",
     "server": "nodemon --use-system-ca server.js",

@@ -362,7 +362,7 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
                 `
               });
 
-              marker.addListener('click', () => {
+              marker.addEventListener('gmp-click', () => {
                 infoWindow.open(googleMap, marker);
               });
 

@@ -16,9 +16,9 @@ export default function WhatsNewModal({ isOpen, onClose, onNavigateTab }) {
     {
       icon: <Sparkles size={22} style={{ color: '#10b981' }} />,
       title: 'Import Bug Fixes',
-      badge: 'v7.7.2',
+      badge: 'v7.7.3',
       badgeColor: '#059669',
-      desc: 'Fixed an issue where trips imported with new/missing locations would silently fail to map day locations and hotels, resulting in an empty itinerary. Also fixed a background sync crash that prevented imported itineraries from downloading.'
+      desc: 'Fixed an issue where imported trips failed to map day locations/hotels, and resolved a background sync crash preventing itinerary downloads. Also fixed a double-click routing bug for duplicate location names.'
     }
   ];
 
