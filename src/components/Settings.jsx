@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, queueSyncAction, generateUUID, clearLocalDb, populateLocalDb } from '../clientDb.js';
-import { Plus, Trash2, Tag, Compass, Folder, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock, Users, Home, MapPin, Search, User, Edit2, ChevronDown, Archive, Map as MapIcon, Copy, Sliders, ShieldCheck, LogOut, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Tag, Compass, Folder, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock, Users, Home, MapPin, Search, User, Edit2, ChevronDown, Archive, Map as MapIcon, Copy, Sliders, ShieldCheck, LogOut, AlertTriangle, Link, Unlink } from 'lucide-react';
 import { APP_VERSION } from '../version.js';
 import ImmichLocationImportModal from './ImmichLocationImportModal.jsx';
 
@@ -567,7 +567,7 @@ function RecorderTrackMapModal({ points = [], onClose }) {
   );
 }
 
-export default function SettingsComponent({ token, userId, username, profilePicture, onProfileUpdated, onLogout, onResumeMarkdown, onRestartTour, onShowChecklist, onNavigate, onOpenWhatsNew }) {
+export default function SettingsComponent({ token, userId, username, displayName, immichPersonId, immichPersonName, profilePicture, onProfileUpdated, onLogout, onResumeMarkdown, onRestartTour, onShowChecklist, onNavigate, onOpenWhatsNew }) {
   // Navigation & Search State
   const [activeSettingsTab, setActiveSettingsTab] = useState('general'); // 'general' | 'integrations' | 'taxonomy' | 'data' | 'account' | 'system'
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
@@ -580,9 +580,24 @@ export default function SettingsComponent({ token, userId, username, profilePict
   const [profileUploadError, setProfileUploadError] = useState(null);
   const [profileUploadSuccess, setProfileUploadSuccess] = useState(false);
 
+  // Account Profile Details state
+  const [accountDisplayName, setAccountDisplayName] = useState(displayName || '');
+  const [accountImmichPersonId, setAccountImmichPersonId] = useState(immichPersonId || null);
+  const [accountImmichPersonName, setAccountImmichPersonName] = useState(immichPersonName || null);
+  const [accountSaving, setAccountSaving] = useState(false);
+  const [accountSuccess, setAccountSuccess] = useState(false);
+  const [accountError, setAccountError] = useState(null);
+  const [immichPickerTarget, setImmichPickerTarget] = useState('companion'); // 'companion' | 'account'
+
   useEffect(() => {
     setProfilePreview(profilePicture);
   }, [profilePicture]);
+
+  useEffect(() => {
+    if (displayName !== undefined) setAccountDisplayName(displayName || '');
+    if (immichPersonId !== undefined) setAccountImmichPersonId(immichPersonId || null);
+    if (immichPersonName !== undefined) setAccountImmichPersonName(immichPersonName || null);
+  }, [displayName, immichPersonId, immichPersonName]);
 
   const handleProfileFileChange = (e) => {
     const selected = e.target.files[0];
@@ -626,6 +641,111 @@ export default function SettingsComponent({ token, userId, username, profilePict
       setProfileUploadError(err.message);
     } finally {
       setProfileUploading(false);
+    }
+  };
+
+  const handleSaveAccountDetails = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setAccountSaving(true);
+    setAccountError(null);
+    setAccountSuccess(false);
+
+    try {
+      const res = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          displayName: accountDisplayName.trim(),
+          immichPersonId: accountImmichPersonId || null,
+          immichPersonName: accountImmichPersonName || null
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update account details');
+      }
+
+      setAccountSuccess(true);
+      if (onProfileUpdated) {
+        onProfileUpdated({
+          displayName: data.displayName,
+          immichPersonId: data.immichPersonId,
+          immichPersonName: data.immichPersonName
+        });
+      }
+      setTimeout(() => setAccountSuccess(false), 3000);
+    } catch (err) {
+      setAccountError(err.message);
+    } finally {
+      setAccountSaving(false);
+    }
+  };
+
+  const handleSelectAccountImmichPerson = async (person) => {
+    setAccountImmichPersonId(person.id);
+    setAccountImmichPersonName(person.name || 'Unnamed');
+    if (!accountDisplayName.trim() && person.name) {
+      setAccountDisplayName(person.name);
+    }
+    setShowImmichPeopleModal(false);
+
+    try {
+      const res = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          displayName: accountDisplayName.trim() || person.name || '',
+          immichPersonId: person.id,
+          immichPersonName: person.name || 'Unnamed'
+        })
+      });
+      const data = await res.json();
+      if (res.ok && onProfileUpdated) {
+        onProfileUpdated({
+          displayName: data.displayName,
+          immichPersonId: data.immichPersonId,
+          immichPersonName: data.immichPersonName
+        });
+      }
+    } catch (err) {
+      console.warn('Failed auto-saving account Immich association in Settings:', err);
+    }
+  };
+
+  const handleUnlinkAccountImmichPerson = async () => {
+    setAccountImmichPersonId(null);
+    setAccountImmichPersonName(null);
+
+    try {
+      const res = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          displayName: accountDisplayName.trim(),
+          immichPersonId: null,
+          immichPersonName: null
+        })
+      });
+      const data = await res.json();
+      if (res.ok && onProfileUpdated) {
+        onProfileUpdated({
+          displayName: data.displayName,
+          immichPersonId: null,
+          immichPersonName: null
+        });
+      }
+    } catch (err) {
+      console.warn('Failed unlinking account Immich association in Settings:', err);
     }
   };
 
@@ -994,7 +1114,8 @@ export default function SettingsComponent({ token, userId, username, profilePict
   };
 
   // Handler: Fetch Immich People
-  const handleOpenImmichPeopleModal = async () => {
+  const handleOpenImmichPeopleModal = async (target = 'companion') => {
+    setImmichPickerTarget(target);
     setShowImmichPeopleModal(true);
     setImmichPeopleLoading(true);
     try {
@@ -3568,6 +3689,110 @@ export default function SettingsComponent({ token, userId, username, profilePict
               </div>
             </div>
 
+            {/* Account Details & Immich Linking Sub-section */}
+            <div style={{ marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--border-glass)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                <User size={18} style={{ color: 'var(--accent-primary)' }} />
+                <span style={{ fontSize: '0.92rem', fontWeight: 600 }}>Personal Details & Immich Association</span>
+              </div>
+
+              {/* Display Name Input */}
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  Display Name / Full Name
+                </label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Abhishek"
+                    value={accountDisplayName}
+                    onChange={(e) => setAccountDisplayName(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSaveAccountDetails}
+                    disabled={accountSaving}
+                    style={{ width: 'auto', padding: '0 16px', fontSize: '0.82rem', height: '36px' }}
+                  >
+                    {accountSaving ? 'Saving...' : 'Save Name'}
+                  </button>
+                </div>
+                <small style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                  Used across trip itineraries, travelers lists, and expense split settlements.
+                </small>
+              </div>
+
+              {accountSuccess && (
+                <div style={{ padding: '8px 12px', borderRadius: '6px', background: 'rgba(74, 222, 128, 0.15)', border: '1px solid #4ade80', color: '#4ade80', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '14px' }}>
+                  <Check size={16} /> Account profile updated successfully!
+                </div>
+              )}
+
+              {accountError && (
+                <div style={{ padding: '8px 12px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#f87171', fontSize: '0.8rem', marginBottom: '14px' }}>
+                  ❌ {accountError}
+                </div>
+              )}
+
+              {/* Immich Profile Card */}
+              <div style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Sparkles size={14} style={{ color: 'var(--accent-primary)' }} /> Immich Face Profile
+                  </span>
+                  {accountImmichPersonId && (
+                    <span style={{ fontSize: '0.72rem', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(74,222,128,0.3)' }}>
+                      Linked
+                    </span>
+                  )}
+                </div>
+
+                {accountImmichPersonId ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <img
+                        src={`/api/immich/person/thumbnail/${accountImmichPersonId}?token=${encodeURIComponent(token || localStorage.getItem('token') || '')}`}
+                        alt={accountImmichPersonName || 'Account Face'}
+                        style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--accent-primary)' }}
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{accountImmichPersonName || 'Immich Face Profile'}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Associated with your Immich library</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={handleUnlinkAccountImmichPerson}
+                      style={{ fontSize: '0.78rem', padding: '6px 12px', width: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}
+                      title="Unlink Immich Face Profile"
+                    >
+                      <Unlink size={13} /> Unlink
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      No Immich face profile linked yet. Connect your account to use your recognized photo avatar in trips.
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => handleOpenImmichPeopleModal('account')}
+                      disabled={!immichEnabled}
+                      style={{ fontSize: '0.78rem', padding: '6px 14px', width: 'auto', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
+                    >
+                      <Link size={13} /> Link Face Profile
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Change Password Sub-section */}
             <form onSubmit={handleChangeOwnPassword} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -4122,7 +4347,8 @@ export default function SettingsComponent({ token, userId, username, profilePict
           <div className="login-card" style={{ maxWidth: '540px', width: '100%', padding: '24px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ margin: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Users size={20} style={{ color: 'var(--accent-primary)' }} /> Import People from Immich
+                <Users size={20} style={{ color: 'var(--accent-primary)' }} /> 
+                {immichPickerTarget === 'account' ? 'Link Account to Immich Person Profile' : 'Import People from Immich'}
               </h3>
               <X size={20} style={{ cursor: 'pointer' }} onClick={() => setShowImmichPeopleModal(false)} />
             </div>
@@ -4155,9 +4381,13 @@ export default function SettingsComponent({ token, userId, username, profilePict
                     <div 
                       key={p.id} 
                       onClick={() => {
-                        setPersonName(p.name || 'Unnamed Person');
-                        setSelectedImmichPerson(p);
-                        setShowImmichPeopleModal(false);
+                        if (immichPickerTarget === 'account') {
+                          handleSelectAccountImmichPerson(p);
+                        } else {
+                          setPersonName(p.name || 'Unnamed Person');
+                          setSelectedImmichPerson(p);
+                          setShowImmichPeopleModal(false);
+                        }
                       }}
                       style={{
                         background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px',

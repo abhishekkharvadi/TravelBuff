@@ -64,6 +64,9 @@ export async function initDatabase() {
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       profile_picture TEXT,
+      display_name TEXT,
+      immich_person_id TEXT,
+      immich_person_name TEXT,
       is_admin INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -242,6 +245,9 @@ export async function initDatabase() {
       receipt_path TEXT,
       is_planned INTEGER DEFAULT 0,
       reservation_id TEXT,
+      is_split INTEGER DEFAULT 0,
+      paid_by TEXT DEFAULT NULL,
+      for_member TEXT DEFAULT NULL,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
     );
@@ -319,6 +325,9 @@ export async function initDatabase() {
   await db.run('ALTER TABLE user_configs ADD COLUMN immich_alt_url TEXT').catch(() => {});
   await db.run('ALTER TABLE user_configs ADD COLUMN ai_settings TEXT').catch(() => {});
   await db.run('ALTER TABLE users ADD COLUMN profile_picture TEXT').catch(() => {});
+  await db.run('ALTER TABLE users ADD COLUMN display_name TEXT').catch(() => {});
+  await db.run('ALTER TABLE users ADD COLUMN immich_person_id TEXT').catch(() => {});
+  await db.run('ALTER TABLE users ADD COLUMN immich_person_name TEXT').catch(() => {});
   await db.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN length INTEGER DEFAULT 1').catch(() => {});
   await db.run('ALTER TABLE locations ADD COLUMN local_file_data TEXT').catch(() => {});
@@ -335,6 +344,9 @@ export async function initDatabase() {
   await db.run('UPDATE itinerary_items SET distance_from_prev = -1 WHERE (distance_from_prev IS NULL OR distance_from_prev = 0) AND sequence_order > 1').catch(() => {});
   await db.run('UPDATE itinerary_items SET duration_from_prev = -1 WHERE (duration_from_prev IS NULL OR duration_from_prev = 0) AND sequence_order > 1').catch(() => {});
   await db.run('ALTER TABLE expenses ADD COLUMN reservation_id TEXT').catch(() => {});
+  await db.run('ALTER TABLE expenses ADD COLUMN is_split INTEGER DEFAULT 0').catch(() => {});
+  await db.run('ALTER TABLE expenses ADD COLUMN paid_by TEXT DEFAULT NULL').catch(() => {});
+  await db.run('ALTER TABLE expenses ADD COLUMN for_member TEXT DEFAULT NULL').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN companions TEXT').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN start_address_id TEXT').catch(() => {});
   await db.run('ALTER TABLE trips ADD COLUMN stop_address_id TEXT').catch(() => {});

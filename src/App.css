@@ -41,6 +41,15 @@
   --endpoint-bg: rgba(74, 222, 128, 0.08);
   --endpoint-border: rgba(74, 222, 128, 0.35);
 
+  --bg-jump-bar: rgba(20, 19, 26, 0.92);
+  --accent-purple-text: #c4b5fd;
+  --accent-purple-strong: #ddd6fe;
+  --accent-emerald-text: #6ee7b7;
+  --accent-emerald-strong: #a7f3d0;
+  --accent-emerald-pill-text: #ecfdf5;
+  --accent-amber-text: #fcd34d;
+  --accent-red-text: #fca5a5;
+
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
@@ -935,6 +944,10 @@ body.light-theme .leaflet-control-attribution a {
   opacity: 0.7;
 }
 
+.collapsed-on-screen {
+  display: none;
+}
+
 /* Printing styling */
 @page {
   size: portrait;
@@ -942,6 +955,9 @@ body.light-theme .leaflet-control-attribution a {
 }
 
 @media print {
+  .collapsed-on-screen {
+    display: block !important;
+  }
   html, body, #root, .app-shell, main, .trip-details-overlay {
     position: static !important;
     display: block !important;
@@ -1081,6 +1097,16 @@ body.light-theme .leaflet-control-attribution a {
     background: #ffffff !important;
     color: #000000 !important;
   }
+  .expense-split-summary-card {
+    background: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #0f172a !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .expense-split-summary-card * {
+    color: #0f172a !important;
+  }
   /* Expenses & Reservations Table Print Styling */
   .expenses-table,
   .reservations-table {
@@ -1089,7 +1115,7 @@ body.light-theme .leaflet-control-attribution a {
     table-layout: fixed !important;
     border-collapse: collapse !important;
     margin-top: 12px !important;
-    font-size: 0.8rem !important;
+    font-size: 0.78rem !important;
     box-sizing: border-box !important;
   }
   .expenses-table th,
@@ -1106,19 +1132,27 @@ body.light-theme .leaflet-control-attribution a {
   }
   .expenses-table th:nth-child(1),
   .expenses-table td:nth-child(1) {
-    width: 22% !important;
+    width: 14% !important;
   }
   .expenses-table th:nth-child(2),
   .expenses-table td:nth-child(2) {
-    width: 38% !important;
+    width: 26% !important;
   }
   .expenses-table th:nth-child(3),
   .expenses-table td:nth-child(3) {
-    width: 25% !important;
+    width: 18% !important;
   }
   .expenses-table th:nth-child(4),
   .expenses-table td:nth-child(4) {
     width: 15% !important;
+  }
+  .expenses-table th:nth-child(5),
+  .expenses-table td:nth-child(5) {
+    width: 15% !important;
+  }
+  .expenses-table th:nth-child(6),
+  .expenses-table td:nth-child(6) {
+    width: 12% !important;
   }
   .reservations-table th:nth-child(1),
   .reservations-table td:nth-child(1) {
@@ -1319,27 +1353,35 @@ body.light-theme .leaflet-control-attribution a {
   }
 }
 
-/* Trip Details Overlay Scroll Fix and Header Alignment */
+/* Full-Page Trip Workspace Layout & Sticky Sub-Header */
+.container.container-full-trip {
+  max-width: 1440px;
+  padding: 16px 24px 48px 24px;
+}
+
 .trip-details-overlay {
-  position: fixed;
-  top: 8%;
-  bottom: 8%;
-  left: 0;
-  right: 0;
+  position: relative;
   margin: 0 auto;
-  width: 80%;
-  max-width: 1000px;
+  width: 100%;
+  max-width: 1440px;
   background: var(--bg-surface);
-  z-index: 1001;
+  z-index: 10;
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-glass);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-  overflow: hidden;
-  isolation: isolate;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+  box-shadow: var(--shadow-panel);
+  overflow: visible;
+}
+
+.trip-sticky-top-bar {
+  position: sticky;
+  top: 61px;
+  z-index: 85;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-glass);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
 
 .modal-backdrop {
@@ -1357,22 +1399,16 @@ body.light-theme .leaflet-control-attribution a {
 }
 
 @media (max-width: 768px) {
-  .trip-details-overlay {
-    top: 57px !important; /* aligns below the main universal header on mobile */
-    bottom: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    margin: 0 !important;
-    width: 100% !important;
-    border-radius: 0 !important;
-    border: none !important;
-    z-index: 99 !important; /* lower than universal header (100) and bottom navigation (1000) */
-    padding-bottom: 72px !important; /* spaces out bottom mobile nav overlap */
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-y: contain;
+  .container.container-full-trip {
+    padding: 8px 8px 84px 8px !important;
   }
-  .modal-backdrop {
-    z-index: 98 !important;
+  .trip-details-overlay {
+    width: 100% !important;
+    border-radius: var(--radius-sm) !important;
+  }
+  .trip-sticky-top-bar {
+    top: 48px !important;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0 !important;
   }
 }
 
@@ -1404,6 +1440,15 @@ body.light-theme {
   --endpoint-color: #15803d;                  /* Rich forest green for crisp readability in light theme */
   --endpoint-bg: rgba(22, 163, 74, 0.1);      /* Balanced light green tint */
   --endpoint-border: rgba(22, 163, 74, 0.35); /* Distinct green border */
+
+  --bg-jump-bar: rgba(248, 250, 252, 0.96);
+  --accent-purple-text: #6d28d9;
+  --accent-purple-strong: #5b21b6;
+  --accent-emerald-text: #047857;
+  --accent-emerald-strong: #065f46;
+  --accent-emerald-pill-text: #064e3b;
+  --accent-amber-text: #b45309;
+  --accent-red-text: #b91c1c;
 
   --text-primary: #111827;         /* Gray 900 */
   --text-secondary: #4b5563;       /* Gray 600 */

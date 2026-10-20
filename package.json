@@ -1,6 +1,6 @@
 {
   "name": "travelbuff",
-  "version": "7.7.4",
+  "version": "7.8.0",
   "description": "Self-hosted travel log, planning and trip app",
   "main": "server.js",
   "type": "module",
@@ -61,6 +61,9 @@
     "brace-expansion": "^2.1.7",
     "multer": "^2.4.0",
     "busboy": "^1.6.0",
-    "undici": "^6.28.1"
+    "undici": "^6.28.1",
+    "proxy-addr": "^2.0.8",
+    "shell-quote": "^1.11.0",
+    "source-map-js": "^1.2.2"
   }
 }

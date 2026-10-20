@@ -1,4 +1,4 @@
-const CACHE_NAME = 'travelbuff-v7.6.0';
+const CACHE_NAME = 'travelbuff-v7.8.0';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -84,10 +84,15 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
 
-  // Exclude API requests, uploads, WebSockets, and non-GET methods from SW interception
+  // Exclude API requests, uploads, WebSockets, dev tooling/modules, and non-GET methods from SW interception
   if (
     requestUrl.pathname.startsWith('/api') || 
     requestUrl.pathname.startsWith('/uploads') || 
+    requestUrl.pathname.startsWith('/src/') ||
+    requestUrl.pathname.startsWith('/@') ||
+    requestUrl.pathname.includes('/node_modules/') ||
+    requestUrl.search.includes('v=') ||
+    requestUrl.search.includes('t=') ||
     event.request.url.includes('ws') ||
     event.request.method !== 'GET'
   ) {
@@ -100,13 +105,16 @@ self.addEventListener('fetch', (event) => {
       fetch(event.request)
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
-            const responseToCache = networkResponse.clone();
+            const cloneForReq = networkResponse.clone();
+            const cloneForIndex = networkResponse.clone();
+            const cloneForRoot = networkResponse.clone();
+            const cloneForText = networkResponse.clone();
             caches.open(CACHE_NAME).then(async (cache) => {
-              cache.put(event.request, responseToCache);
-              cache.put('/index.html', responseToCache.clone());
-              cache.put('/', responseToCache.clone());
+              cache.put(event.request, cloneForReq);
+              cache.put('/index.html', cloneForIndex);
+              cache.put('/', cloneForRoot);
               try {
-                const text = await responseToCache.clone().text();
+                const text = await cloneForText.text();
                 cacheAssetsFromHtml(cache, text);
               } catch (_) {}
             });
@@ -152,11 +160,12 @@ self.addEventListener('fetch', (event) => {
           (networkResponse.type === 'basic' || networkResponse.type === 'cors' || networkResponse.type === 'opaque')
         ) {
           const responseToCache = networkResponse.clone();
+          const cleanResponseToCache = requestUrl.search ? networkResponse.clone() : null;
           const cache = await caches.open(CACHE_NAME);
           await cache.put(event.request, responseToCache);
-          if (requestUrl.search) {
+          if (cleanResponseToCache) {
             try {
-              await cache.put(cleanUrl, responseToCache.clone());
+              await cache.put(cleanUrl, cleanResponseToCache);
             } catch (e) {
               // Ignore opaque put errors on synthetic paths
             }

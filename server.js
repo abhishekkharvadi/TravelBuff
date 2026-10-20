@@ -294,6 +294,9 @@ app.post('/api/auth/login', async (req, res) => {
       userId: user.id,
       isAdmin,
       profilePicture: user.profile_picture,
+      displayName: user.display_name || null,
+      immichPersonId: user.immich_person_id || null,
+      immichPersonName: user.immich_person_name || null,
       owntracksKey: config ? config.owntracks_key : null
     });
   } catch (err) {
@@ -304,13 +307,16 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const config = await db.get('SELECT * FROM user_configs WHERE user_id = ?', [req.user.id]);
-    const user = await db.get('SELECT profile_picture, is_admin FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get('SELECT profile_picture, is_admin, display_name, immich_person_id, immich_person_name FROM users WHERE id = ?', [req.user.id]);
     res.json({ 
       id: req.user.id, 
       username: req.user.username, 
       isAdmin: user ? (user.is_admin || 0) : 0, 
       config, 
-      profilePicture: user ? user.profile_picture : null 
+      profilePicture: user ? user.profile_picture : null,
+      displayName: user ? (user.display_name || null) : null,
+      immichPersonId: user ? (user.immich_person_id || null) : null,
+      immichPersonName: user ? (user.immich_person_name || null) : null
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -319,7 +325,7 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 
 app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
   try {
-    const user = await db.get('SELECT id, username, is_admin, profile_picture FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get('SELECT id, username, is_admin, profile_picture, display_name, immich_person_id, immich_person_name FROM users WHERE id = ?', [req.user.id]);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -333,7 +339,10 @@ app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
       userId: user.id,
       username: user.username,
       isAdmin: user.is_admin || 0,
-      profilePicture: user.profile_picture
+      profilePicture: user.profile_picture,
+      displayName: user.display_name || null,
+      immichPersonId: user.immich_person_id || null,
+      immichPersonName: user.immich_person_name || null
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -566,8 +575,44 @@ app.post('/api/log-error', async (req, res) => {
 // ==========================================
 app.get('/api/user/profile', authenticateToken, async (req, res) => {
   try {
-    const user = await db.get('SELECT username, profile_picture FROM users WHERE id = ?', [req.user.id]);
-    res.json(user);
+    const user = await db.get(
+      'SELECT id, username, profile_picture, display_name, immich_person_id, immich_person_name, is_admin FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({
+      id: user.id,
+      username: user.username,
+      profilePicture: user.profile_picture,
+      displayName: user.display_name || null,
+      immichPersonId: user.immich_person_id || null,
+      immichPersonName: user.immich_person_name || null,
+      isAdmin: user.is_admin || 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/user/profile', authenticateToken, async (req, res) => {
+  const { displayName, immichPersonId, immichPersonName } = req.body;
+  try {
+    await db.run(
+      'UPDATE users SET display_name = ?, immich_person_id = ?, immich_person_name = ? WHERE id = ?',
+      [
+        displayName !== undefined ? (displayName ? displayName.trim() : null) : null,
+        immichPersonId !== undefined ? (immichPersonId ? immichPersonId.trim() : null) : null,
+        immichPersonName !== undefined ? (immichPersonName ? immichPersonName.trim() : null) : null,
+        req.user.id
+      ]
+    );
+    notifyUserClients(req.user.id);
+    res.json({
+      success: true,
+      displayName: displayName ? displayName.trim() : null,
+      immichPersonId: immichPersonId ? immichPersonId.trim() : null,
+      immichPersonName: immichPersonName ? immichPersonName.trim() : null
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2073,7 +2118,7 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
               continue;
             }
             const placeholders = columns.map(() => '?').join(', ');
-            const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
+            const values = columns.map(col => (data[col] !== null && typeof data[col] === 'object') ? JSON.stringify(data[col]) : data[col]);
             
             await db.run(
               `INSERT OR REPLACE INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
@@ -2093,7 +2138,7 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
               continue;
             }
             const assignments = columns.map(col => `${col} = ?`).join(', ');
-            const values = columns.map(col => typeof data[col] === 'object' ? JSON.stringify(data[col]) : data[col]);
+            const values = columns.map(col => (data[col] !== null && typeof data[col] === 'object') ? JSON.stringify(data[col]) : data[col]);
             
             if (hasUserId) {
               values.push(id, userId);
@@ -3821,13 +3866,27 @@ app.get('/api/expenses/:tripId', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/expenses', authenticateToken, async (req, res) => {
-  const { id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned } = req.body;
+  const { id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned, reservation_id, is_split, paid_by, for_member } = req.body;
   const expId = id || crypto.randomUUID();
   try {
     await db.run(
-      `INSERT INTO expenses (id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [expId, trip_id, date, amount, currency || 'USD', category, notes || '', receipt_path || null, is_planned || 0]
+      `INSERT INTO expenses (id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned, reservation_id, is_split, paid_by, for_member) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        expId,
+        trip_id,
+        date,
+        amount,
+        currency || 'USD',
+        category,
+        notes || '',
+        receipt_path || null,
+        is_planned || 0,
+        reservation_id || null,
+        is_split ? 1 : 0,
+        paid_by || null,
+        for_member || null
+      ]
     );
     const result = await db.get('SELECT * FROM expenses WHERE id = ?', [expId]);
     res.json(result);
@@ -3975,6 +4034,35 @@ app.get('/api/trips/:id/export', authenticateToken, async (req, res) => {
       );
     }
 
+    // Collect referenced people (companions, splitMainMembers, paid_by, for_member)
+    const peopleIdSet = new Set();
+    try {
+      const compArr = typeof trip.companions === 'string' ? JSON.parse(trip.companions) : (Array.isArray(trip.companions) ? trip.companions : []);
+      if (Array.isArray(compArr)) {
+        compArr.forEach(cid => { if (cid && cid !== 'self') peopleIdSet.add(String(cid)); });
+      }
+    } catch {}
+    try {
+      const notesParsed = typeof trip.notes === 'string' && trip.notes ? JSON.parse(trip.notes) : (trip.notes || {});
+      if (Array.isArray(notesParsed.splitMainMembers)) {
+        notesParsed.splitMainMembers.forEach(mid => { if (mid && mid !== 'self') peopleIdSet.add(String(mid)); });
+      }
+    } catch {}
+    expenses.forEach(e => {
+      if (e.paid_by && e.paid_by !== 'self') peopleIdSet.add(String(e.paid_by));
+      if (e.for_member && e.for_member !== 'self' && e.for_member !== 'split') peopleIdSet.add(String(e.for_member));
+    });
+
+    let exportedPeople = [];
+    if (peopleIdSet.size > 0) {
+      const pIds = Array.from(peopleIdSet);
+      const pplPlaceholders = pIds.map(() => '?').join(',');
+      exportedPeople = await db.all(
+        `SELECT * FROM people WHERE user_id = ? AND id IN (${pplPlaceholders})`,
+        [userId, ...pIds]
+      );
+    }
+
     // Collect all media files to package
     const filesToExport = new Set();
     locations.forEach(l => { if (l.local_file_data) filesToExport.add(l.local_file_data); });
@@ -4016,7 +4104,8 @@ app.get('/api/trips/:id/export', authenticateToken, async (req, res) => {
         custom_categories: customCategories,
         tags,
         entity_tags: entityTags,
-        entity_photos: entityPhotos
+        entity_photos: entityPhotos,
+        people: exportedPeople
       },
       files: exportFiles
     };
@@ -4217,6 +4306,35 @@ app.post('/api/trips/import', authenticateToken, async (req, res) => {
         }
       }
 
+      // 7b. Resolve / Insert People (Companions & Expense Payers)
+      const peopleList = bundle.data.people || [];
+      for (const person of peopleList) {
+        if (!person || !person.name) continue;
+        const existingPerson = await db.get(
+          'SELECT id FROM people WHERE user_id = ? AND name = ? LIMIT 1',
+          [currentUserId, person.name]
+        );
+        if (existingPerson) {
+          idMap.set(String(person.id), String(existingPerson.id));
+        } else {
+          const newPersonId = `ppl_${crypto.randomUUID()}`;
+          idMap.set(String(person.id), String(newPersonId));
+          await db.run(
+            `INSERT INTO people (id, user_id, name, relation, immich_person_id, immich_person_name, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+              newPersonId,
+              currentUserId,
+              person.name,
+              person.relation || 'Friend',
+              null,
+              null,
+              person.notes || ''
+            ]
+          );
+        }
+      }
+
       // 8. Import Trip
       const origTrip = bundle.trip;
       let finalTripName = origTrip.name;
@@ -4264,12 +4382,25 @@ app.post('/api/trips/import', authenticateToken, async (req, res) => {
             }
             notesObj.segmentTransport = newSegments;
           }
+          if (Array.isArray(notesObj.splitMainMembers)) {
+            notesObj.splitMainMembers = notesObj.splitMainMembers.map(mId =>
+              mId === 'self' ? 'self' : (idMap.get(String(mId)) || mId)
+            );
+          }
           notesStr = JSON.stringify(notesObj);
         }
       } catch (e) {
         console.warn('Failed to parse and update imported trip notes', e);
       }
-      let compStr = typeof origTrip.companions === 'string' ? origTrip.companions : (Array.isArray(origTrip.companions) ? JSON.stringify(origTrip.companions) : null);
+      let compStr = null;
+      try {
+        const rawComp = typeof origTrip.companions === 'string' ? JSON.parse(origTrip.companions) : (Array.isArray(origTrip.companions) ? origTrip.companions : null);
+        if (Array.isArray(rawComp)) {
+          compStr = JSON.stringify(rawComp.map(cId => idMap.get(String(cId)) || cId));
+        }
+      } catch {
+        compStr = typeof origTrip.companions === 'string' ? origTrip.companions : null;
+      }
 
       await db.run(
         `INSERT INTO trips (id, user_id, name, start_date, end_date, length, visited, notes, companions, start_address_id, stop_address_id)
@@ -4343,9 +4474,15 @@ app.post('/api/trips/import', authenticateToken, async (req, res) => {
         const newExpId = `exp_${crypto.randomUUID()}`;
         const newReceiptPath = resolveMedia(exp.receipt_path);
         const mappedResId = exp.reservation_id ? (idMap.get(String(exp.reservation_id)) || null) : null;
+        const mappedPaidBy = exp.paid_by && exp.paid_by !== 'self'
+          ? (idMap.get(String(exp.paid_by)) || exp.paid_by)
+          : (exp.paid_by || null);
+        const mappedForMember = exp.for_member && exp.for_member !== 'self' && exp.for_member !== 'split'
+          ? (idMap.get(String(exp.for_member)) || exp.for_member)
+          : (exp.for_member || null);
         await db.run(
-          `INSERT INTO expenses (id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned, reservation_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO expenses (id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned, reservation_id, is_split, paid_by, for_member)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             newExpId,
             newTripId,
@@ -4356,7 +4493,10 @@ app.post('/api/trips/import', authenticateToken, async (req, res) => {
             exp.notes || '',
             newReceiptPath || null,
             exp.is_planned || 0,
-            mappedResId
+            mappedResId,
+            exp.is_split ? 1 : 0,
+            mappedPaidBy,
+            mappedForMember
           ]
         );
       }
@@ -4558,6 +4698,17 @@ app.get('/api/backup/export', authenticateToken, async (req, res) => {
           console.warn(`Failed to read file ${filename} for backup:`, readErr);
         }
       }
+    }
+
+    // Include account profile metadata
+    try {
+      const userProfile = await db.get(
+        'SELECT display_name, immich_person_id, immich_person_name FROM users WHERE id = ?',
+        [req.user.id]
+      );
+      backup.account_profile = userProfile || null;
+    } catch (_) {
+      backup.account_profile = null;
     }
 
     res.setHeader('Content-Type', 'application/json');
@@ -4773,6 +4924,19 @@ app.post('/api/backup/restore/metadata', async (req, res) => {
   // Reconcile nested folder hierarchy parent_ids if parent IDs were remapped
   for (const [oldId, newId] of idMap.entries()) {
     await db.run('UPDATE locations SET parent_id = ? WHERE parent_id = ?', [newId, oldId]).catch(() => {});
+  }
+
+  // Restore account profile metadata if included in backup
+  if (data.account_profile && currentUserId) {
+    try {
+      const ap = data.account_profile;
+      await db.run(
+        'UPDATE users SET display_name = COALESCE(?, display_name), immich_person_id = COALESCE(?, immich_person_id), immich_person_name = COALESCE(?, immich_person_name) WHERE id = ?',
+        [ap.display_name || null, ap.immich_person_id || null, ap.immich_person_name || null, currentUserId]
+      );
+    } catch (apErr) {
+      console.warn('[Restore Metadata Warning] Failed to restore account profile metadata:', apErr.message);
+    }
   }
 
   // Check configuration integration warnings
@@ -5026,6 +5190,19 @@ app.post('/api/backup/restore', async (req, res) => {
     // Reconcile nested folder hierarchy parent_ids if parent IDs were remapped
     for (const [oldId, newId] of idMap.entries()) {
       await db.run('UPDATE locations SET parent_id = ? WHERE parent_id = ?', [newId, oldId]).catch(() => {});
+    }
+
+    // Restore account profile metadata if included in backup
+    if (data.account_profile && currentUserId) {
+      try {
+        const ap = data.account_profile;
+        await db.run(
+          'UPDATE users SET display_name = COALESCE(?, display_name), immich_person_id = COALESCE(?, immich_person_id), immich_person_name = COALESCE(?, immich_person_name) WHERE id = ?',
+          [ap.display_name || null, ap.immich_person_id || null, ap.immich_person_name || null, currentUserId]
+        );
+      } catch (apErr) {
+        console.warn('[Legacy Restore Warning] Failed to restore account profile metadata:', apErr.message);
+      }
     }
 
     // Restore files

@@ -289,6 +289,9 @@ export default function App() {
       setSelectedLocation(null);
       setCurrentFolderId(null);
       navigateToHash(buildHash('locations'));
+    } else if (tab === 'trips') {
+      setSelectedTripId(null);
+      navigateToHash(buildHash('trips'));
     } else {
       navigateToHash(buildHash(tab));
     }
@@ -459,6 +462,9 @@ export default function App() {
     const savedUserId = localStorage.getItem('tb_userId');
     const savedOwnTracksKey = localStorage.getItem('tb_owntracksKey');
     const savedProfilePicture = localStorage.getItem('tb_profilePicture');
+    const savedDisplayName = localStorage.getItem('tb_displayName') || '';
+    const savedImmichPersonId = localStorage.getItem('tb_immichPersonId') || '';
+    const savedImmichPersonName = localStorage.getItem('tb_immichPersonName') || '';
     const savedIsAdmin = localStorage.getItem('tb_isAdmin') === '1' ? 1 : 0;
 
     if (savedToken && savedUsername && savedUserId) {
@@ -468,6 +474,9 @@ export default function App() {
         userId: savedUserId,
         isAdmin: savedIsAdmin,
         profilePicture: savedProfilePicture,
+        displayName: savedDisplayName || null,
+        immichPersonId: savedImmichPersonId || null,
+        immichPersonName: savedImmichPersonName || null,
         owntracksKey: savedOwnTracksKey
       };
       setUser(userData);
@@ -525,10 +534,20 @@ export default function App() {
           if (data.isAdmin !== undefined) {
             setUser(prev => {
               if (!prev) return prev;
-              if (prev.isAdmin === data.isAdmin) return prev;
-              return { ...prev, isAdmin: data.isAdmin };
+              return { 
+                ...prev, 
+                isAdmin: data.isAdmin,
+                profilePicture: data.profilePicture !== undefined ? data.profilePicture : prev.profilePicture,
+                displayName: data.displayName !== undefined ? data.displayName : prev.displayName,
+                immichPersonId: data.immichPersonId !== undefined ? data.immichPersonId : prev.immichPersonId,
+                immichPersonName: data.immichPersonName !== undefined ? data.immichPersonName : prev.immichPersonName
+              };
             });
             localStorage.setItem('tb_isAdmin', data.isAdmin ? '1' : '0');
+            if (data.profilePicture) localStorage.setItem('tb_profilePicture', data.profilePicture);
+            if (data.displayName) localStorage.setItem('tb_displayName', data.displayName);
+            if (data.immichPersonId) localStorage.setItem('tb_immichPersonId', data.immichPersonId);
+            if (data.immichPersonName) localStorage.setItem('tb_immichPersonName', data.immichPersonName);
           }
           if (data.config) {
             if (data.config.last_seen_version !== undefined && data.config.last_seen_version !== null) {
@@ -668,6 +687,10 @@ export default function App() {
       setTimeout(() => setShowOnboardingTour(true), 600);
     }
 
+    if (data.displayName) localStorage.setItem('tb_displayName', data.displayName);
+    if (data.immichPersonId) localStorage.setItem('tb_immichPersonId', data.immichPersonId);
+    if (data.immichPersonName) localStorage.setItem('tb_immichPersonName', data.immichPersonName);
+
     setUser(data);
     
     // Sync status manager
@@ -690,6 +713,9 @@ export default function App() {
     if (data.profilePicture) {
       localStorage.setItem('tb_profilePicture', data.profilePicture);
     }
+    if (data.displayName) localStorage.setItem('tb_displayName', data.displayName);
+    if (data.immichPersonId) localStorage.setItem('tb_immichPersonId', data.immichPersonId);
+    if (data.immichPersonName) localStorage.setItem('tb_immichPersonName', data.immichPersonName);
 
     setUser(data);
     setShowReauthModal(false);
@@ -714,6 +740,9 @@ export default function App() {
     localStorage.removeItem('tb_isAdmin');
     localStorage.removeItem('tb_owntracksKey');
     localStorage.removeItem('tb_profilePicture');
+    localStorage.removeItem('tb_displayName');
+    localStorage.removeItem('tb_immichPersonId');
+    localStorage.removeItem('tb_immichPersonName');
     sessionStorage.removeItem('tb_session_token');
     
     await clearLocalDb();
@@ -722,11 +751,27 @@ export default function App() {
     setActiveTab('locations');
   };
 
-  const handleProfileUpdated = (newPic) => {
+  const handleProfileUpdated = (updated) => {
     setUser(prev => {
       if (!prev) return prev;
-      localStorage.setItem('tb_profilePicture', newPic);
-      return { ...prev, profilePicture: newPic };
+      if (typeof updated === 'string') {
+        localStorage.setItem('tb_profilePicture', updated);
+        return { ...prev, profilePicture: updated };
+      }
+      if (updated && typeof updated === 'object') {
+        if (updated.profilePicture) localStorage.setItem('tb_profilePicture', updated.profilePicture);
+        if (updated.displayName !== undefined) localStorage.setItem('tb_displayName', updated.displayName || '');
+        if (updated.immichPersonId !== undefined) localStorage.setItem('tb_immichPersonId', updated.immichPersonId || '');
+        if (updated.immichPersonName !== undefined) localStorage.setItem('tb_immichPersonName', updated.immichPersonName || '');
+        return {
+          ...prev,
+          profilePicture: updated.profilePicture !== undefined ? updated.profilePicture : prev.profilePicture,
+          displayName: updated.displayName !== undefined ? updated.displayName : prev.displayName,
+          immichPersonId: updated.immichPersonId !== undefined ? updated.immichPersonId : prev.immichPersonId,
+          immichPersonName: updated.immichPersonName !== undefined ? updated.immichPersonName : prev.immichPersonName
+        };
+      }
+      return prev;
     });
   };
 
@@ -1062,6 +1107,9 @@ export default function App() {
               <div className="user-dropdown no-print" style={{
                 position: 'absolute', top: '100%', right: '0', marginTop: '8px', background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '8px 0', minWidth: '220px', zIndex: 9999, boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
               }}>
+                <button onClick={() => { setShowAccountModal(true); setUserMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <User size={16} /> Account Details & Profile
+                </button>
                 <button onClick={() => { handleTabSelect('settings'); setUserMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Settings size={16} /> Settings
                 </button>
@@ -1274,6 +1322,14 @@ export default function App() {
                     token={user.token} 
                     selectedTripId={selectedTripId}
                     onSelectTrip={handleTripSelect}
+                    accountOwner={{
+                      name: user.displayName || user.username || 'Me',
+                      displayName: user.displayName || '',
+                      username: user.username,
+                      immichPersonId: user.immichPersonId || null,
+                      immichPersonName: user.immichPersonName || null,
+                      profilePicture: user.profilePicture || null
+                    }}
                   />
                 )}
                 {activeTab === 'archived' && (
@@ -1287,6 +1343,9 @@ export default function App() {
                     token={user.token} 
                     userId={user.userId} 
                     username={user.username}
+                    displayName={user.displayName}
+                    immichPersonId={user.immichPersonId}
+                    immichPersonName={user.immichPersonName}
                     profilePicture={user.profilePicture}
                     onProfileUpdated={handleProfileUpdated}
                     onLogout={handleLogout} 

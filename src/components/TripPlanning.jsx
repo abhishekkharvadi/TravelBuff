@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Calendar, MapPin, Plus, Trash2, Tag, Receipt, 
-  ChevronRight, Printer, AlertTriangle, FileText, 
+  ChevronRight, ChevronDown, Printer, AlertTriangle, FileText, 
   Map, Edit, CheckSquare, X, DollarSign, RefreshCw, Star, Compass,
   Search, Folder, Download, Upload, CheckCircle2, FileUp
 } from 'lucide-react';
@@ -327,7 +327,7 @@ const getItineraryDays = (trip) => {
   return days;
 };
 
-export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
+export default function TripPlanning({ token, selectedTripId, onSelectTrip, accountOwner }) {
   // Dexie query
   // Consolidate all Dexie queries to avoid back-to-back renders (WebSocket flickering)
   const syncData = useLiveQuery(async () => {
@@ -358,6 +358,23 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
     trips, locations: rawLocations = [], places: rawPlaces = [], tags, entityTags, collections, 
     reservations, itineraries, expenses, rates, tripNotes: notesList, people = [], userAddresses = [], customCategories = [], photos = [], syncQueue 
   } = syncData;
+
+  const ownerProfile = useMemo(() => {
+    const cachedDisplayName = localStorage.getItem('tb_displayName') || '';
+    const cachedImmichPersonId = localStorage.getItem('tb_immichPersonId') || null;
+    const cachedImmichPersonName = localStorage.getItem('tb_immichPersonName') || null;
+    const cachedProfilePicture = localStorage.getItem('tb_profilePicture') || null;
+    const cachedUsername = localStorage.getItem('tb_username') || '';
+
+    return {
+      displayName: accountOwner?.displayName || cachedDisplayName || '',
+      username: accountOwner?.username || cachedUsername || '',
+      name: accountOwner?.displayName || accountOwner?.name || cachedDisplayName || cachedUsername || 'Me',
+      immichPersonId: accountOwner?.immichPersonId !== undefined ? accountOwner.immichPersonId : cachedImmichPersonId,
+      immichPersonName: accountOwner?.immichPersonName !== undefined ? accountOwner.immichPersonName : cachedImmichPersonName,
+      profilePicture: accountOwner?.profilePicture !== undefined ? accountOwner.profilePicture : cachedProfilePicture
+    };
+  }, [accountOwner]);
 
   const locations = useMemo(() => rawLocations.filter(l => Number(l.is_archived) !== 1), [rawLocations]);
   const places = useMemo(() => rawPlaces.filter(p => Number(p.is_archived) !== 1), [rawPlaces]);
@@ -603,16 +620,7 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
     setIsEditingTripMeta(true);
   };
 
-  // Close planner details on pressing Escape key
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && selectedTrip) {
-        setSelectedTrip(null);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedTrip]);
+
 
   // Add Folder Dropdown click-outside reference & hook
   const addFolderDropdownRef = useRef(null);
@@ -1209,6 +1217,9 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   const [expDate, setExpDate] = useState('');
   const [expIsPlanned, setExpIsPlanned] = useState(false); // Planned vs Actual
   const [expFile, setExpFile] = useState(null);
+  const [expIsSplit, setExpIsSplit] = useState(false);
+  const [expPaidBy, setExpPaidBy] = useState('self');
+  const [expForMember, setExpForMember] = useState(null);
 
   // Edit Expense States
   const [editingExpenseId, setEditingExpenseId] = useState(null);
@@ -1217,6 +1228,19 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   const [editExpCategory, setEditExpCategory] = useState('');
   const [editExpNotes, setEditExpNotes] = useState('');
   const [editExpDate, setEditExpDate] = useState('');
+  const [editExpIsSplit, setEditExpIsSplit] = useState(false);
+  const [editExpPaidBy, setEditExpPaidBy] = useState('self');
+  const [editExpForMember, setEditExpForMember] = useState(null);
+
+  // Inline Add Person inside Manage Travelers Modal
+  const [newTravelerName, setNewTravelerName] = useState('');
+  const [newTravelerRelation, setNewTravelerRelation] = useState('Friend');
+
+  // Collapsible Sections, Focus Mode & Days for Specific Trip Plan Navigation
+  const [collapsedSections, setCollapsedSections] = useState({});
+  const [focusedSection, setFocusedSection] = useState(null);
+  const [collapsedDays, setCollapsedDays] = useState({});
+
   const [itinTargetDate, setItinTargetDate] = useState('');
   const [tripSearchQuery, setTripSearchQuery] = useState('');
   const [tripFilterStatus, setTripFilterStatus] = useState('all'); // 'all', 'planned', 'completed'
@@ -1337,6 +1361,61 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   const [resetBackupSnapshot, setResetBackupSnapshot] = useState(null);
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
   const [isResettingItinerary, setIsResettingItinerary] = useState(false);
+
+  // Close sub-modals or planner details on pressing Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && selectedTrip) {
+        if (showTravelersModal) {
+          setShowTravelersModal(false);
+          setTravelerSearch('');
+          setTravelerTab('local');
+          return;
+        }
+        if (showTripNoteModal) {
+          setShowTripNoteModal(false);
+          return;
+        }
+        if (showTransitModal) {
+          setShowTransitModal(false);
+          return;
+        }
+        if (showAddPlaceModal) {
+          setShowAddPlaceModal(false);
+          return;
+        }
+        if (showAddFolderModal) {
+          setShowAddFolderModal(false);
+          return;
+        }
+        if (showBankAiModal) {
+          setShowBankAiModal(false);
+          return;
+        }
+        if (showResetConfirmModal) {
+          setShowResetConfirmModal(false);
+          return;
+        }
+        if (showImportTripModal) {
+          setShowImportTripModal(false);
+          return;
+        }
+        setSelectedTrip(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    selectedTrip,
+    showTravelersModal,
+    showTripNoteModal,
+    showTransitModal,
+    showAddPlaceModal,
+    showAddFolderModal,
+    showBankAiModal,
+    showResetConfirmModal,
+    showImportTripModal
+  ]);
 
   const filteredPlacesToAdd = useMemo(() => {
     if (!selectedTrip) return [];
@@ -1745,6 +1824,8 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip }) {
   const [printOptPageBreakDays, setPrintOptPageBreakDays] = useState(false);
   const [printOptReservations, setPrintOptReservations] = useState(true);
   const [printOptExpenses, setPrintOptExpenses] = useState(true);
+  const [printOptExpenseSplit, setPrintOptExpenseSplit] = useState(true);
+  const [printOptNotes, setPrintOptNotes] = useState(true);
 
   useEffect(() => {
     localStorage.setItem('tripModeActive', tripModeActive);
@@ -2997,6 +3078,40 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
     setCurRate('');
   };
 
+  // Sanitize for_member so literal "null" strings or self-references are treated as null
+  const normalizeForMemberId = useCallback((rawForMember, payerId = 'self') => {
+    if (rawForMember === null || rawForMember === undefined) return null;
+    let str = String(rawForMember).trim();
+    if (!str || str === 'null' || str === 'undefined' || str === 'split' || str === 'self_payer' || str === 'personal') {
+      return null;
+    }
+
+    const ownerImmichId = ownerProfile.immichPersonId;
+    // Canonicalize owner references (including matching Immich companion)
+    if (str === 'self' || (ownerImmichId && str === String(ownerImmichId))) {
+      str = 'self';
+    } else {
+      const matchComp = people.find(p => String(p.id) === str);
+      if (matchComp && ownerImmichId && String(matchComp.immich_person_id) === String(ownerImmichId)) {
+        str = 'self';
+      }
+    }
+
+    let cleanPayer = (payerId && String(payerId).trim() !== 'null') ? String(payerId).trim() : 'self';
+    if (cleanPayer === 'self' || (ownerImmichId && cleanPayer === String(ownerImmichId))) {
+      cleanPayer = 'self';
+    } else {
+      const matchComp = people.find(p => String(p.id) === cleanPayer);
+      if (matchComp && ownerImmichId && String(matchComp.immich_person_id) === String(ownerImmichId)) {
+        cleanPayer = 'self';
+      }
+    }
+
+    if (str === cleanPayer) return null;
+    if (str !== 'self' && !people.some(p => String(p.id) === str)) return null;
+    return str;
+  }, [people, ownerProfile]);
+
   // Add Expense
   const handleAddExpense = async (e) => {
     e.preventDefault();
@@ -3021,6 +3136,11 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
       }
     }
 
+    const payerVal = expPaidBy || 'self';
+    const forMemberVal = expIsSplit
+      ? null
+      : normalizeForMemberId(expForMember, payerVal);
+
     const newExp = {
       id: generateUUID(),
       trip_id: selectedTrip.id,
@@ -3030,7 +3150,10 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
       category: expCategory,
       notes: expNotes,
       receipt_path: receiptUrl,
-      is_planned: 0
+      is_planned: 0,
+      is_split: expIsSplit ? 1 : 0,
+      paid_by: payerVal,
+      for_member: forMemberVal
     };
 
     await queueSyncAction('expenses', 'insert', newExp);
@@ -3039,6 +3162,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
     setExpAmount('');
     setExpNotes('');
     setExpFile(null);
+    setExpForMember(null);
     if (document.getElementById('exp-file-input')) {
       document.getElementById('exp-file-input').value = '';
     }
@@ -3046,12 +3170,18 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
   // Start Editing Expense
   const handleStartEditExpense = (exp) => {
+    const payerVal = (exp.paid_by && String(exp.paid_by) !== 'null') ? exp.paid_by : 'self';
+    const cleanForMember = normalizeForMemberId(exp.for_member, payerVal);
+    const isSplitRow = !cleanForMember && Number(exp.is_split) === 1;
     setEditingExpenseId(exp.id);
     setEditExpAmount(exp.amount.toString());
     setEditExpCurrency(exp.currency);
     setEditExpCategory(exp.category);
     setEditExpNotes(exp.notes || '');
     setEditExpDate(exp.date);
+    setEditExpIsSplit(isSplitRow);
+    setEditExpPaidBy(payerVal);
+    setEditExpForMember(cleanForMember);
   };
 
   // Save Edited Expense
@@ -3060,17 +3190,79 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
     const existing = expenses.find(e => e.id === expId);
     if (!existing) return;
 
+    const payerVal = editExpPaidBy || 'self';
+    const forMemberVal = editExpIsSplit
+      ? null
+      : normalizeForMemberId(editExpForMember, payerVal);
+
     const updated = {
       ...existing,
       amount: parseFloat(editExpAmount),
       currency: editExpCurrency,
       category: editExpCategory,
       notes: editExpNotes,
-      date: editExpDate
+      date: editExpDate,
+      is_split: editExpIsSplit ? 1 : 0,
+      paid_by: payerVal,
+      for_member: forMemberVal
     };
 
     await queueSyncAction('expenses', 'update', updated);
     setEditingExpenseId(null);
+  };
+
+  // Quick toggle split status on an existing expense row
+  const handleToggleExpenseSplit = async (exp) => {
+    if (!exp) return;
+    const nextSplit = Number(exp.is_split) === 1 ? 0 : 1;
+    const payerVal = (exp.paid_by && String(exp.paid_by) !== 'null') ? exp.paid_by : 'self';
+    const updated = {
+      ...exp,
+      is_split: nextSplit,
+      paid_by: payerVal,
+      for_member: nextSplit === 1 ? null : normalizeForMemberId(exp.for_member, payerVal)
+    };
+    await queueSyncAction('expenses', 'update', updated);
+  };
+
+  // Inline create a new person inside Manage Travelers modal and attach to trip
+  const handleAddInlineTraveler = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const cleanName = (newTravelerName || '').trim();
+    if (!cleanName || !selectedTrip) return;
+
+    const newPerson = {
+      id: generateUUID(),
+      name: cleanName,
+      relation: (newTravelerRelation || 'Friend').trim() || 'Friend',
+      immich_person_id: null,
+      immich_person_name: '',
+      notes: ''
+    };
+    await queueSyncAction('people', 'insert', newPerson);
+
+    const compIds = safeParseArray(selectedTrip.companions);
+    const updatedComp = [...compIds, newPerson.id];
+    const existingNotes = safeParseNotes(selectedTrip.notes);
+    const currentMain = Array.isArray(existingNotes.splitMainMembers) ? existingNotes.splitMainMembers : [];
+    const nextMain = currentMain.length > 0
+      ? [...new Set([...currentMain, newPerson.id])]
+      : ['self', newPerson.id];
+    const updatedNotes = {
+      ...existingNotes,
+      splitMainMembers: nextMain,
+      splitCount: nextMain.length
+    };
+
+    const updatedTrip = {
+      ...selectedTrip,
+      companions: JSON.stringify(updatedComp),
+      notes: JSON.stringify(updatedNotes)
+    };
+    await queueSyncAction('trips', 'update', updatedTrip);
+    setSelectedTrip(updatedTrip);
+    setNewTravelerName('');
+    setNewTravelerRelation('Friend');
   };
 
   // Delete Expense (with bi-directional cascade deletion to reservations)
@@ -3107,14 +3299,785 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
   // Budget calculations
   const getConvertedAmount = (amount, currency) => {
-    if (currency === 'USD') return amount;
+    const numAmt = Number(amount) || 0;
+    if (!currency || currency === baseCurrency) return numAmt;
     const rateRow = rates.find(r => selectedTrip && r.trip_id === selectedTrip.id && r.currency === currency);
-    return rateRow ? amount * rateRow.rate : amount; // defaults to 1:1 if not found
+    return rateRow ? numAmt * rateRow.rate : numAmt; // defaults to 1:1 if not found
+  };
+
+  const getExpenseExchangeRate = (currency) => {
+    if (!currency || currency === baseCurrency) return 1;
+    const rateRow = rates.find(r => selectedTrip && r.trip_id === selectedTrip.id && r.currency === currency);
+    return rateRow ? Number(rateRow.rate) || 1 : 1;
   };
 
   const tripExpensesList = selectedTrip 
     ? [...expenses.filter(e => e.trip_id === selectedTrip.id)].sort((a, b) => b.date.localeCompare(a.date))
     : [];
+
+  const getMemberName = useCallback((memberId, isShort = false) => {
+    if (!memberId || memberId === 'null' || memberId === 'undefined') return 'Traveler';
+    const ownerName = ownerProfile.displayName || ownerProfile.name || 'Me';
+    const ownerImmichId = ownerProfile.immichPersonId;
+
+    const isOwner = memberId === 'self' || 
+      (ownerImmichId && String(memberId) === String(ownerImmichId)) ||
+      people.some(p => String(p.id) === String(memberId) && ownerImmichId && String(p.immich_person_id) === String(ownerImmichId));
+
+    if (isOwner) {
+      if (isShort) return ownerName;
+      return ownerName === 'Me' ? 'Me' : `${ownerName} (Me)`;
+    }
+
+    const matched = people.find(p => String(p.id) === String(memberId));
+    return matched ? matched.name : 'Traveler';
+  }, [people, ownerProfile]);
+
+  // Trip Split & Main Member Configuration
+  const tripSplitConfig = useMemo(() => {
+    const activeTrip = selectedTrip || currentTrip;
+    if (!activeTrip) {
+      return {
+        compIds: [],
+        tripTravelers: [],
+        tripPeople: [],
+        splitMainMembers: ['self'],
+        mainMemberIds: ['self'],
+        mainMemberObjects: [],
+        splitCount: 1,
+        isSplitActive: false,
+        isSplitConfigured: false,
+        hasTravelersOrSplit: false,
+        includeOwner: true
+      };
+    }
+    const compIds = safeParseArray(activeTrip.companions);
+    const tripTravelers = people.filter(p => safeIncludes(compIds, p.id));
+    const notesObj = safeParseNotes(activeTrip.notes);
+    const includeOwner = notesObj.includeOwner !== false;
+    const rawMain = Array.isArray(notesObj.splitMainMembers) ? notesObj.splitMainMembers : [];
+    const customCount = Number(notesObj.splitCount) || 0;
+
+    const hasAnySplitExpense = tripExpensesList.some(
+      e => Number(e.is_split) === 1 ||
+           (e.paid_by && e.paid_by !== 'self' && e.paid_by !== 'null') ||
+           Boolean(normalizeForMemberId(e.for_member, e.paid_by || 'self'))
+    );
+
+    // Filter out companion record that matches the account owner's Immich person ID
+    const filteredTripTravelers = tripTravelers.filter(p => {
+      if (ownerProfile.immichPersonId && String(p.immich_person_id) === String(ownerProfile.immichPersonId)) {
+        return false;
+      }
+      return true;
+    });
+
+    // Effective main members list:
+    let effectiveMainIds = rawMain.filter(id => {
+      if (id === 'self') return includeOwner;
+      return people.some(p => String(p.id) === String(id));
+    });
+
+    if (includeOwner) {
+      if (
+        effectiveMainIds.length === 0 ||
+        (effectiveMainIds.length === 1 && effectiveMainIds[0] === 'self' && filteredTripTravelers.length > 0 && !notesObj.splitMainMembersCustomized)
+      ) {
+        effectiveMainIds = ['self', ...filteredTripTravelers.map(p => p.id)];
+      }
+      if (effectiveMainIds.length === 0) {
+        effectiveMainIds = ['self'];
+      }
+    } else {
+      effectiveMainIds = effectiveMainIds.filter(id => id !== 'self');
+      if (effectiveMainIds.length === 0 && filteredTripTravelers.length > 0) {
+        effectiveMainIds = filteredTripTravelers.map(p => p.id);
+      }
+      if (effectiveMainIds.length === 0) {
+        effectiveMainIds = ['self'];
+      }
+    }
+
+    const effectiveSplitCount = (notesObj.splitCountCustomized && customCount > 0)
+      ? customCount
+      : (customCount > effectiveMainIds.length ? customCount : Math.max(1, effectiveMainIds.length));
+
+    const isSplitActive =
+      compIds.length > 0 ||
+      effectiveSplitCount > 1 ||
+      effectiveMainIds.length > 1 ||
+      hasAnySplitExpense ||
+      Boolean(notesObj.splitCount) ||
+      Boolean(notesObj.splitMainMembers);
+    const hasTravelersOrSplit = compIds.length > 0 || isSplitActive;
+
+    const mainMemberObjects = effectiveMainIds.map(id => {
+      if (id === 'self') {
+        const ownerName = ownerProfile.displayName || ownerProfile.name || 'Me';
+        return { id: 'self', name: ownerName, shortName: ownerName, relation: 'Trip Owner (You)', isMain: true };
+      }
+      const p = people.find(person => String(person.id) === String(id));
+      return {
+        id: String(id),
+        name: p ? p.name : 'Traveler',
+        shortName: p ? p.name : 'Traveler',
+        relation: p ? (p.relation || 'Companion') : 'Companion',
+        isMain: true
+      };
+    });
+
+    return {
+      compIds,
+      tripTravelers: filteredTripTravelers,
+      tripPeople: filteredTripTravelers,
+      splitMainMembers: effectiveMainIds,
+      mainMemberIds: effectiveMainIds,
+      mainMemberObjects,
+      splitCount: effectiveSplitCount,
+      isSplitActive,
+      isSplitConfigured: isSplitActive,
+      hasTravelersOrSplit,
+      includeOwner
+    };
+  }, [selectedTrip, currentTrip, people, tripExpensesList, normalizeForMemberId, ownerProfile]);
+
+  // Keep expIsSplit default synced when opening a trip with splitting configured
+  useEffect(() => {
+    setExpIsSplit(tripSplitConfig.splitCount > 1);
+    setExpPaidBy('self');
+    setExpForMember(null);
+    setFocusedSection(null);
+  }, [selectedTrip?.id, tripSplitConfig.splitCount]);
+
+  // Expense Split & Settlement Calculation (including 100% Paid-for-Someone-Else reimbursements)
+  const expenseSplitSummary = useMemo(() => {
+    const divisor = Math.max(1, tripSplitConfig.splitCount || 1);
+    const splitExpenses = tripExpensesList.filter(e => Number(e.is_split) === 1);
+    const personalExpenses = tripExpensesList.filter(e => Number(e.is_split) !== 1);
+
+    const totalSplitSpend = splitExpenses.reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+    const totalPersonalSpend = personalExpenses.reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+    const totalSpend = totalSplitSpend + totalPersonalSpend;
+    const perMemberShare = divisor > 0 ? totalSplitSpend / divisor : 0;
+
+    // Collect all participating members (Main Members + trip companions + anyone who paid or received an expense)
+    const memberIdsOrdered = [...(tripSplitConfig.splitMainMembers.length > 0 ? tripSplitConfig.splitMainMembers : ['self'])];
+    tripSplitConfig.tripTravelers.forEach(p => {
+      if (!memberIdsOrdered.some(id => String(id) === String(p.id))) {
+        memberIdsOrdered.push(String(p.id));
+      }
+    });
+    tripExpensesList.forEach(e => {
+      const payerId = (e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self';
+      if (!memberIdsOrdered.some(id => String(id) === String(payerId))) {
+        memberIdsOrdered.push(String(payerId));
+      }
+      const cleanFor = normalizeForMemberId(e.for_member, payerId);
+      if (cleanFor && !memberIdsOrdered.some(id => String(id) === String(cleanFor))) {
+        memberIdsOrdered.push(String(cleanFor));
+      }
+    });
+
+    const mainCount = tripSplitConfig.splitMainMembers.length > 0 ? tripSplitConfig.splitMainMembers.length : 1;
+
+    const members = memberIdsOrdered.map(id => {
+      const isMain = tripSplitConfig.splitMainMembers.length > 0
+        ? tripSplitConfig.splitMainMembers.some(m => String(m) === String(id))
+        : id === 'self';
+      const paidSplit = splitExpenses
+        .filter(e => String((e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self') === String(id))
+        .reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+
+      // Personal expenses paid by this member for themselves
+      const paidPersonalOwn = personalExpenses
+        .filter(e => {
+          const payer = String((e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self');
+          const cleanFor = normalizeForMemberId(e.for_member, payer);
+          const beneficiary = cleanFor || payer;
+          return payer === String(id) && beneficiary === String(id);
+        })
+        .reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+
+      // Personal expenses paid by this member on behalf of someone else (100% reimbursement owed to this member)
+      const paidForOthers = personalExpenses
+        .filter(e => {
+          const payer = String((e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self');
+          const cleanFor = normalizeForMemberId(e.for_member, payer);
+          const beneficiary = cleanFor || payer;
+          return payer === String(id) && beneficiary !== String(id);
+        })
+        .reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+
+      // Personal expenses paid by someone else on behalf of this member (100% owed by this member)
+      const owedBehalf = personalExpenses
+        .filter(e => {
+          const payer = String((e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self');
+          const cleanFor = normalizeForMemberId(e.for_member, payer);
+          const beneficiary = cleanFor || payer;
+          return payer !== String(id) && beneficiary === String(id);
+        })
+        .reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+
+      const paidPersonal = paidPersonalOwn + paidForOthers;
+      const personalConsumed = paidPersonalOwn + owedBehalf;
+      const fairShare = isMain ? perMemberShare : 0;
+      const owedShare = fairShare + owedBehalf;
+      const actualTripCost = fairShare + personalConsumed;
+      const netBalance = (paidSplit + paidForOthers) - (fairShare + owedBehalf);
+
+      return {
+        id: String(id),
+        name: getMemberName(id, false),
+        shortName: getMemberName(id, true),
+        isMain,
+        paidSplit,
+        paidPersonal,
+        paidPersonalOwn,
+        paidForOthers,
+        owedBehalf,
+        personalConsumed,
+        totalPaid: paidSplit + paidPersonal,
+        paidTotal: paidSplit + paidPersonal,
+        fairShare,
+        owedShare,
+        actualTripCost,
+        netBalance
+      };
+    });
+
+    // Add unnamed share slots if user manually set splitCount higher than selected main members
+    const extraShares = Math.max(0, divisor - mainCount);
+    for (let i = 1; i <= extraShares; i++) {
+      members.push({
+        id: `unassigned_share_${i}`,
+        name: `Share #${mainCount + i} (Unassigned)`,
+        shortName: `Share #${mainCount + i}`,
+        isMain: true,
+        paidSplit: 0,
+        paidPersonal: 0,
+        paidPersonalOwn: 0,
+        paidForOthers: 0,
+        owedBehalf: 0,
+        personalConsumed: 0,
+        totalPaid: 0,
+        paidTotal: 0,
+        fairShare: perMemberShare,
+        owedShare: perMemberShare,
+        actualTripCost: perMemberShare,
+        netBalance: -perMemberShare
+      });
+    }
+
+    // Filter out non-paying, non-main members so "Member Spend & Split Balance Breakdown" stays clean
+    const activeParticipants = members.filter(
+      m => m.isMain || m.totalPaid > 0.009 || m.actualTripCost > 0.009 || Math.abs(m.netBalance) > 0.009
+    );
+
+    // Main Person ('self' / Me) specific budget metrics
+    const selfMember = members.find(m => String(m.id) === 'self');
+    const selfIsMain = selfMember ? selfMember.isMain : true;
+    const mySplitShare = selfMember ? selfMember.fairShare : perMemberShare;
+    const myPersonalSpend = selfMember ? selfMember.personalConsumed : 0;
+    const myPaidForOthers = selfMember ? selfMember.paidForOthers : 0;
+    const myOwedBehalf = selfMember ? selfMember.owedBehalf : 0;
+    const myTotalTripSpend = mySplitShare + myPersonalSpend;
+    const myOutOfPocketPaid = selfMember ? selfMember.totalPaid : 0;
+    const myNetBalance = selfMember ? selfMember.netBalance : 0;
+
+    // ==========================================
+    // Compute Bilateral Pairwise Settlements ("Who owes whom")
+    // ==========================================
+    // 1. Direct On-Behalf (Personal) Debts:
+    //    When Payer P pays for Beneficiary B (B != P): B directly owes P 100% of the expense.
+    // 2. Shared Split Pool Debts:
+    //    When Payer P pays for a split expense: each Main Member M (M != P) owes P their share (amount / divisor).
+    // 3. Bilateral Netting:
+    //    For each pair of individuals (A, B): net their mutual debts against each other so at most one transfer occurs between A and B.
+
+    const pairwiseDebts = {};
+    memberIdsOrdered.forEach(id1 => {
+      pairwiseDebts[id1] = {};
+      memberIdsOrdered.forEach(id2 => {
+        pairwiseDebts[id1][id2] = 0;
+      });
+    });
+
+    // 1. Add Direct On-Behalf (Personal) Debts
+    personalExpenses.forEach(e => {
+      const payer = (e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self';
+      const cleanFor = normalizeForMemberId(e.for_member, payer);
+      if (cleanFor && String(cleanFor) !== String(payer)) {
+        const amt = getConvertedAmount(e.amount, e.currency);
+        const debtorId = String(cleanFor);
+        const creditorId = String(payer);
+        if (!pairwiseDebts[debtorId]) pairwiseDebts[debtorId] = {};
+        pairwiseDebts[debtorId][creditorId] = (pairwiseDebts[debtorId][creditorId] || 0) + amt;
+      }
+    });
+
+    // 2. Add Shared Split Pool Debts (among Main Members)
+    const mainMembersList = tripSplitConfig.mainMemberIds || ['self'];
+    splitExpenses.forEach(e => {
+      const payer = (e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self';
+      const amt = getConvertedAmount(e.amount, e.currency);
+      const share = divisor > 0 ? (amt / divisor) : 0;
+
+      mainMembersList.forEach(mId => {
+        if (String(mId) !== String(payer)) {
+          const debtorId = String(mId);
+          const creditorId = String(payer);
+          if (!pairwiseDebts[debtorId]) pairwiseDebts[debtorId] = {};
+          pairwiseDebts[debtorId][creditorId] = (pairwiseDebts[debtorId][creditorId] || 0) + share;
+        }
+      });
+    });
+
+    // 3. Bilateral Netting for each pair
+    const settlements = [];
+    const allKnownIds = memberIdsOrdered;
+
+    for (let i = 0; i < allKnownIds.length; i++) {
+      for (let j = i + 1; j < allKnownIds.length; j++) {
+        const idA = allKnownIds[i];
+        const idB = allKnownIds[j];
+
+        const grossAOwesB = (pairwiseDebts[idA] && pairwiseDebts[idA][idB]) || 0;
+        const grossBOwesA = (pairwiseDebts[idB] && pairwiseDebts[idB][idA]) || 0;
+        const netDiff = grossAOwesB - grossBOwesA;
+
+        if (Math.abs(netDiff) > 0.009) {
+          const debtorId = netDiff > 0 ? idA : idB;
+          const creditorId = netDiff > 0 ? idB : idA;
+          const transferAmt = Math.abs(netDiff);
+
+          const debtorObj = members.find(m => String(m.id) === String(debtorId));
+          const creditorObj = members.find(m => String(m.id) === String(creditorId));
+          const debtorShort = debtorObj ? debtorObj.shortName : getMemberName(debtorId, true);
+          const debtorFull = debtorObj ? debtorObj.name : getMemberName(debtorId, false);
+          const creditorShort = creditorObj ? creditorObj.shortName : getMemberName(creditorId, true);
+          const creditorFull = creditorObj ? creditorObj.name : getMemberName(creditorId, false);
+
+          // Bilateral breakdown notes
+          const directDebtorOwesCreditor = personalExpenses
+            .filter(e => {
+              const payer = (e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self';
+              const cleanFor = normalizeForMemberId(e.for_member, payer);
+              return String(payer) === String(creditorId) && String(cleanFor || '') === String(debtorId);
+            })
+            .reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+
+          const directCreditorOwesDebtor = personalExpenses
+            .filter(e => {
+              const payer = (e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self';
+              const cleanFor = normalizeForMemberId(e.for_member, payer);
+              return String(payer) === String(debtorId) && String(cleanFor || '') === String(creditorId);
+            })
+            .reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+
+          const grossSplitDebtorOwesCreditor = debtorObj && debtorObj.isMain
+            ? splitExpenses
+                .filter(e => String((e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self') === String(creditorId))
+                .reduce((sum, e) => sum + (getConvertedAmount(e.amount, e.currency) / divisor), 0)
+            : 0;
+
+          const grossSplitCreditorOwesDebtor = creditorObj && creditorObj.isMain
+            ? splitExpenses
+                .filter(e => String((e.paid_by && String(e.paid_by) !== 'null') ? e.paid_by : 'self') === String(debtorId))
+                .reduce((sum, e) => sum + (getConvertedAmount(e.amount, e.currency) / divisor), 0)
+            : 0;
+
+          const noteParts = [];
+          if (directDebtorOwesCreditor > 0.005) {
+            noteParts.push(`${creditorShort} paid for ${debtorShort}: +${directDebtorOwesCreditor.toFixed(2)} ${baseCurrency}`);
+          }
+          if (grossSplitDebtorOwesCreditor > 0.005) {
+            noteParts.push(`${debtorShort}'s split share of ${creditorShort}'s spend: +${grossSplitDebtorOwesCreditor.toFixed(2)} ${baseCurrency}`);
+          }
+          if (directCreditorOwesDebtor > 0.005) {
+            noteParts.push(`less ${debtorShort} paid for ${creditorShort}: −${directCreditorOwesDebtor.toFixed(2)} ${baseCurrency}`);
+          }
+          if (grossSplitCreditorOwesDebtor > 0.005) {
+            noteParts.push(`less ${creditorShort}'s split share of ${debtorShort}'s spend: −${grossSplitCreditorOwesDebtor.toFixed(2)} ${baseCurrency}`);
+          }
+
+          settlements.push({
+            fromId: debtorId,
+            fromName: debtorShort,
+            fromFullName: debtorFull,
+            toId: creditorId,
+            toName: creditorShort,
+            toFullName: creditorFull,
+            amount: Math.round(transferAmt * 100) / 100,
+            grossDebtorOwesCreditor: grossAOwesB,
+            grossCreditorOwesDebtor: grossBOwesA,
+            directDebtorOwesCreditor,
+            directCreditorOwesDebtor,
+            breakdownNote: noteParts.length > 0 ? noteParts.join(' • ') : `${debtorShort} owes ${creditorShort} ${transferAmt.toFixed(2)} ${baseCurrency}`
+          });
+        }
+      }
+    }
+    settlements.sort((a, b) => b.amount - a.amount);
+
+    const hasBehalfExpenses = personalExpenses.some(
+      e => Boolean(normalizeForMemberId(e.for_member, e.paid_by || 'self'))
+    );
+
+    return {
+      divisor,
+      totalSpend,
+      totalAllExpenses: totalSpend,
+      totalSplitSpend,
+      totalSplitExpenses: totalSplitSpend,
+      totalPersonalSpend,
+      totalPersonalExpenses: totalPersonalSpend,
+      perMemberShare,
+      splitExpensesCount: splitExpenses.length,
+      personalExpensesCount: personalExpenses.length,
+      hasBehalfExpenses,
+      selfIsMain,
+      mySplitShare,
+      myPersonalSpend,
+      myPaidForOthers,
+      myOwedBehalf,
+      myTotalTripSpend,
+      myOutOfPocketPaid,
+      myNetBalance,
+      members,
+      allMembers: members,
+      participants: activeParticipants,
+      settlements
+    };
+  }, [tripExpensesList, tripSplitConfig, rates, selectedTrip, baseCurrency, getMemberName, normalizeForMemberId]);
+
+  // Helper to describe who owes the payer on a single expense row
+  const getExpenseWhoOwesText = useCallback((exp) => {
+    const origAmt = Number(exp.amount) || 0;
+    const origCur = exp.currency || baseCurrency;
+    const baseAmt = getConvertedAmount(origAmt, origCur);
+    const isSplitRow = Number(exp.is_split) === 1;
+    const payerId = (exp.paid_by && String(exp.paid_by) !== 'null') ? exp.paid_by : 'self';
+    const payerShort = getMemberName(payerId, true);
+
+    if (!isSplitRow) {
+      const cleanFor = normalizeForMemberId(exp.for_member, payerId);
+      const beneficiaryId = cleanFor || payerId;
+      if (String(beneficiaryId) !== String(payerId)) {
+        const benShort = getMemberName(beneficiaryId, true);
+        return `${benShort} owes ${payerShort} ${baseAmt.toFixed(2)} ${baseCurrency} (100%)`;
+      }
+      return '';
+    }
+    const div = Math.max(1, expenseSplitSummary.divisor || 1);
+    const share = baseAmt / div;
+    const otherMain = expenseSplitSummary.members.filter(m => m.isMain && String(m.id) !== String(payerId));
+    if (otherMain.length === 0) {
+      return `Split (${div}-way: ${share.toFixed(2)} ${baseCurrency}/share)`;
+    }
+    if (otherMain.length === 1) {
+      return `${otherMain[0].shortName} owes ${payerShort} ${share.toFixed(2)} ${baseCurrency}`;
+    }
+    return `${otherMain.map(m => m.shortName).join(', ')} each owe ${payerShort} ${share.toFixed(2)} ${baseCurrency}`;
+  }, [baseCurrency, expenseSplitSummary, getMemberName, normalizeForMemberId, rates, selectedTrip]);
+
+  // Export Trip Expenses & Split Settlement as Excel-ready UTF-8 CSV
+  const handleExportExpensesCsv = () => {
+    const activeTrip = selectedTrip || currentTrip;
+    if (!activeTrip) return;
+
+    const escapeCsv = (val) => {
+      if (val === null || val === undefined) return '""';
+      let str = String(val);
+      if (/^[=+\-@]/.test(str)) {
+        str = `'${str}`;
+      }
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const mainMembers = expenseSplitSummary.participants;
+    const tripPlannedLimit = getTripPlannedBudget(activeTrip);
+    const rows = [];
+
+    // Header Title & Metadata
+    rows.push([
+      `TRIP EXPENSE & SPLIT REPORT: ${activeTrip.name || 'Trip'}`,
+      `Start Date: ${formatStartDate(activeTrip.start_date)}`,
+      `Base Currency: ${baseCurrency}`,
+      `Split Across: ${expenseSplitSummary.divisor} Main Member(s) (${expenseSplitSummary.members.filter(m => m.isMain).map(m => m.shortName).join(', ')})`
+    ].map(escapeCsv).join(','));
+    rows.push('');
+
+    // ==========================================
+    // SECTION 1: SUMMARY & MEMBER SPEND & SPLIT BALANCE BREAKDOWN
+    // ==========================================
+    rows.push(['=== SECTION 1: SUMMARY & MEMBER SPEND BREAKDOWN ==='].map(escapeCsv).join(','));
+    rows.push('');
+    rows.push(['1A. MAIN PERSON (ME) BUDGET & GROUP SUMMARY', 'Amount', 'Currency / Details'].map(escapeCsv).join(','));
+    rows.push(['My Actual Trip Spend (Me: Split Share + Personal)', expenseSplitSummary.myTotalTripSpend.toFixed(2), `${baseCurrency} (My Split Share: ${expenseSplitSummary.mySplitShare.toFixed(2)} + My Personal: ${expenseSplitSummary.myPersonalSpend.toFixed(2)})`].map(escapeCsv).join(','));
+    rows.push(['My Planned Budget Limit', tripPlannedLimit.toFixed(2), baseCurrency].map(escapeCsv).join(','));
+    if (tripPlannedLimit > 0) {
+      const diff = tripPlannedLimit - expenseSplitSummary.myTotalTripSpend;
+      rows.push(['My Remaining Budget', diff.toFixed(2), diff >= 0 ? `${baseCurrency} under budget` : `${baseCurrency} over budget`].map(escapeCsv).join(','));
+    }
+    rows.push(['Paid Out-of-Pocket by Me', expenseSplitSummary.myOutOfPocketPaid.toFixed(2), baseCurrency].map(escapeCsv).join(','));
+    if (expenseSplitSummary.myPaidForOthers > 0) {
+      rows.push(['Paid by Me for Others (100% Reimbursable)', expenseSplitSummary.myPaidForOthers.toFixed(2), baseCurrency].map(escapeCsv).join(','));
+    }
+    if (expenseSplitSummary.myOwedBehalf > 0) {
+      rows.push(['Paid by Others for Me (100% Owed by Me)', expenseSplitSummary.myOwedBehalf.toFixed(2), baseCurrency].map(escapeCsv).join(','));
+    }
+    rows.push(['Total Group Trip Spend (All Travelers)', expenseSplitSummary.totalSpend.toFixed(2), baseCurrency].map(escapeCsv).join(','));
+    rows.push(['Total Shared Split Pool', expenseSplitSummary.totalSplitSpend.toFixed(2), `${baseCurrency} (${expenseSplitSummary.splitExpensesCount} split expenses)`].map(escapeCsv).join(','));
+    rows.push(['Split Divisor (Main Members)', expenseSplitSummary.divisor, expenseSplitSummary.members.filter(m => m.isMain).map(m => m.shortName).join(', ')].map(escapeCsv).join(','));
+    rows.push(['Equal Share Per Main Member', expenseSplitSummary.perMemberShare.toFixed(2), baseCurrency].map(escapeCsv).join(','));
+    rows.push('');
+
+    rows.push(['1B. MEMBER SPEND & SPLIT BALANCE BREAKDOWN'].map(escapeCsv).join(','));
+    rows.push([
+      'Member',
+      'Role',
+      `Paid Toward Split (${baseCurrency})`,
+      `Paid for Others (100% Owed Back) (${baseCurrency})`,
+      `Paid Own Personal (${baseCurrency})`,
+      `Total Paid Out-of-Pocket (${baseCurrency})`,
+      `Fair Split Share (${baseCurrency})`,
+      `Owed Direct to Others (${baseCurrency})`,
+      `Actual Trip Cost (Split Share + Personal Consumed) (${baseCurrency})`,
+      `Net Balance (${baseCurrency})`,
+      'Settlement Status'
+    ].map(escapeCsv).join(','));
+
+    expenseSplitSummary.participants.forEach(m => {
+      const statusText = m.netBalance > 0.005
+        ? `Gets back ${m.netBalance.toFixed(2)} ${baseCurrency}`
+        : (m.netBalance < -0.005 ? `Owes ${Math.abs(m.netBalance).toFixed(2)} ${baseCurrency}` : 'Settled (0.00)');
+      rows.push([
+        m.name,
+        m.isMain ? 'Main Split Member' : 'Non-Split Companion',
+        m.paidSplit.toFixed(2),
+        (m.paidForOthers || 0).toFixed(2),
+        (m.paidPersonalOwn || 0).toFixed(2),
+        m.totalPaid.toFixed(2),
+        (m.fairShare || 0).toFixed(2),
+        (m.owedBehalf || 0).toFixed(2),
+        m.actualTripCost.toFixed(2),
+        (m.netBalance >= 0 ? '+' : '') + m.netBalance.toFixed(2),
+        statusText
+      ].map(escapeCsv).join(','));
+    });
+    rows.push('');
+    rows.push('');
+
+    // ==========================================
+    // SECTION 2: 💸 WHO OWES WHOM (FINAL SETTLEMENT SUMMARY)
+    // ==========================================
+    rows.push(['=== SECTION 2: WHO OWES WHOM (FINAL SETTLEMENT SUMMARY) ==='].map(escapeCsv).join(','));
+    rows.push('');
+    rows.push([
+      'Settlement #',
+      'From (Who Owes)',
+      'To (Who Gets Paid)',
+      `Net Amount Owed (${baseCurrency})`,
+      'Plain Settlement Summary',
+      'Calculation & Offset Breakdown'
+    ].map(escapeCsv).join(','));
+
+    if (expenseSplitSummary.settlements.length === 0) {
+      rows.push([
+        'Settlement #1',
+        '-',
+        '-',
+        '0.00',
+        'All expenses are settled — no one owes anything',
+        '-'
+      ].map(escapeCsv).join(','));
+    } else {
+      expenseSplitSummary.settlements.forEach((s, idx) => {
+        rows.push([
+          `Settlement #${idx + 1}`,
+          s.fromFullName || s.fromName,
+          s.toFullName || s.toName,
+          s.amount.toFixed(2),
+          `${s.fromName} owes ${s.toName} ${s.amount.toFixed(2)} ${baseCurrency}`,
+          s.breakdownNote || ''
+        ].map(escapeCsv).join(','));
+      });
+    }
+    rows.push('');
+    rows.push('');
+
+    // ==========================================
+    // SECTION 3: DETAILED EXPENSE LEDGER (ALL EXPENSES)
+    // ==========================================
+    rows.push(['=== SECTION 3: DETAILED EXPENSE LEDGER (ALL EXPENSES) ==='].map(escapeCsv).join(','));
+    rows.push('');
+    const ledgerHeaders = [
+      'Date',
+      'Category',
+      'Notes / Description',
+      'Original Amount',
+      'Original Currency',
+      `Exchange Rate (to ${baseCurrency})`,
+      `Amount (${baseCurrency})`,
+      'Paid By',
+      'Split / For Whom',
+      'Split Across (N)',
+      `Per-Member Share (${baseCurrency})`,
+      'Who Owes Payer (This Expense)',
+      ...mainMembers.map(m => `${m.shortName} Share (${baseCurrency})`)
+    ];
+    rows.push(ledgerHeaders.map(escapeCsv).join(','));
+
+    const sortedChronological = [...tripExpensesList].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    sortedChronological.forEach(exp => {
+      const origAmt = Number(exp.amount) || 0;
+      const origCur = exp.currency || baseCurrency;
+      const rateVal = getExpenseExchangeRate(origCur);
+      const baseAmt = getConvertedAmount(origAmt, origCur);
+      const isSplitRow = Number(exp.is_split) === 1;
+      const splitDiv = isSplitRow ? expenseSplitSummary.divisor : 1;
+      const perShare = isSplitRow ? (baseAmt / expenseSplitSummary.divisor) : 0;
+      const payerId = (exp.paid_by && String(exp.paid_by) !== 'null') ? exp.paid_by : 'self';
+      const payerName = getMemberName(payerId, true);
+      const cleanFor = normalizeForMemberId(exp.for_member, payerId);
+      const beneficiaryId = !isSplitRow && cleanFor ? cleanFor : payerId;
+      const beneficiaryName = getMemberName(beneficiaryId, true);
+      const splitModeLabel = isSplitRow
+        ? `Split (${expenseSplitSummary.divisor}-way)`
+        : (String(beneficiaryId) !== String(payerId)
+          ? `Paid for ${beneficiaryName}`
+          : 'Personal Expense');
+      const whoOwesText = getExpenseWhoOwesText(exp);
+
+      const memberShareCols = mainMembers.map(m => {
+        if (isSplitRow) {
+          return m.isMain ? perShare.toFixed(2) : '0.00';
+        }
+        return String(m.id) === String(beneficiaryId) ? baseAmt.toFixed(2) : '0.00';
+      });
+
+      rows.push([
+        exp.date || '',
+        exp.category || '',
+        exp.notes || '',
+        origAmt.toFixed(2),
+        origCur,
+        rateVal,
+        baseAmt.toFixed(2),
+        payerName,
+        splitModeLabel,
+        splitDiv,
+        perShare.toFixed(2),
+        whoOwesText,
+        ...memberShareCols
+      ].map(escapeCsv).join(','));
+    });
+
+    const csvContent = '\uFEFF' + rows.join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const safeTripName = (activeTrip.name || 'trip').replace(/[^a-z0-9_-]/gi, '_');
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeTripName}_expenses_split.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  };
+
+  // Specific Trip Plan Navigation & Collapse Helpers
+  const toggleSectionCollapse = (sectionKey) => {
+    setCollapsedSections(prev => ({
+      ...prev,
+      [sectionKey]: !prev[sectionKey]
+    }));
+  };
+
+  const scrollElementInTripOverlay = (el) => {
+    if (!el) return;
+    const container = el.closest('.trip-details-overlay') || document.querySelector('.trip-details-overlay');
+    const appHeader = document.querySelector('.app-header');
+    const stickyBar = document.querySelector('.trip-sticky-top-bar');
+
+    if (container && container.scrollHeight > container.clientHeight + 20) {
+      const style = window.getComputedStyle(container);
+      if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+        const stickyOffset = (stickyBar ? stickyBar.offsetHeight : 110) + 16;
+        const containerRect = container.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const targetScrollTop = container.scrollTop + (elRect.top - containerRect.top) - stickyOffset;
+        container.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' });
+        return;
+      }
+    }
+
+    const totalStickyHeight = (appHeader ? appHeader.offsetHeight : 60) + (stickyBar ? stickyBar.offsetHeight : 110) + 16;
+    const elRect = el.getBoundingClientRect();
+    const targetWindowY = window.scrollY + elRect.top - totalStickyHeight;
+    window.scrollTo({ top: Math.max(0, targetWindowY), behavior: 'smooth' });
+  };
+
+  const scrollToTripSection = (sectionIdOrKey, maybeSectionKey) => {
+    const sectionKey = maybeSectionKey || String(sectionIdOrKey).replace(/^trip-section-/, '');
+    const targetId = String(sectionIdOrKey).startsWith('trip-section-')
+      ? sectionIdOrKey
+      : `trip-section-${sectionKey}`;
+
+    setCollapsedSections(prev => ({
+      ...prev,
+      [sectionKey]: false
+    }));
+    if (focusedSection) {
+      setFocusedSection(sectionKey);
+    }
+    setTimeout(() => {
+      const el = document.getElementById(targetId);
+      scrollElementInTripOverlay(el);
+    }, 50);
+  };
+
+  const toggleDayCollapse = (dateStr) => {
+    setCollapsedDays(prev => ({
+      ...prev,
+      [dateStr]: !prev[dateStr]
+    }));
+  };
+
+  const scrollToItineraryDay = (dateStr) => {
+    setCollapsedSections(prev => ({ ...prev, itinerary: false }));
+    setCollapsedDays(prev => ({ ...prev, [dateStr]: false }));
+    if (focusedSection && focusedSection !== 'itinerary') {
+      setFocusedSection('itinerary');
+    }
+    setTimeout(() => {
+      const el = document.getElementById(`trip-day-${dateStr}`);
+      scrollElementInTripOverlay(el);
+    }, 60);
+  };
+
+  const areAllDaysCollapsed = itineraryDays.length > 0 && itineraryDays.every(d => collapsedDays[d.date]);
+  const toggleAllDaysCollapse = () => {
+    if (areAllDaysCollapsed) {
+      setCollapsedDays({});
+    } else {
+      const next = {};
+      itineraryDays.forEach(d => { next[d.date] = true; });
+      setCollapsedDays(next);
+    }
+  };
+
+  // Helper to compute the Main Person's ('self' / Me) share of an individual expense
+  const getMyExpenseShare = useCallback((exp) => {
+    const converted = getConvertedAmount(exp.amount, exp.currency);
+    if (Number(exp.is_split) === 1) {
+      return expenseSplitSummary.selfIsMain ? (converted / Math.max(1, expenseSplitSummary.divisor || 1)) : 0;
+    }
+    const payerId = (exp.paid_by && String(exp.paid_by) !== 'null') ? exp.paid_by : 'self';
+    const cleanFor = normalizeForMemberId(exp.for_member, payerId);
+    const beneficiaryId = cleanFor || payerId;
+    return String(beneficiaryId) === 'self' ? converted : 0;
+  }, [expenseSplitSummary.selfIsMain, expenseSplitSummary.divisor, rates, selectedTrip, baseCurrency, normalizeForMemberId]);
 
   const getCategoryColor = (catName) => {
     const categoriesMap = {};
@@ -3128,7 +4091,9 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
     return idx !== -1 ? colorsList[idx % colorsList.length] : 'var(--accent-primary-hover)';
   };
   const plannedBudget = selectedTrip ? getTripPlannedBudget(selectedTrip) : 0;
-  const actualBudget = tripExpensesList.reduce((sum, e) => sum + getConvertedAmount(e.amount, e.currency), 0);
+  // Budget Spend Tracker shows the Main Person's ('Me') actual expense for the trip
+  const actualBudget = expenseSplitSummary.myTotalTripSpend;
+  const totalGroupBudget = expenseSplitSummary.totalAllExpenses;
   const budgetPercentage = plannedBudget > 0 ? (actualBudget / plannedBudget) * 100 : 0;
 
   const filteredTrips = trips.filter(trip => {
@@ -3145,9 +4110,11 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
     return matchesSearch && matchesStatus;
   });
 
+  const isFullPageTripOpen = Boolean(selectedTrip && !showAddForm && !show3ColumnWorkspace);
+
   return (
-    <div className="container">
-      <div className={selectedTrip ? "no-print" : ""}>
+    <div className={isFullPageTripOpen ? "container container-full-trip" : "container"}>
+      <div className={selectedTrip ? "no-print" : ""} style={{ display: isFullPageTripOpen ? 'none' : undefined }}>
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <h2 style={{ margin: 0 }}>Trip Planner</h2>
@@ -3638,221 +4605,6 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
         </div>
       )}
 
-      {/* MANAGE TRAVELERS MODAL */}
-      {showTravelersModal && selectedTrip && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
-          padding: '20px'
-        }}>
-          <div className="login-card" style={{ maxWidth: '480px', width: '100%', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                👥 Manage Travelers
-              </h3>
-              <X size={20} style={{ cursor: 'pointer' }} onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }} />
-            </div>
-
-            {/* Tab Navigation: Saved vs Direct Immich API */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '10px' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setTravelerTab('local')}
-                style={{
-                  flex: 1, padding: '6px 10px', fontSize: '0.8rem', fontWeight: 600,
-                  background: travelerTab === 'local' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
-                  color: travelerTab === 'local' ? '#000' : 'var(--text-primary)',
-                  borderColor: travelerTab === 'local' ? 'var(--accent-primary)' : 'var(--border-glass)'
-                }}
-              >
-                Saved Members ({people.length})
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setTravelerTab('immich');
-                  fetchImmichPeople();
-                }}
-                style={{
-                  flex: 1, padding: '6px 10px', fontSize: '0.8rem', fontWeight: 600,
-                  background: travelerTab === 'immich' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
-                  color: travelerTab === 'immich' ? '#000' : 'var(--text-primary)',
-                  borderColor: travelerTab === 'immich' ? 'var(--accent-primary)' : 'var(--border-glass)'
-                }}
-              >
-                📸 Immich API ({immichPeople.length})
-              </button>
-            </div>
-
-            {/* Search Bar */}
-            <div style={{ marginBottom: '14px', position: 'relative' }}>
-              <input
-                type="text"
-                className="form-control"
-                placeholder={travelerTab === 'immich' ? "Search members directly from Immich API..." : "Search saved people by name or relation..."}
-                value={travelerSearch}
-                onChange={(e) => setTravelerSearch(e.target.value)}
-                style={{ paddingLeft: '12px' }}
-              />
-            </div>
-
-            {/* Content Tab 1: Local Members */}
-            {travelerTab === 'local' && (
-              people.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  <p style={{ margin: '0 0 10px 0' }}>No saved companions added yet.</p>
-                  <button 
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => { setTravelerTab('immich'); fetchImmichPeople(); }}
-                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-                  >
-                    📸 Import Members directly from Immich API
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
-                  {people
-                    .filter(p => {
-                      if (!travelerSearch) return true;
-                      const q = travelerSearch.toLowerCase();
-                      return (p.name || '').toLowerCase().includes(q) || (p.relation || '').toLowerCase().includes(q);
-                    })
-                    .map(p => {
-                      const compIds = safeParseArray(selectedTrip?.companions);
-                      const isChecked = safeIncludes(compIds, p.id);
-                      const userToken = token || localStorage.getItem('token') || '';
-                      return (
-                        <label key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '8px', cursor: 'pointer' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            {p.immich_person_id ? (
-                              <img
-                                src={`/api/immich/person/thumbnail/${p.immich_person_id}?token=${encodeURIComponent(userToken)}`}
-                                alt={p.name}
-                                style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
-                            ) : (
-                              <span style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--accent-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.9rem', flexShrink: 0 }}>
-                                {p.name ? p.name.charAt(0).toUpperCase() : '?'}
-                              </span>
-                            )}
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>{p.name}</div>
-                              <div style={{ fontSize: '0.75rem', color: 'var(--accent-primary)' }}>{p.relation}</div>
-                            </div>
-                          </div>
-                          <input 
-                            type="checkbox"
-                            checked={isChecked}
-                            style={{ accentColor: 'var(--accent-primary)', width: '18px', height: '18px', cursor: 'pointer' }}
-                            onChange={async () => {
-                              const updatedComp = isChecked ? compIds.filter(id => id !== p.id) : [...compIds, p.id];
-                              const updatedTrip = { ...selectedTrip, companions: JSON.stringify(updatedComp) };
-                              await queueSyncAction('trips', 'update', updatedTrip);
-                              setSelectedTrip(updatedTrip);
-                            }}
-                          />
-                        </label>
-                      );
-                    })}
-                </div>
-              )
-            )}
-
-            {/* Content Tab 2: Immich API Members */}
-            {travelerTab === 'immich' && (
-              loadingImmichPeople ? (
-                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  ⏳ Fetching members from Immich server API...
-                </div>
-              ) : immichPeople.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  No members found on Immich server. Please verify your Immich Server URL and API Key in Settings.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
-                  {immichPeople
-                    .filter(ip => {
-                      if (!travelerSearch) return true;
-                      const q = travelerSearch.toLowerCase();
-                      return (ip.name || '').toLowerCase().includes(q);
-                    })
-                    .map(ip => {
-                      const userToken = token || localStorage.getItem('token') || '';
-                      const compIds = safeParseArray(selectedTrip?.companions);
-                      const existingLocal = people.find(p => p.immich_person_id === ip.id);
-                      const isChecked = existingLocal ? safeIncludes(compIds, existingLocal.id) : false;
-
-                      return (
-                        <label key={ip.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '8px', cursor: 'pointer' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <img
-                              src={`/api/immich/person/thumbnail/${ip.id}?token=${encodeURIComponent(userToken)}`}
-                              alt={ip.name || 'Immich Member'}
-                              style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
-                              onError={(e) => {
-                                e.target.style.display = 'none';
-                              }}
-                            />
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
-                                {ip.name || 'Unnamed Immich Member'}
-                              </div>
-                              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                                {existingLocal ? (
-                                  <span style={{ color: '#4ade80', fontWeight: 600 }}>✓ Saved ({existingLocal.relation})</span>
-                                ) : (
-                                  <span style={{ color: 'var(--accent-primary)' }}>Immich Member</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          <input 
-                            type="checkbox"
-                            checked={isChecked}
-                            style={{ accentColor: 'var(--accent-primary)', width: '18px', height: '18px', cursor: 'pointer' }}
-                            onChange={async () => {
-                              let targetPersonId = existingLocal ? existingLocal.id : null;
-                              if (!targetPersonId) {
-                                // Automatically save Immich person to local database
-                                const newP = {
-                                  id: generateUUID(),
-                                  name: ip.name || 'Immich Member',
-                                  relation: 'Companion',
-                                  immich_person_id: ip.id,
-                                  immich_person_name: ip.name || ''
-                                };
-                                await queueSyncAction('people', 'insert', newP);
-                                targetPersonId = newP.id;
-                              }
-
-                              const updatedComp = isChecked 
-                                ? compIds.filter(id => id !== targetPersonId) 
-                                : [...compIds, targetPersonId];
-
-                              const updatedTrip = { ...selectedTrip, companions: JSON.stringify(updatedComp) };
-                              await queueSyncAction('trips', 'update', updatedTrip);
-                              setSelectedTrip(updatedTrip);
-                            }}
-                          />
-                        </label>
-                      );
-                    })}
-                </div>
-              )
-            )}
-
-            <button className="btn btn-primary" onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }} style={{ marginTop: '16px', width: '100%' }}>
-              Done
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Grid of Trips */}
       <div className="grid">
         {filteredTrips.map(trip => (
@@ -3896,243 +4648,991 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
         ))}
       </div>
 
-      {/* Trip Details Dialog/Overlay */}
-      {selectedTrip && !showAddForm && !show3ColumnWorkspace && (
-        <div className="modal-backdrop no-print" onClick={() => setSelectedTrip(null)} />
-      )}
       </div>
 
-      {selectedTrip && !showAddForm && !show3ColumnWorkspace && (
-        <div className="trip-details-overlay" style={{ overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', isolation: 'isolate' }}>
-          <div style={{
-            background: 'var(--bg-surface)', width: '100%',
-            display: 'flex', flexDirection: 'column'
-          }}>
-            {/* Header */}
-            <div className="dialog-header no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                {isEditingTripMeta ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <input 
-                      type="text" 
-                      className="form-control" 
-                      style={{ fontSize: '1.2rem', fontWeight: 'bold', padding: '4px 8px', height: '38px', background: '#14131a', border: '1px solid var(--border-glass)' }}
-                      value={editTripName}
-                      onChange={(e) => setEditTripName(e.target.value)}
-                    />
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <input 
-                        type="date" 
-                        className="form-control" 
-                        style={{ width: '140px', fontSize: '0.8rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)' }}
-                        value={editTripStartDate}
-                        onClick={(e) => e.target.showPicker()}
-                        onChange={(e) => setEditTripStartDate(e.target.value)}
-                      />
-                      <input 
-                        type="number" 
-                        min="1" 
-                        placeholder="Length"
-                        className="form-control" 
-                        style={{ width: '90px', fontSize: '0.8rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)' }}
-                        value={editTripLength === 0 || editTripLength === '' ? '' : editTripLength}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setEditTripLength(val === '' ? '' : parseInt(val, 10));
-                        }}
-                      />
-                      <select
-                        className="form-control"
-                        style={{ fontSize: '0.78rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)', flex: 1, minWidth: '130px' }}
-                        value={editTripStartAddressId}
-                        onChange={(e) => setEditTripStartAddressId(e.target.value)}
-                      >
-                        <option value="">Start: -- None --</option>
-                        {userAddresses.map(addr => (
-                          <option key={addr.id} value={addr.id}>Start: 🏠 {addr.label}</option>
-                        ))}
-                      </select>
-                      <select
-                        className="form-control"
-                        style={{ fontSize: '0.78rem', height: '30px', padding: '2px 6px', background: '#14131a', border: '1px solid var(--border-glass)', flex: 1, minWidth: '130px' }}
-                        value={editTripStopAddressId}
-                        onChange={(e) => setEditTripStopAddressId(e.target.value)}
-                      >
-                        <option value="">End: -- None --</option>
-                        {userAddresses.map(addr => (
-                          <option key={addr.id} value={addr.id}>End: 🏠 {addr.label}</option>
-                        ))}
-                      </select>
-                      <button 
-                        className="btn btn-primary"
-                        style={{ width: 'auto', height: '30px', padding: '4px 12px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }}
-                        onClick={async () => {
-                          const len = Math.max(1, parseInt(editTripLength, 10) || 1);
-                          let calculatedEndDate = null;
-                          if (editTripStartDate && editTripStartDate !== 'null') {
-                            const start = new Date(editTripStartDate);
-                            start.setDate(start.getDate() + (len - 1));
-                            calculatedEndDate = start.toISOString().split('T')[0];
-                          }
-                          const updated = {
-                            ...selectedTrip,
-                            name: editTripName,
-                            start_date: editTripStartDate || null,
-                            end_date: calculatedEndDate,
-                            length: len,
-                            start_address_id: editTripStartAddressId || null,
-                            stop_address_id: editTripStopAddressId || null
-                          };
-                          await queueSyncAction('trips', 'update', updated);
-                          setSelectedTrip(updated);
-                          setIsEditingTripMeta(false);
-                        }}
-                      >
-                        Save
-                      </button>
-                      <button 
-                        className="btn btn-secondary"
-                        style={{ width: 'auto', height: '30px', padding: '4px 12px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }}
-                        onClick={() => setIsEditingTripMeta(false)}
-                      >
-                        Cancel
-                      </button>
+      {/* MANAGE TRAVELERS & EXPENSE SPLIT MODAL */}
+      {showTravelersModal && selectedTrip && (
+        <div className="no-print" style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
+          padding: '20px'
+        }}>
+          <div className="login-card" style={{ maxWidth: '540px', width: '100%', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                👥 Manage Travelers & Expense Split
+              </h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }} />
+            </div>
+
+            {/* Inline Quick Add New Person */}
+            <form onSubmit={handleAddInlineTraveler} style={{ display: 'flex', gap: '8px', marginBottom: '14px', background: 'rgba(139, 92, 246, 0.08)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.25)', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Add new person (e.g. Rahul)..."
+                value={newTravelerName}
+                onChange={(e) => setNewTravelerName(e.target.value)}
+                style={{ flex: '1 1 150px', height: '34px', fontSize: '0.82rem', padding: '4px 10px' }}
+              />
+              <select
+                className="form-control"
+                value={newTravelerRelation}
+                onChange={(e) => setNewTravelerRelation(e.target.value)}
+                style={{ flex: '0 0 115px', height: '34px', fontSize: '0.8rem', padding: '4px 8px' }}
+              >
+                <option value="Friend">Friend</option>
+                <option value="Family">Family</option>
+                <option value="Spouse">Spouse</option>
+                <option value="Child">Child</option>
+                <option value="Parent">Parent</option>
+                <option value="Colleague">Colleague</option>
+                <option value="Companion">Companion</option>
+              </select>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={!newTravelerName.trim()}
+                style={{ width: 'auto', height: '34px', padding: '4px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Plus size={14} /> Add
+              </button>
+            </form>
+
+            {/* Tab Navigation: Saved vs Direct Immich API */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '10px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setTravelerTab('local')}
+                style={{
+                  flex: 1, padding: '6px 10px', fontSize: '0.8rem', fontWeight: 600,
+                  background: travelerTab === 'local' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                  color: travelerTab === 'local' ? '#000' : 'var(--text-primary)',
+                  borderColor: travelerTab === 'local' ? 'var(--accent-primary)' : 'var(--border-glass)'
+                }}
+              >
+                Saved Members ({people.length})
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setTravelerTab('immich');
+                  fetchImmichPeople();
+                }}
+                style={{
+                  flex: 1, padding: '6px 10px', fontSize: '0.8rem', fontWeight: 600,
+                  background: travelerTab === 'immich' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                  color: travelerTab === 'immich' ? '#000' : 'var(--text-primary)',
+                  borderColor: travelerTab === 'immich' ? 'var(--accent-primary)' : 'var(--border-glass)'
+                }}
+              >
+                📸 Immich API ({immichPeople.length})
+              </button>
+            </div>
+
+            {/* Search Bar */}
+            <div style={{ marginBottom: '12px', position: 'relative' }}>
+              <input
+                type="text"
+                className="form-control"
+                placeholder={travelerTab === 'immich' ? "Search members directly from Immich API..." : "Search saved people by name or relation..."}
+                value={travelerSearch}
+                onChange={(e) => setTravelerSearch(e.target.value)}
+                style={{ paddingLeft: '12px', height: '34px', fontSize: '0.82rem' }}
+              />
+            </div>
+
+            {/* Content Tab 1: Local Members */}
+            {travelerTab === 'local' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '280px', overflowY: 'auto' }}>
+                {/* Dedicated Account Owner Row */}
+                {(() => {
+                  const userToken = token || localStorage.getItem('token') || '';
+                  const isChecked = tripSplitConfig.includeOwner;
+                  const isMainMember = isChecked && tripSplitConfig.mainMemberIds.includes('self');
+                  return (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      background: 'var(--bg-app)',
+                      border: isMainMember ? '1.5px solid #10b981' : (isChecked ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-glass)'),
+                      borderRadius: '8px',
+                      gap: '8px',
+                      boxShadow: isChecked ? '0 2px 8px rgba(139, 92, 246, 0.12)' : 'none'
+                    }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1, margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          style={{ accentColor: 'var(--accent-primary)', width: '17px', height: '17px', cursor: 'pointer', flexShrink: 0 }}
+                          onChange={async () => {
+                            const nextIncludeOwner = !isChecked;
+                            const existingNotes = safeParseNotes(selectedTrip?.notes);
+                            const compIds = safeParseArray(selectedTrip?.companions);
+                            const baseMain = tripSplitConfig.mainMemberIds.length > 0 ? [...tripSplitConfig.mainMemberIds] : ['self'];
+
+                            let nextMain;
+                            if (nextIncludeOwner) {
+                              nextMain = [...new Set(['self', ...baseMain])];
+                            } else {
+                              nextMain = baseMain.filter(mId => mId !== 'self');
+                              if (nextMain.length === 0 && compIds.length > 0) {
+                                nextMain = [...compIds];
+                              }
+                            }
+
+                            const updatedNotes = {
+                              ...existingNotes,
+                              includeOwner: nextIncludeOwner,
+                              splitMainMembers: nextMain,
+                              splitCount: Math.max(1, nextMain.length),
+                              splitCountCustomized: false
+                            };
+                            const updatedTrip = {
+                              ...selectedTrip,
+                              notes: JSON.stringify(updatedNotes)
+                            };
+                            await queueSyncAction('trips', 'update', updatedTrip);
+                            setSelectedTrip(updatedTrip);
+                          }}
+                        />
+                        {ownerProfile.immichPersonId ? (
+                          <img
+                            src={`/api/immich/person/thumbnail/${ownerProfile.immichPersonId}?token=${encodeURIComponent(userToken)}`}
+                            alt={ownerProfile.displayName || 'Me'}
+                            style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                          />
+                        ) : ownerProfile.profilePicture ? (
+                          <img
+                            src={ownerProfile.profilePicture}
+                            alt={ownerProfile.displayName || 'Me'}
+                            style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                          />
+                        ) : (
+                          <span style={{ width: '34px', height: '34px', borderRadius: '50%', background: 'var(--accent-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.85rem', flexShrink: 0 }}>
+                            {ownerProfile.displayName ? ownerProfile.displayName.charAt(0).toUpperCase() : (ownerProfile.username ? ownerProfile.username.charAt(0).toUpperCase() : 'M')}
+                          </span>
+                        )}
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                            {ownerProfile.displayName || ownerProfile.username || 'Me'} <span style={{ fontSize: '0.74rem', color: 'var(--accent-primary)' }}>(You / Account Owner)</span>
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: isChecked ? 'var(--accent-emerald-text)' : 'var(--text-muted)' }}>
+                            {isChecked ? '🎒 Traveling on this trip' : '🏠 Not traveling on this trip'}
+                          </div>
+                        </div>
+                      </label>
+
+                      {isChecked && (
+                        <button
+                          type="button"
+                          title="Toggle whether you are a Main Member for splitting expenses"
+                          onClick={async () => {
+                            const isMain = tripSplitConfig.mainMemberIds.includes('self');
+                            const existingNotes = safeParseNotes(selectedTrip?.notes);
+                            const compIds = safeParseArray(selectedTrip?.companions);
+                            const baseMain = tripSplitConfig.mainMemberIds.length > 0 ? [...tripSplitConfig.mainMemberIds] : ['self'];
+
+                            let nextMain;
+                            if (isMain) {
+                              nextMain = baseMain.filter(mId => mId !== 'self');
+                              if (nextMain.length === 0 && compIds.length > 0) {
+                                nextMain = [...compIds];
+                              } else if (nextMain.length === 0) {
+                                nextMain = ['self'];
+                              }
+                            } else {
+                              nextMain = [...new Set(['self', ...baseMain])];
+                            }
+
+                            const updatedNotes = {
+                              ...existingNotes,
+                              splitMainMembers: nextMain,
+                              splitMainMembersCustomized: true,
+                              splitCount: Math.max(1, nextMain.length),
+                              splitCountCustomized: false
+                            };
+                            const updatedTrip = {
+                              ...selectedTrip,
+                              notes: JSON.stringify(updatedNotes)
+                            };
+                            await queueSyncAction('trips', 'update', updatedTrip);
+                            setSelectedTrip(updatedTrip);
+                          }}
+                          style={{
+                            padding: '4px 10px',
+                            fontSize: '0.73rem',
+                            fontWeight: 600,
+                            borderRadius: '14px',
+                            cursor: 'pointer',
+                            border: isMainMember ? '1px solid #10b981' : '1px solid var(--border-glass)',
+                            background: isMainMember ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                            color: isMainMember ? 'var(--accent-emerald-text)' : 'var(--text-secondary)',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          {isMainMember ? '💰 Main Split Member' : '👥 Traveling (No Split)'}
+                        </button>
+                      )}
                     </div>
+                  );
+                })()}
+
+                {/* Companions List */}
+                {people.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '12px 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                    <p style={{ margin: '0 0 8px 0' }}>No travel companions added yet. Add companions above or import from Immich.</p>
                   </div>
                 ) : (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <h2 style={{ margin: 0 }}>{currentTrip.name}</h2>
-                      <button 
-                        className="btn btn-secondary"
-                        style={{ width: 'auto', padding: '2px 8px', fontSize: '0.7rem', height: '24px', display: 'inline-flex', alignItems: 'center', gap: '4px', textTransform: 'none' }}
-                        onClick={startEditingTrip}
-                      >
-                        Edit Details
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                      <span>📅 {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})</span>
-                      {currentTrip.start_address_id && (
-                        <span>🏠 Start: {userAddresses.find(a => a.id === currentTrip.start_address_id)?.label || 'Home'}</span>
-                      )}
-                      {currentTrip.stop_address_id && (
-                        <span>🏁 End: {userAddresses.find(a => a.id === currentTrip.stop_address_id)?.label || 'Home'}</span>
-                      )}
-                      
-                      {/* Companion / Traveler Thumbnails */}
-                      {(() => {
-                        const compIds = safeParseArray(currentTrip?.companions);
-                        const matched = people.filter(p => safeIncludes(compIds, p.id));
-                        const userToken = token || localStorage.getItem('token') || '';
-                        return (
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                            <span>👥 Travelers:</span>
-                            {matched.map(p => (
-                              <div 
-                                key={p.id} 
-                                title={`${p.name} (${p.relation})`}
-                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                              >
-                                {p.immich_person_id ? (
-                                  <img
-                                    src={`/api/immich/person/thumbnail/${p.immich_person_id}?token=${encodeURIComponent(userToken)}`}
-                                    alt={p.name}
-                                    style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}
-                                    onError={(e) => { e.target.style.display = 'none'; }}
-                                  />
-                                ) : (
-                                  <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(139, 92, 246, 0.25)', border: '1px solid var(--accent-primary)', color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.78rem', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>
-                                    {p.name ? p.name.charAt(0).toUpperCase() : '?'}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={() => setShowTravelersModal(true)}
-                              style={{ background: 'rgba(139, 92, 246, 0.15)', border: '1px solid var(--accent-primary)', borderRadius: '50%', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', color: 'var(--accent-primary)', cursor: 'pointer', fontWeight: 600 }}
-                              title="Manage Travelers"
-                            >
-                              +
-                            </button>
-                          </div>
-                        );
-                      })()}
+                  people
+                    .filter(p => {
+                      if (ownerProfile.immichPersonId && String(p.immich_person_id) === String(ownerProfile.immichPersonId)) {
+                        return false;
+                      }
+                      if (!travelerSearch) return true;
+                      const q = travelerSearch.toLowerCase();
+                      return (p.name || '').toLowerCase().includes(q) || (p.relation || '').toLowerCase().includes(q);
+                    })
+                    .map(p => {
+                      const compIds = safeParseArray(selectedTrip?.companions);
+                      const isChecked = safeIncludes(compIds, p.id);
+                      const existingNotes = safeParseNotes(selectedTrip?.notes);
+                      const currentMainIds = tripSplitConfig.mainMemberIds;
+                      const isMainMember = isChecked && currentMainIds.some(mId => String(mId) === String(p.id));
+                      const userToken = token || localStorage.getItem('token') || '';
+                      return (
+                        <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--bg-app)', border: isMainMember ? '1px solid rgba(16, 185, 129, 0.45)' : '1px solid var(--border-glass)', borderRadius: '8px', gap: '8px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1, margin: 0 }}>
+                            <input 
+                              type="checkbox"
+                              checked={isChecked}
+                              style={{ accentColor: 'var(--accent-primary)', width: '17px', height: '17px', cursor: 'pointer', flexShrink: 0 }}
+                              onChange={async () => {
+                                const updatedComp = isChecked ? compIds.filter(id => id !== p.id) : [...compIds, p.id];
+                                const baseMain = currentMainIds.length > 0 ? [...currentMainIds] : ['self'];
+                                const nextMain = isChecked
+                                  ? baseMain.filter(mId => String(mId) !== String(p.id))
+                                  : [...new Set([...baseMain, p.id])];
+                                const safeMain = nextMain.length > 0 ? nextMain : (tripSplitConfig.includeOwner ? ['self'] : (updatedComp.length > 0 ? updatedComp : ['self']));
+                                const updatedNotes = {
+                                  ...existingNotes,
+                                  splitMainMembers: safeMain,
+                                  splitCount: Math.max(1, safeMain.length),
+                                  splitCountCustomized: false
+                                };
+                                const updatedTrip = {
+                                  ...selectedTrip,
+                                  companions: JSON.stringify(updatedComp),
+                                  notes: JSON.stringify(updatedNotes)
+                                };
+                                await queueSyncAction('trips', 'update', updatedTrip);
+                                setSelectedTrip(updatedTrip);
+                              }}
+                            />
+                            {p.immich_person_id ? (
+                              <img
+                                src={`/api/immich/person/thumbnail/${p.immich_person_id}?token=${encodeURIComponent(userToken)}`}
+                                alt={p.name}
+                                style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                              />
+                            ) : (
+                              <span style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--accent-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.85rem', flexShrink: 0 }}>
+                                {p.name ? p.name.charAt(0).toUpperCase() : '?'}
+                              </span>
+                            )}
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: '0.86rem', color: 'var(--text-primary)' }}>{p.name}</div>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--accent-primary)' }}>{p.relation}</div>
+                            </div>
+                          </label>
 
-
-                    </div>
-                  </div>
+                          {/* Main Member (Split) toggle pill */}
+                          <button
+                            type="button"
+                            title="Toggle whether this person is a Main Member for splitting trip expenses (or a non-splitting family/kid traveler)"
+                            onClick={async () => {
+                              let updatedComp = compIds;
+                              if (!isChecked) {
+                                updatedComp = [...compIds, p.id];
+                              }
+                              const baseMain = currentMainIds.length > 0 ? [...currentMainIds] : ['self'];
+                              let nextMain;
+                              if (isMainMember) {
+                                nextMain = baseMain.filter(mId => String(mId) !== String(p.id));
+                              } else {
+                                nextMain = [...new Set([...baseMain, p.id])];
+                              }
+                              if (nextMain.length === 0) nextMain = tripSplitConfig.includeOwner ? ['self'] : (updatedComp.length > 0 ? updatedComp : ['self']);
+                              const updatedNotes = {
+                                ...existingNotes,
+                                splitMainMembers: nextMain,
+                                splitMainMembersCustomized: true,
+                                splitCount: Math.max(1, nextMain.length),
+                                splitCountCustomized: false
+                              };
+                              const updatedTrip = {
+                                ...selectedTrip,
+                                companions: JSON.stringify(updatedComp),
+                                notes: JSON.stringify(updatedNotes)
+                              };
+                              await queueSyncAction('trips', 'update', updatedTrip);
+                              setSelectedTrip(updatedTrip);
+                            }}
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '0.73rem',
+                              fontWeight: 600,
+                              borderRadius: '14px',
+                              cursor: 'pointer',
+                              border: isMainMember ? '1px solid #10b981' : '1px solid var(--border-glass)',
+                              background: isMainMember ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                              color: isMainMember ? 'var(--accent-emerald-text)' : 'var(--text-secondary)',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {isMainMember ? '💰 Main Split Member' : (isChecked ? '👥 Family / No Split' : '+ Main Split')}
+                          </button>
+                        </div>
+                      );
+                    })
                 )}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button className="photo-action-btn" onClick={() => setShow3ColumnWorkspace(true)} title="Interactive Map View">
-                    <Map size={16} />
-                  </button>
-                  <button className="photo-action-btn" onClick={() => setShowPrintOptions(true)} title="Print Trip Plan">
-                    <Printer size={16} />
-                  </button>
-                  <button 
-                    className="photo-action-btn" 
-                    onClick={() => handleExportTrip(currentTrip)} 
-                    disabled={exportingTripId === currentTrip.id}
-                    title={exportingTripId === currentTrip.id ? "Exporting Trip..." : "Export Trip (.json)"}
+            )}
+
+            {/* Content Tab 2: Immich API Members */}
+            {travelerTab === 'immich' && (
+              loadingImmichPeople ? (
+                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  ⏳ Fetching members from Immich server API...
+                </div>
+              ) : immichPeople.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  No members found on Immich server. Please verify your Immich Server URL and API Key in Settings.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '230px', overflowY: 'auto' }}>
+                  {immichPeople
+                    .filter(ip => {
+                      if (!travelerSearch) return true;
+                      const q = travelerSearch.toLowerCase();
+                      return (ip.name || '').toLowerCase().includes(q);
+                    })
+                    .map(ip => {
+                      const userToken = token || localStorage.getItem('token') || '';
+                      const compIds = safeParseArray(selectedTrip?.companions);
+                      const existingLocal = people.find(p => p.immich_person_id === ip.id);
+                      const isChecked = existingLocal ? safeIncludes(compIds, existingLocal.id) : false;
+
+                      return (
+                        <label key={ip.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '8px', cursor: 'pointer' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <img
+                              src={`/api/immich/person/thumbnail/${ip.id}?token=${encodeURIComponent(userToken)}`}
+                              alt={ip.name || 'Immich Member'}
+                              style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                              }}
+                            />
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                                {ip.name || 'Unnamed Immich Member'}
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                                {existingLocal ? (
+                                  <span style={{ color: 'var(--accent-emerald-text)', fontWeight: 600 }}>✓ Saved ({existingLocal.relation})</span>
+                                ) : (
+                                  <span style={{ color: 'var(--accent-primary)' }}>Immich Member</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <input 
+                            type="checkbox"
+                            checked={isChecked}
+                            style={{ accentColor: 'var(--accent-primary)', width: '18px', height: '18px', cursor: 'pointer' }}
+                            onChange={async () => {
+                              let targetPersonId = existingLocal ? existingLocal.id : null;
+                              if (!targetPersonId) {
+                                // Automatically save Immich person to local database
+                                const newP = {
+                                  id: generateUUID(),
+                                  name: ip.name || 'Immich Member',
+                                  relation: 'Companion',
+                                  immich_person_id: ip.id,
+                                  immich_person_name: ip.name || ''
+                                };
+                                await queueSyncAction('people', 'insert', newP);
+                                targetPersonId = newP.id;
+                              }
+
+                              const updatedComp = isChecked 
+                                ? compIds.filter(id => id !== targetPersonId) 
+                                : [...compIds, targetPersonId];
+                              const existingNotes = safeParseNotes(selectedTrip?.notes);
+                              const baseMain = tripSplitConfig.mainMemberIds.length > 0 ? [...tripSplitConfig.mainMemberIds] : ['self'];
+                              const nextMain = isChecked
+                                ? baseMain.filter(mId => String(mId) !== String(targetPersonId))
+                                : [...new Set([...baseMain, targetPersonId])];
+                              const safeMain = nextMain.length > 0 ? nextMain : ['self'];
+                              const updatedNotes = {
+                                ...existingNotes,
+                                splitMainMembers: safeMain,
+                                splitCount: Math.max(1, safeMain.length),
+                                splitCountCustomized: false
+                              };
+
+                              const updatedTrip = {
+                                ...selectedTrip,
+                                companions: JSON.stringify(updatedComp),
+                                notes: JSON.stringify(updatedNotes)
+                              };
+                              await queueSyncAction('trips', 'update', updatedTrip);
+                              setSelectedTrip(updatedTrip);
+                            }}
+                          />
+                        </label>
+                      );
+                    })}
+                </div>
+              )
+            )}
+
+            {/* Trip Expense Split Configuration Box */}
+            {(() => {
+              const currentMainIds = tripSplitConfig.mainMemberIds;
+              const selfIncluded = currentMainIds.includes('self');
+              const configuredCount = tripSplitConfig.splitCount;
+
+              return (
+                <div style={{ marginTop: '14px', padding: '12px 14px', background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                      🤝 Expense Split Configuration (Main Members)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const nextMain = selfIncluded
+                          ? currentMainIds.filter(id => id !== 'self')
+                          : ['self', ...currentMainIds.filter(id => id !== 'self')];
+                        const safeMain = nextMain.length > 0 ? nextMain : ['self'];
+                        await handleUpdateTripConfig({
+                          splitMainMembers: safeMain,
+                          splitMainMembersCustomized: true,
+                          splitCount: Math.max(1, safeMain.length),
+                          splitCountCustomized: false
+                        });
+                      }}
+                      style={{
+                        padding: '3px 9px',
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
+                        borderRadius: '12px',
+                        cursor: 'pointer',
+                        border: selfIncluded ? '1px solid #10b981' : '1px solid var(--border-glass)',
+                        background: selfIncluded ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255,255,255,0.04)',
+                        color: selfIncluded ? 'var(--accent-emerald-text)' : 'var(--text-secondary)'
+                      }}
+                    >
+                      👤 Me: {selfIncluded ? 'Included in Split' : 'Excluded'}
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', flex: '1 1 200px' }}>
+                      Split shared expenses across how many main members / shares?
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>÷</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="50"
+                        className="form-control"
+                        value={configuredCount}
+                        onChange={(e) => {
+                          const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                          let nextMain = currentMainIds;
+                          if (val > 1 && nextMain.length <= 1) {
+                            const compIds = safeParseArray(selectedTrip?.companions);
+                            nextMain = ['self', ...compIds];
+                          }
+                          handleUpdateTripConfig({
+                            splitCount: val,
+                            splitCountCustomized: true,
+                            splitMainMembers: nextMain
+                          });
+                        }}
+                        style={{ width: '72px', height: '32px', padding: '4px 8px', fontSize: '0.85rem', fontWeight: 'bold', textAlign: 'center' }}
+                      />
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                        {configuredCount === 1 ? 'person (No split)' : 'main members'}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                    💡 Tip: Tag all family members as trip travelers, and mark only paying adults/heads as <b>💰 Main Split Member</b> so expenses divide only among main members.
+                  </div>
+                </div>
+              );
+            })()}
+
+            <button className="btn btn-primary" onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }} style={{ marginTop: '14px', width: '100%' }}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selectedTrip && !showAddForm && !show3ColumnWorkspace && (
+        <div className="trip-details-overlay">
+          <div style={{
+            background: 'var(--bg-surface)', width: '100%',
+            display: 'flex', flexDirection: 'column',
+            borderRadius: 'var(--radius-md)'
+          }}>
+            {/* Sticky Header + Section Jump-Bar Container */}
+            <div className="trip-sticky-top-bar no-print">
+              {/* Header */}
+              <div className="dialog-header no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: 'none', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+                  {isEditingTripMeta ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <input 
+                        type="text" 
+                        className="form-control" 
+                        style={{ fontSize: '1.2rem', fontWeight: 'bold', padding: '4px 8px', height: '38px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)' }}
+                        value={editTripName}
+                        onChange={(e) => setEditTripName(e.target.value)}
+                      />
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input 
+                          type="date" 
+                          className="form-control" 
+                          style={{ width: '140px', fontSize: '0.8rem', height: '30px', padding: '2px 6px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)' }}
+                          value={editTripStartDate}
+                          onClick={(e) => e.target.showPicker()}
+                          onChange={(e) => setEditTripStartDate(e.target.value)}
+                        />
+                        <input 
+                          type="number" 
+                          min="1" 
+                          placeholder="Length"
+                          className="form-control" 
+                          style={{ width: '90px', fontSize: '0.8rem', height: '30px', padding: '2px 6px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)' }}
+                          value={editTripLength === 0 || editTripLength === '' ? '' : editTripLength}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditTripLength(val === '' ? '' : parseInt(val, 10));
+                          }}
+                        />
+                        <select
+                          className="form-control"
+                          style={{ fontSize: '0.78rem', height: '30px', padding: '2px 6px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', flex: 1, minWidth: '130px' }}
+                          value={editTripStartAddressId}
+                          onChange={(e) => setEditTripStartAddressId(e.target.value)}
+                        >
+                          <option value="">Start: -- None --</option>
+                          {userAddresses.map(addr => (
+                            <option key={addr.id} value={addr.id}>Start: 🏠 {addr.label}</option>
+                          ))}
+                        </select>
+                        <select
+                          className="form-control"
+                          style={{ fontSize: '0.78rem', height: '30px', padding: '2px 6px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', flex: 1, minWidth: '130px' }}
+                          value={editTripStopAddressId}
+                          onChange={(e) => setEditTripStopAddressId(e.target.value)}
+                        >
+                          <option value="">End: -- None --</option>
+                          {userAddresses.map(addr => (
+                            <option key={addr.id} value={addr.id}>End: 🏠 {addr.label}</option>
+                          ))}
+                        </select>
+                        <button 
+                          className="btn btn-primary"
+                          style={{ width: 'auto', height: '30px', padding: '4px 12px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }}
+                          onClick={async () => {
+                            const len = Math.max(1, parseInt(editTripLength, 10) || 1);
+                            let calculatedEndDate = null;
+                            if (editTripStartDate && editTripStartDate !== 'null') {
+                              const start = new Date(editTripStartDate);
+                              start.setDate(start.getDate() + (len - 1));
+                              calculatedEndDate = start.toISOString().split('T')[0];
+                            }
+                            const updated = {
+                              ...selectedTrip,
+                              name: editTripName,
+                              start_date: editTripStartDate || null,
+                              end_date: calculatedEndDate,
+                              length: len,
+                              start_address_id: editTripStartAddressId || null,
+                              stop_address_id: editTripStopAddressId || null
+                            };
+                            await queueSyncAction('trips', 'update', updated);
+                            setSelectedTrip(updated);
+                            setIsEditingTripMeta(false);
+                          }}
+                        >
+                          Save
+                        </button>
+                        <button 
+                          className="btn btn-secondary"
+                          style={{ width: 'auto', height: '30px', padding: '4px 12px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }}
+                          onClick={() => setIsEditingTripMeta(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <h2 style={{ margin: 0 }}>{currentTrip.name}</h2>
+                        <button 
+                          className="btn btn-secondary"
+                          style={{ width: 'auto', padding: '2px 8px', fontSize: '0.7rem', height: '24px', display: 'inline-flex', alignItems: 'center', gap: '4px', textTransform: 'none' }}
+                          onClick={startEditingTrip}
+                        >
+                          Edit Details
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                        <span>📅 {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})</span>
+                        {currentTrip.start_address_id && (
+                          <span>🏠 Start: {userAddresses.find(a => a.id === currentTrip.start_address_id)?.label || 'Home'}</span>
+                        )}
+                        {currentTrip.stop_address_id && (
+                          <span>🏁 End: {userAddresses.find(a => a.id === currentTrip.stop_address_id)?.label || 'Home'}</span>
+                        )}
+                        
+                        {/* Companion / Traveler Thumbnails */}
+                        {(() => {
+                          const userToken = token || localStorage.getItem('token') || '';
+                          const companions = tripSplitConfig.tripPeople || [];
+                          const showOwner = tripSplitConfig.includeOwner;
+                          return (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span>👥 Travelers:</span>
+                              {showOwner && (
+                                <div 
+                                  title={`${ownerProfile.displayName || ownerProfile.username || 'Me'} (You / Account Owner)`}
+                                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  {ownerProfile.immichPersonId ? (
+                                    <img
+                                      src={`/api/immich/person/thumbnail/${ownerProfile.immichPersonId}?token=${encodeURIComponent(userToken)}`}
+                                      alt={ownerProfile.displayName || 'Me'}
+                                      style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}
+                                      onError={(e) => { e.target.style.display = 'none'; }}
+                                    />
+                                  ) : ownerProfile.profilePicture ? (
+                                    <img
+                                      src={ownerProfile.profilePicture}
+                                      alt={ownerProfile.displayName || 'Me'}
+                                      style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}
+                                    />
+                                  ) : (
+                                    <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--accent-primary)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.78rem', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>
+                                      {ownerProfile.displayName ? ownerProfile.displayName.charAt(0).toUpperCase() : (ownerProfile.username ? ownerProfile.username.charAt(0).toUpperCase() : 'M')}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {companions.map(p => (
+                                <div 
+                                  key={p.id} 
+                                  title={`${p.name} (${p.relation})`}
+                                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  {p.immich_person_id ? (
+                                    <img
+                                      src={`/api/immich/person/thumbnail/${p.immich_person_id}?token=${encodeURIComponent(userToken)}`}
+                                      alt={p.name}
+                                      style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}
+                                      onError={(e) => { e.target.style.display = 'none'; }}
+                                    />
+                                  ) : (
+                                    <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(139, 92, 246, 0.25)', border: '1px solid var(--accent-primary)', color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.78rem', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>
+                                      {p.name ? p.name.charAt(0).toUpperCase() : '?'}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => setShowTravelersModal(true)}
+                                style={{ background: 'rgba(139, 92, 246, 0.15)', border: '1px solid var(--accent-primary)', borderRadius: '50%', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', color: 'var(--accent-primary)', cursor: 'pointer', fontWeight: 600 }}
+                                title="Manage Travelers & Expense Split"
+                              >
+                                +
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setShow3ColumnWorkspace(true)}
+                    style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    title="Open Interactive 3-Column Map & Route Workspace"
                   >
-                    {exportingTripId === currentTrip.id ? <RefreshCw size={16} className="spinning" /> : <Download size={16} />}
+                    <Map size={15} /> <span className="desktop-only-text">Map Workspace</span>
                   </button>
-                  <button 
-                    className="photo-action-btn" 
-                    onClick={() => handleToggleActiveTrip(currentTrip.id)}
-                    style={{ 
-                      color: activeTripId === currentTrip.id.toString() ? 'var(--accent-primary-hover)' : 'var(--text-secondary)'
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '4px 6px', borderRadius: '999px', border: '1px solid var(--border-glass)' }}>
+                    <button className="photo-action-btn" onClick={() => setShowPrintOptions(true)} title="Print Trip Plan">
+                      <Printer size={15} />
+                    </button>
+                    <button 
+                      className="photo-action-btn" 
+                      onClick={() => handleExportTrip(currentTrip)} 
+                      disabled={exportingTripId === currentTrip.id}
+                      title={exportingTripId === currentTrip.id ? "Exporting Trip..." : "Export Trip (.json)"}
+                    >
+                      {exportingTripId === currentTrip.id ? <RefreshCw size={15} className="spinning" /> : <Download size={15} />}
+                    </button>
+                    <button 
+                      className="photo-action-btn" 
+                      onClick={() => handleToggleActiveTrip(currentTrip.id)}
+                      style={{ 
+                        color: activeTripId === currentTrip.id.toString() ? 'var(--accent-primary-hover)' : 'var(--text-secondary)'
+                      }}
+                      title={activeTripId === currentTrip.id.toString() ? "Active Trip (Pinned)" : "Set as Active Trip"}
+                    >
+                      <Star size={15} fill={activeTripId === currentTrip.id.toString() ? 'var(--accent-primary-hover)' : 'none'} />
+                    </button>
+                    <button 
+                      className="photo-action-btn" 
+                      onClick={() => handleToggleTripVisited(currentTrip)}
+                      style={{ color: currentTrip.visited === 1 ? 'var(--success)' : 'var(--text-secondary)' }}
+                      title={currentTrip.visited === 1 ? "Completed Trip" : "Mark Trip as Completed"}
+                    >
+                      <CheckSquare size={15} />
+                    </button>
+                    <button className="photo-action-btn" onClick={() => handleDeleteTrip(currentTrip.id)} title="Delete Trip">
+                      <Trash2 size={15} />
+                    </button>
+                    <button className="photo-action-btn" onClick={() => handleBackToTripsList()} title="Close Trip Plan">
+                      <X size={15} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sticky Section Jump-Bar */}
+              <div className="trip-section-jump-bar no-print" style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
+                padding: '8px 24px', background: 'var(--bg-jump-bar)', borderTop: '1px solid var(--border-glass)',
+                overflowX: 'auto', WebkitOverflowScrolling: 'touch'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: '4px', whiteSpace: 'nowrap' }}>
+                    {focusedSection ? 'Section:' : 'Jump to:'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => scrollToTripSection('trip-section-budget', 'budget')}
+                    style={{
+                      background: focusedSection === 'budget' ? 'rgba(139, 92, 246, 0.28)' : 'rgba(139, 92, 246, 0.12)',
+                      border: focusedSection === 'budget' ? '1.5px solid #a78bfa' : '1px solid rgba(139, 92, 246, 0.3)',
+                      color: 'var(--text-primary)', borderRadius: '999px', padding: '4px 11px', fontSize: '0.76rem',
+                      fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '5px'
                     }}
-                    title={activeTripId === currentTrip.id.toString() ? "Active Trip (Pinned)" : "Set as Active Trip"}
                   >
-                    <Star size={16} fill={activeTripId === currentTrip.id.toString() ? 'var(--accent-primary-hover)' : 'none'} />
+                    💰 Budget
                   </button>
-                  <button 
-                    className="photo-action-btn" 
-                    onClick={() => handleToggleTripVisited(currentTrip)}
-                    style={{ color: currentTrip.visited === 1 ? 'var(--success)' : 'var(--text-secondary)' }}
+                  <button
+                    type="button"
+                    onClick={() => scrollToTripSection('trip-section-itinerary', 'itinerary')}
+                    style={{
+                      background: focusedSection === 'itinerary' ? 'rgba(59, 130, 246, 0.28)' : 'rgba(59, 130, 246, 0.12)',
+                      border: focusedSection === 'itinerary' ? '1.5px solid #60a5fa' : '1px solid rgba(59, 130, 246, 0.3)',
+                      color: 'var(--text-primary)', borderRadius: '999px', padding: '4px 11px', fontSize: '0.76rem',
+                      fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '5px'
+                    }}
                   >
-                    <CheckSquare size={16} />
+                    📅 Itinerary ({itineraryDays.length}d)
                   </button>
-                  <button className="photo-action-btn" onClick={() => handleDeleteTrip(currentTrip.id)}>
-                    <Trash2 size={16} />
+                  <button
+                    type="button"
+                    onClick={() => scrollToTripSection('trip-section-reservations', 'reservations')}
+                    style={{
+                      background: focusedSection === 'reservations' ? 'rgba(16, 185, 129, 0.28)' : 'rgba(16, 185, 129, 0.12)',
+                      border: focusedSection === 'reservations' ? '1.5px solid #34d399' : '1px solid rgba(16, 185, 129, 0.3)',
+                      color: 'var(--text-primary)', borderRadius: '999px', padding: '4px 11px', fontSize: '0.76rem',
+                      fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '5px'
+                    }}
+                  >
+                    🎟️ Reservations ({reservations.filter(r => r.trip_id === selectedTrip.id).length})
                   </button>
-                  <button className="photo-action-btn" onClick={() => handleBackToTripsList()}>
-                    <X size={18} />
+                  {!tripModeActive && (
+                    <button
+                      type="button"
+                      onClick={() => scrollToTripSection('trip-section-expenses', 'expenses')}
+                      style={{
+                        background: focusedSection === 'expenses' ? 'rgba(245, 158, 11, 0.28)' : 'rgba(245, 158, 11, 0.12)',
+                        border: focusedSection === 'expenses' ? '1.5px solid #fbbf24' : '1px solid rgba(245, 158, 11, 0.35)',
+                        color: 'var(--text-primary)', borderRadius: '999px', padding: '4px 11px', fontSize: '0.76rem',
+                        fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '5px'
+                      }}
+                    >
+                      🧾 Expenses & Split ({tripExpensesList.length})
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => scrollToTripSection('trip-section-notes', 'notes')}
+                    style={{
+                      background: focusedSection === 'notes' ? 'rgba(236, 72, 153, 0.28)' : 'rgba(236, 72, 153, 0.12)',
+                      border: focusedSection === 'notes' ? '1.5px solid #f472b6' : '1px solid rgba(236, 72, 153, 0.3)',
+                      color: 'var(--text-primary)', borderRadius: '999px', padding: '4px 11px', fontSize: '0.76rem',
+                      fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '5px'
+                    }}
+                  >
+                    📝 Notes ({notesList.filter(n => n.trip_id === selectedTrip.id).length})
                   </button>
                 </div>
+
+                {/* Focus Mode & Collapse / Expand All Sections quick toggles */}
+                {(() => {
+                  const sectionKeys = ['budget', 'itinerary', 'reservations', 'expenses', 'notes'];
+                  const allCollapsed = sectionKeys.every(k => collapsedSections[k]);
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (focusedSection) {
+                            setFocusedSection(null);
+                          } else {
+                            setFocusedSection('itinerary');
+                            setCollapsedSections(prev => ({ ...prev, itinerary: false }));
+                          }
+                        }}
+                        style={{
+                          background: focusedSection ? 'rgba(139, 92, 246, 0.2)' : 'rgba(255,255,255,0.05)',
+                          border: focusedSection ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
+                          color: focusedSection ? 'var(--accent-purple-text)' : 'var(--text-secondary)',
+                          borderRadius: '6px', padding: '4px 10px', fontSize: '0.72rem',
+                          fontWeight: focusedSection ? 600 : 500,
+                          cursor: 'pointer', whiteSpace: 'nowrap'
+                        }}
+                        title={focusedSection ? "Show all trip sections stacked on one page" : "Focus on a single section at a time for a cleaner workspace"}
+                      >
+                        {focusedSection ? '📑 Show All Sections' : '🎯 Focus 1 Section'}
+                      </button>
+                      {!focusedSection && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (allCollapsed) {
+                              setCollapsedSections({});
+                            } else {
+                              const next = {};
+                              sectionKeys.forEach(k => { next[k] = true; });
+                              setCollapsedSections(next);
+                            }
+                          }}
+                          style={{
+                            background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)',
+                            color: 'var(--text-secondary)', borderRadius: '6px', padding: '4px 10px', fontSize: '0.72rem',
+                            cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0
+                          }}
+                          title={allCollapsed ? "Expand all trip sections" : "Collapse all trip sections"}
+                        >
+                          {allCollapsed ? '↕️ Expand All' : '↕️ Collapse All'}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
             {/* Print Header (Visible only when printing) */}
             <div className="print-only" style={{ display: 'none', padding: '24px', borderBottom: '2px solid #000' }}>
-              <h1 style={{ color: '#000' }}>{currentTrip.name}</h1>
-              <p>Trip Duration: {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})</p>
-              <hr style={{ margin: '12px 0' }} />
+              <h1 style={{ color: '#000', margin: '0 0 6px 0' }}>{currentTrip.name}</h1>
+              <p style={{ margin: '0 0 4px 0', color: '#222' }}>
+                Trip Duration: {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})
+              </p>
+              {(() => {
+                const compIds = safeParseArray(currentTrip?.companions);
+                const matched = people.filter(p => safeIncludes(compIds, p.id));
+                if (matched.length === 0 && !tripSplitConfig.isSplitConfigured) return null;
+                return (
+                  <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#333' }}>
+                    {matched.length > 0 && (
+                      <span><b>Travelers:</b> Me, {matched.map(p => p.name).join(', ')}</span>
+                    )}
+                    {tripSplitConfig.isSplitConfigured && (
+                      <span style={{ marginLeft: matched.length > 0 ? '16px' : 0 }}>
+                        <b>Expense Split ({tripSplitConfig.splitCount}-way Main Members):</b> {tripSplitConfig.mainMemberIds.map(id => getMemberName(id)).join(', ')}
+                      </span>
+                    )}
+                  </p>
+                );
+              })()}
+              <hr style={{ margin: '12px 0 0 0' }} />
             </div>
 
             {/* Main Content Area */}
             <div className="dialog-body" style={{ flexGrow: 1, padding: '24px', maxHeight: 'none', overflowY: 'visible' }}>
               
               {/* Budget Spend Tracker */}
-              <div className={!printOptBudget ? 'no-print' : ''} style={{ background: 'var(--bg-surface-elevated)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                  <div>
-                    <h3 style={{ margin: 0 }}>Budget Spend Tracker</h3>
-                    <div style={{ display: 'flex', gap: '16px', fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                      <span>Spent: <b style={{ color: 'var(--text-primary)' }}>{actualBudget.toFixed(2)} {baseCurrency}</b></span>
-                      <span>Limit: <b style={{ color: 'var(--text-primary)' }}>{plannedBudget.toFixed(2)} {baseCurrency}</b></span>
+              <div id="trip-section-budget" className={`${!printOptBudget ? 'no-print' : ''} ${focusedSection && focusedSection !== 'budget' ? 'collapsed-on-screen' : ''}`} style={{ scrollMarginTop: '140px', background: 'var(--bg-surface-elevated)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: collapsedSections.budget ? 0 : '16px', flexWrap: 'wrap', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => toggleSectionCollapse('budget')}>
+                    <button
+                      type="button"
+                      className="no-print"
+                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '6px', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      title={collapsedSections.budget ? "Expand Budget Section" : "Collapse Budget Section"}
+                    >
+                      {collapsedSections.budget ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                    <div>
+                      <h3 style={{ margin: 0 }}>Budget Spend Tracker (Me)</h3>
+                      <div style={{ display: 'flex', gap: '16px', fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '4px', flexWrap: 'wrap' }}>
+                        <span title={`My Split Share (${expenseSplitSummary.mySplitShare.toFixed(2)}) + My Personal Spend (${expenseSplitSummary.myPersonalSpend.toFixed(2)})`}>
+                          My Spend: <b style={{ color: 'var(--text-primary)' }}>{actualBudget.toFixed(2)} {baseCurrency}</b>
+                        </span>
+                        <span>Limit: <b style={{ color: 'var(--text-primary)' }}>{plannedBudget.toFixed(2)} {baseCurrency}</b></span>
+                        {(tripSplitConfig.isSplitConfigured || expenseSplitSummary.totalSplitExpenses > 0 || expenseSplitSummary.hasBehalfExpenses || totalGroupBudget !== actualBudget) && (
+                          <>
+                            <span>Paid by Me: <b style={{ color: 'var(--accent-purple-text)' }}>{expenseSplitSummary.myOutOfPocketPaid.toFixed(2)} {baseCurrency}</b></span>
+                            <span>Group Total: <b style={{ color: 'var(--text-secondary)' }}>{totalGroupBudget.toFixed(2)} {baseCurrency}</b></span>
+                            <span>Per Split Share ({tripSplitConfig.splitCount}-way): <b style={{ color: 'var(--accent-emerald-text)' }}>{expenseSplitSummary.perMemberShare.toFixed(2)} {baseCurrency}</b></span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
 
                   {/* Actions toolbar */}
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                  <div className="no-print" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button 
+                      onClick={() => setShowTravelersModal(true)}
+                      className="btn btn-secondary"
+                      style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      title="Manage Travelers & Expense Split Configuration"
+                    >
+                      👥 <span className="desktop-only">Split ({tripSplitConfig.splitCount})</span>
+                    </button>
                     <button 
                       onClick={() => {
+                        setCollapsedSections(prev => ({ ...prev, budget: false }));
                         setShowBudgetLimitForm(!showBudgetLimitForm);
                         setShowAddExpenseForm(false);
                         setShowRatesForm(false);
@@ -4145,6 +5645,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     </button>
                     <button 
                       onClick={() => {
+                        setCollapsedSections(prev => ({ ...prev, budget: false }));
                         setShowAddExpenseForm(!showAddExpenseForm);
                         setShowBudgetLimitForm(false);
                         setShowRatesForm(false);
@@ -4153,11 +5654,12 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                       style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
                       title="Add Expense"
                     >
-                      <Plus size={14} /> <span className="desktop-only">Add Expense</span>
+                      <Plus size={14} /> <span className="desktop-only">{showAddExpenseForm ? 'Close Form' : 'Log Expense'}</span>
                     </button>
                     {getTripIsInternational(selectedTrip) && (
                       <button 
                         onClick={() => {
+                          setCollapsedSections(prev => ({ ...prev, budget: false }));
                           setShowRatesForm(!showRatesForm);
                           setShowBudgetLimitForm(false);
                           setShowAddExpenseForm(false);
@@ -4172,177 +5674,318 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   </div>
                 </div>
 
-                {/* Tracker Slider progress */}
-                <div className="budget-progress-container">
-                  <div 
-                    className={`budget-progress-bar ${actualBudget > plannedBudget ? 'over' : ''}`}
-                    style={{ width: `${Math.min(budgetPercentage, 100)}%` }}
-                  />
-                </div>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', textAlign: 'right', margin: 0 }}>
-                  {budgetPercentage.toFixed(0)}% of limit reached
-                </p>
+                <div className={collapsedSections.budget ? 'collapsed-on-screen' : ''}>
+                  {/* Tracker Slider progress */}
+                  <div className="budget-progress-container">
+                    <div 
+                      className={`budget-progress-bar ${actualBudget > plannedBudget ? 'over' : ''}`}
+                      style={{ width: `${Math.min(budgetPercentage, 100)}%` }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                      {(tripSplitConfig.isSplitConfigured || expenseSplitSummary.totalSplitExpenses > 0 || expenseSplitSummary.hasBehalfExpenses)
+                        ? `My Trip Spend = My Split Share (${expenseSplitSummary.mySplitShare.toFixed(2)} ${baseCurrency}) + My Personal (${expenseSplitSummary.myPersonalSpend.toFixed(2)} ${baseCurrency})`
+                        : 'Tracking your personal trip expenses'}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      {budgetPercentage.toFixed(0)}% of my limit reached
+                    </span>
+                  </div>
 
-                {/* Collapsible Forms inside Tracker */}
-                {showBudgetLimitForm && (
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '4px', border: '1px solid var(--border-glass)', marginTop: '16px' }}>
-                    <label style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '8px' }}>Update Planned Budget Limit ({baseCurrency})</label>
-                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                      <input
-                        type="number"
-                        placeholder="e.g. 1500"
-                        className="form-control"
-                        value={plannedBudgetInput}
-                        onChange={(e) => setPlannedBudgetInput(e.target.value)}
-                        style={{ maxWidth: '200px' }}
-                      />
-                      <button 
-                        onClick={() => {
-                          handleUpdateTripConfig({ plannedBudget: parseFloat(plannedBudgetInput) || 0 });
-                          setShowBudgetLimitForm(false);
+                  {/* Who Owes Whom Quick Settlement Strip in Budget Tracker */}
+                  {(tripSplitConfig.isSplitConfigured || expenseSplitSummary.totalSplitExpenses > 0 || expenseSplitSummary.hasBehalfExpenses) && (
+                    <div style={{
+                      marginTop: '12px',
+                      padding: '10px 14px',
+                      background: 'rgba(16, 185, 129, 0.07)',
+                      border: '1px solid rgba(16, 185, 129, 0.25)',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '8px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--accent-emerald-text)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                          💸 Who Owes Whom:
+                        </span>
+                        {expenseSplitSummary.settlements.length > 0 ? (
+                          expenseSplitSummary.settlements.map((s, idx) => (
+                            <span
+                              key={idx}
+                              title={s.breakdownNote}
+                              style={{
+                                background: 'rgba(16, 185, 129, 0.16)',
+                                border: '1px solid rgba(16, 185, 129, 0.4)',
+                                color: 'var(--accent-emerald-pill-text)',
+                                padding: '3px 10px',
+                                borderRadius: '999px',
+                                fontSize: '0.78rem',
+                                fontWeight: 600
+                              }}
+                            >
+                              <b>{s.fromName}</b> owes <b>{s.toName}</b>: <b>{s.amount.toFixed(2)} {baseCurrency}</b>
+                            </span>
+                          ))
+                        ) : (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                            {(expenseSplitSummary.totalSplitExpenses > 0 || expenseSplitSummary.hasBehalfExpenses)
+                              ? `✅ All expenses settled (0.00 ${baseCurrency} owed)`
+                              : `Splitting across ${tripSplitConfig.splitCount} (${tripSplitConfig.mainMemberIds.map(id => getMemberName(id, true)).join(', ')}) — record or mark expenses as Split below`}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="no-print"
+                        onClick={() => scrollToTripSection('trip-section-expenses', 'expenses')}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid rgba(16, 185, 129, 0.35)',
+                          color: 'var(--accent-emerald-text)',
+                          borderRadius: '6px',
+                          padding: '3px 8px',
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          cursor: 'pointer'
                         }}
-                        className="btn btn-primary"
-                        style={{ width: 'auto' }}
                       >
-                        Save
+                        View Full Breakdown ↓
                       </button>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {showRatesForm && getTripIsInternational(selectedTrip) && (
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '4px', border: '1px solid var(--border-glass)', marginTop: '16px' }}>
-                    <h4 style={{ marginBottom: '8px', fontSize: '0.9rem' }}>Convert Currencies manually (Base: {baseCurrency})</h4>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
-                      {rates.filter(r => r.trip_id === selectedTrip.id).map(r => (
-                        <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>
-                          1 {r.currency} = {r.rate} {baseCurrency}
-                          <X size={12} style={{ cursor: 'pointer' }} onClick={() => queueSyncAction('trip_currency_rates', 'delete', { id: r.id })} />
-                        </span>
-                      ))}
-                    </div>
-                    <form onSubmit={(e) => { handleAddRate(e); setShowRatesForm(false); }} style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ fontSize: '0.75rem' }}>Currency</label>
-                        <SearchableSelect
-                          options={getBrowserCurrencies()}
-                          value={targetCur}
-                          onChange={(val) => setTargetCur(val)}
-                          placeholder="Select currency..."
+                  {/* Collapsible Forms inside Tracker */}
+                  {showBudgetLimitForm && (
+                    <div className="no-print" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '4px', border: '1px solid var(--border-glass)', marginTop: '16px' }}>
+                      <label style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '8px' }}>Update Planned Budget Limit ({baseCurrency})</label>
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        <input
+                          type="number"
+                          placeholder="e.g. 1500"
+                          className="form-control"
+                          value={plannedBudgetInput}
+                          onChange={(e) => setPlannedBudgetInput(e.target.value)}
+                          style={{ maxWidth: '200px' }}
                         />
+                        <button 
+                          onClick={() => {
+                            handleUpdateTripConfig({ plannedBudget: parseFloat(plannedBudgetInput) || 0 });
+                            setShowBudgetLimitForm(false);
+                          }}
+                          className="btn btn-primary"
+                          style={{ width: 'auto' }}
+                        >
+                          Save
+                        </button>
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ fontSize: '0.75rem' }}>Conversion Rate (to {baseCurrency})</label>
-                        <input type="number" step="any" className="form-control" placeholder="e.g. 1.08" value={curRate} onChange={(e) => setCurRate(e.target.value)} required />
-                      </div>
-                      <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '10px 16px' }}>Add Rate</button>
-                    </form>
-                  </div>
-                )}
+                    </div>
+                  )}
 
-                {showAddExpenseForm && (
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '4px', border: '1px solid var(--border-glass)', marginTop: '16px' }}>
-                    <form onSubmit={(e) => { handleAddExpense(e); setShowAddExpenseForm(false); localStorage.setItem(`last_currency_used_${selectedTrip.id}`, expCurrency); }}>
-                      <h4 style={{ marginBottom: '12px' }}>+ Record Expense</h4>
-                      <div style={{ display: 'flex', gap: '12px' }}>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Amount</label>
-                          <input type="number" step="any" required className="form-control" value={expAmount} onChange={(e) => setExpAmount(e.target.value)} />
+                  {showRatesForm && getTripIsInternational(selectedTrip) && (
+                    <div className="no-print" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '4px', border: '1px solid var(--border-glass)', marginTop: '16px' }}>
+                      <h4 style={{ marginBottom: '8px', fontSize: '0.9rem' }}>Convert Currencies manually (Base: {baseCurrency})</h4>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+                        {rates.filter(r => r.trip_id === selectedTrip.id).map(r => (
+                          <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>
+                            1 {r.currency} = {r.rate} {baseCurrency}
+                            <X size={12} style={{ cursor: 'pointer' }} onClick={() => queueSyncAction('trip_currency_rates', 'delete', { id: r.id })} />
+                          </span>
+                        ))}
+                      </div>
+                      <form onSubmit={(e) => { handleAddRate(e); setShowRatesForm(false); }} style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '0.75rem' }}>Currency</label>
+                          <SearchableSelect
+                            options={getBrowserCurrencies()}
+                            value={targetCur}
+                            onChange={(val) => setTargetCur(val)}
+                            placeholder="Select currency..."
+                          />
                         </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Currency</label>
-                          <select className="form-control" value={expCurrency} onChange={(e) => setExpCurrency(e.target.value)}>
-                            {!getTripIsInternational(selectedTrip) ? (
-                              <option value={baseCurrency}>{baseCurrency}</option>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '0.75rem' }}>Conversion Rate (to {baseCurrency})</label>
+                          <input type="number" step="any" className="form-control" placeholder="e.g. 1.08" value={curRate} onChange={(e) => setCurRate(e.target.value)} required />
+                        </div>
+                        <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '10px 16px' }}>Add Rate</button>
+                      </form>
+                    </div>
+                  )}
+
+                  {showAddExpenseForm && (
+                    <div className="no-print" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '4px', border: '1px solid var(--border-glass)', marginTop: '16px' }}>
+                      <form onSubmit={(e) => { handleAddExpense(e); setShowAddExpenseForm(false); localStorage.setItem(`last_currency_used_${selectedTrip.id}`, expCurrency); }}>
+                        <h4 style={{ marginBottom: '12px' }}>+ Record Expense</h4>
+                        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                          <div className="form-group" style={{ flex: '1 1 140px' }}>
+                            <label>Amount</label>
+                            <input type="number" step="any" required className="form-control" value={expAmount} onChange={(e) => setExpAmount(e.target.value)} />
+                          </div>
+                          <div className="form-group" style={{ flex: '1 1 120px' }}>
+                            <label>Currency</label>
+                            <select className="form-control" value={expCurrency} onChange={(e) => setExpCurrency(e.target.value)}>
+                              {!getTripIsInternational(selectedTrip) ? (
+                                <option value={baseCurrency}>{baseCurrency}</option>
+                              ) : (
+                                [baseCurrency, ...rates.filter(r => r.trip_id === selectedTrip.id).map(r => r.currency)].filter((val, idx, self) => self.indexOf(val) === idx).map(cur => (
+                                  <option key={cur} value={cur}>{cur}</option>
+                                ))
+                              )}
+                            </select>
+                          </div>
+                          <div className="form-group" style={{ flex: '1 1 160px' }}>
+                            <label>Date</label>
+                            {(!expDate || itineraryDays.some(d => d.date === expDate)) ? (
+                              <select 
+                                className="form-control" 
+                                required
+                                value={expDate} 
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (val === 'custom') {
+                                    setExpDate('custom-temp');
+                                  } else {
+                                    setExpDate(val);
+                                  }
+                                }}
+                              >
+                                <option value="">Select Date</option>
+                                {itineraryDays.map(d => (
+                                  <option key={d.date} value={d.date}>{d.label}</option>
+                                ))}
+                                <option value="custom">📅 Custom Date...</option>
+                              </select>
                             ) : (
-                              [baseCurrency, ...rates.filter(r => r.trip_id === selectedTrip.id).map(r => r.currency)].filter((val, idx, self) => self.indexOf(val) === idx).map(cur => (
-                                <option key={cur} value={cur}>{cur}</option>
-                              ))
+                              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                <input 
+                                  type="date" 
+                                  required 
+                                  className="form-control" 
+                                  value={expDate === 'custom-temp' ? '' : expDate} 
+                                  onChange={(e) => setExpDate(e.target.value)} 
+                                />
+                                <button 
+                                  type="button" 
+                                  className="btn btn-secondary" 
+                                  onClick={() => setExpDate('')}
+                                  style={{ padding: '4px 8px', fontSize: '0.75rem', width: 'auto', height: '34px' }}
+                                >
+                                  Reset
+                                </button>
+                              </div>
                             )}
-                          </select>
+                          </div>
                         </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Date</label>
-                          {(!expDate || itineraryDays.some(d => d.date === expDate)) ? (
-                            <select 
-                              className="form-control" 
-                              required
-                              value={expDate} 
+
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
+                          <div className="form-group" style={{ flex: '1 1 160px' }}>
+                            <label>Category</label>
+                            <select className="form-control" value={expCategory} onChange={(e) => setExpCategory(e.target.value)}>
+                              <option value="Food">🍽️ Food / Dining</option>
+                              <option value="Hotel">🏨 Hotel / Stay</option>
+                              <option value="Dinner">🍽️ Dinner</option>
+                              <option value="Lunch">🍲 Lunch</option>
+                              <option value="Snacks">☕ Snacks</option>
+                              <option value="Transportation">🚕 Transportation</option>
+                              <option value="Fuel">⛽ Fuel</option>
+                              <option value="Entertainment">🎟️ Entertainment</option>
+                              <option value="Other">💼 Miscellaneous</option>
+                            </select>
+                          </div>
+
+                          <div className="form-group" style={{ flex: '1 1 160px' }}>
+                            <label>Paid By</label>
+                            <select
+                              className="form-control"
+                              value={expPaidBy}
                               onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === 'custom') {
-                                  setExpDate('custom-temp');
-                                } else {
-                                  setExpDate(val);
+                                if (e.target.value === '__manage_travelers__') {
+                                  setShowTravelersModal(true);
+                                  return;
+                                }
+                                const nextPayer = e.target.value;
+                                setExpPaidBy(nextPayer);
+                                if (expForMember && String(expForMember) === String(nextPayer)) {
+                                  setExpForMember(null);
                                 }
                               }}
                             >
-                              <option value="">Select Date</option>
-                              {itineraryDays.map(d => (
-                                <option key={d.date} value={d.date}>{d.label}</option>
+                              <option value="self">👤 {ownerProfile.displayName ? `${ownerProfile.displayName} (Me)` : 'Me'}</option>
+                              {tripSplitConfig.tripPeople.map(p => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name} ({p.relation || 'Companion'})
+                                </option>
                               ))}
-                              <option value="custom">📅 Custom Date...</option>
+                              <option value="__manage_travelers__">➕ Add / Manage Travelers...</option>
                             </select>
-                          ) : (
-                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                              <input 
-                                type="date" 
-                                required 
-                                className="form-control" 
-                                value={expDate === 'custom-temp' ? '' : expDate} 
-                                onChange={(e) => setExpDate(e.target.value)} 
-                              />
-                              <button 
-                                type="button" 
-                                className="btn btn-secondary" 
-                                onClick={() => setExpDate('')}
-                                style={{ padding: '4px 8px', fontSize: '0.75rem', width: 'auto', height: '34px' }}
-                              >
-                                Reset
-                              </button>
-                            </div>
-                          )}
+                          </div>
+
+                          <div className="form-group" style={{ flex: '1 1 220px' }}>
+                            <label>Split / For Whom?</label>
+                            {(() => {
+                              const cleanFor = normalizeForMemberId(expForMember, expPaidBy || 'self');
+                              const currentMode = expIsSplit
+                                ? 'split'
+                                : (cleanFor ? `for:${cleanFor}` : 'self_payer');
+                              const eligibleBeneficiaryIds = [
+                                ...(tripSplitConfig.includeOwner ? ['self'] : []),
+                                ...(tripSplitConfig.tripPeople || []).map(p => String(p.id))
+                              ].filter((id, idx, arr) => arr.indexOf(id) === idx && id !== String(expPaidBy || 'self'));
+                              return (
+                                <select
+                                  className="form-control"
+                                  value={currentMode}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === 'split') {
+                                      setExpIsSplit(true);
+                                      setExpForMember(null);
+                                    } else if (val === 'self_payer') {
+                                      setExpIsSplit(false);
+                                      setExpForMember(null);
+                                    } else if (val.startsWith('for:')) {
+                                      setExpIsSplit(false);
+                                      setExpForMember(val.slice(4));
+                                    }
+                                  }}
+                                >
+                                  <option value="split">🤝 Split ({tripSplitConfig.splitCount}-way)</option>
+                                  <option value="self_payer">👤 Personal Expense</option>
+                                  {eligibleBeneficiaryIds.map(mId => (
+                                    <option key={mId} value={`for:${mId}`}>
+                                      💸 Paid for {getMemberName(mId)}
+                                    </option>
+                                  ))}
+                                </select>
+                              );
+                            })()}
+                          </div>
                         </div>
-                      </div>
 
-                      <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Category</label>
-                          <select className="form-control" value={expCategory} onChange={(e) => setExpCategory(e.target.value)}>
-                            <option value="Food">🍽️ Food / Dining</option>
-                            <option value="Hotel">🏨 Hotel / Stay</option>
-                            <option value="Dinner">🍽️ Dinner</option>
-                            <option value="Lunch">🍲 Lunch</option>
-                            <option value="Snacks">☕ Snacks</option>
-                            <option value="Transportation">🚕 Transportation</option>
-                            <option value="Fuel">⛽ Fuel</option>
-                            <option value="Entertainment">🎟️ Entertainment</option>
-                            <option value="Other">💼 Miscellaneous</option>
-                          </select>
+                        <div className="form-group" style={{ marginTop: '12px' }}>
+                          <label>Notes</label>
+                          <input type="text" className="form-control" placeholder="Short description..." value={expNotes} onChange={(e) => setExpNotes(e.target.value)} />
                         </div>
-                      </div>
 
-                      <div className="form-group" style={{ marginTop: '12px' }}>
-                        <label>Notes</label>
-                        <input type="text" className="form-control" placeholder="Short description..." value={expNotes} onChange={(e) => setExpNotes(e.target.value)} />
-                      </div>
+                        <div className="form-group">
+                          <label>Upload Receipt Photo (Optional)</label>
+                          <input type="file" id="exp-file-input" className="form-control" onChange={(e) => setExpFile(e.target.files[0])} />
+                        </div>
 
-                      <div className="form-group">
-                        <label>Upload Receipt Photo (Optional)</label>
-                        <input type="file" id="exp-file-input" className="form-control" onChange={(e) => setExpFile(e.target.files[0])} />
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '12px' }}>
-                        <button type="button" onClick={() => setShowAddExpenseForm(false)} className="btn btn-secondary" style={{ width: 'auto' }}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" style={{ width: 'auto' }}>Save Expense</button>
-                      </div>
-                    </form>
-                  </div>
-                )}
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '12px' }}>
+                          <button type="button" onClick={() => setShowAddExpenseForm(false)} className="btn btn-secondary" style={{ width: 'auto' }}>Cancel</button>
+                          <button type="submit" className="btn btn-primary" style={{ width: 'auto' }}>Save Expense</button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {unmappedRecommendations.length > 0 && (
-                <div style={{ background: 'var(--bg-surface-elevated)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
+                <div className="no-print" style={{ background: 'var(--bg-surface-elevated)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
                   <h3 style={{ margin: '0 0 10px 0', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <AlertTriangle size={20} /> Unmapped AI Recommendations
                   </h3>
@@ -4370,55 +6013,141 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
               )}
 
               {/* Chronological Daily Itinerary */}
-              <div className={!printOptItinerary ? 'no-print' : ''} style={{ background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
-                <h3 style={{ marginBottom: '16px', marginTop: 0 }}>Chronological Daily Itinerary</h3>
-                {itineraryDays.map((day, dIdx) => {
-                  const activeTrip = selectedTrip || currentTrip;
-                  const dayItems = itineraries.filter(i => activeTrip && i.trip_id === activeTrip.id && i.date === day.date)
-                                              .sort((a,b) => a.sequence_order - b.sequence_order);
-                  return (
-                    <React.Fragment key={day.date}>
-                      {dIdx > 0 && (
-                        <hr className={`itinerary-day-divider ${printOptPageBreakDays ? 'no-print' : ''}`} />
-                      )}
-                      <ItineraryDay 
-                        date={day.date} 
-                        label={day.label} 
-                        items={dayItems} 
-                        places={combinedPlaces}
-                        distances={distances}
-                        reservations={reservations}
-                        selectedTrip={activeTrip}
-                        tripModeActive={tripModeActive}
-                        handleViewAttachment={handleViewAttachment}
-                        handleDeleteReservation={handleDeleteReservation}
-                        handleDeleteItineraryItem={handleDeleteItineraryItem}
-                        fetchOSRMDistance={fetchOSRMDistance}
-                        getHaversine={getHaversine}
-                        sortedActivePlaces={sortedActivePlaces}
-                        dayColor={getDayColor(dIdx)}
-                        userAddresses={userAddresses}
-                        locations={locations}
-                        photos={photos}
-                        isFirstDay={dIdx === 0}
-                        isLastDay={dIdx === itineraryDays.length - 1}
-                        prevDay={itineraryDays[dIdx - 1] || null}
-                        nextDay={itineraryDays[dIdx + 1] || null}
-                        pageBreakBefore={printOptPageBreakDays && dIdx > 0}
-                        onUpdateTrip={handleFullTripUpdate}
-                      />
-                    </React.Fragment>
-                  );
-                })}
+              <div id="trip-section-itinerary" className={`${!printOptItinerary ? 'no-print' : ''} ${focusedSection && focusedSection !== 'itinerary' ? 'collapsed-on-screen' : ''}`} style={{ scrollMarginTop: '130px', background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: collapsedSections.itinerary ? 0 : '14px', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => toggleSectionCollapse('itinerary')}>
+                    <button
+                      type="button"
+                      className="no-print"
+                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '6px', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      title={collapsedSections.itinerary ? "Expand Itinerary Section" : "Collapse Itinerary Section"}
+                    >
+                      {collapsedSections.itinerary ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                    <h3 style={{ margin: 0 }}>Chronological Daily Itinerary</h3>
+                  </div>
+
+                  {itineraryDays.length > 1 && !collapsedSections.itinerary && (
+                    <div className="no-print" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      {(() => {
+                        const allDaysCollapsed = itineraryDays.every(d => collapsedDays[d.date]);
+                        return (
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => toggleAllDaysCollapse(!allDaysCollapsed)}
+                            style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}
+                          >
+                            {allDaysCollapsed ? 'Expand All Days' : 'Collapse All Days'}
+                          </button>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+
+                <div className={collapsedSections.itinerary ? 'collapsed-on-screen' : ''}>
+                  {/* Horizontal Day Jump Chips */}
+                  {itineraryDays.length > 1 && (
+                    <div className="no-print" style={{
+                      display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto',
+                      padding: '8px 10px', marginBottom: '16px', background: 'rgba(255,255,255,0.03)',
+                      borderRadius: '8px', border: '1px solid var(--border-glass)'
+                    }}>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap', marginRight: '4px' }}>
+                        Days:
+                      </span>
+                      {itineraryDays.map((day, dIdx) => {
+                        const dColor = getDayColor(dIdx);
+                        const isDayCollapsed = Boolean(collapsedDays[day.date]);
+                        return (
+                          <button
+                            key={day.date}
+                            type="button"
+                            onClick={() => scrollToItineraryDay(day.date)}
+                            style={{
+                              background: isDayCollapsed ? 'rgba(255,255,255,0.04)' : `${dColor}22`,
+                              border: `1px solid ${isDayCollapsed ? 'var(--border-glass)' : dColor}`,
+                              color: isDayCollapsed ? 'var(--text-secondary)' : dColor,
+                              borderRadius: '999px',
+                              padding: '3px 10px',
+                              fontSize: '0.74rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0
+                            }}
+                            title={`Jump to ${day.label}`}
+                          >
+                            Day {dIdx + 1}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {itineraryDays.map((day, dIdx) => {
+                    const activeTrip = selectedTrip || currentTrip;
+                    const dayItems = itineraries.filter(i => activeTrip && i.trip_id === activeTrip.id && i.date === day.date)
+                                                .sort((a,b) => a.sequence_order - b.sequence_order);
+                    return (
+                      <React.Fragment key={day.date}>
+                        {dIdx > 0 && (
+                          <hr className={`itinerary-day-divider ${printOptPageBreakDays ? 'no-print' : ''}`} />
+                        )}
+                        <ItineraryDay 
+                          dayId={`trip-day-${day.date}`}
+                          isCollapsed={Boolean(collapsedDays[day.date])}
+                          onToggleCollapse={() => toggleDayCollapse(day.date)}
+                          date={day.date} 
+                          label={day.label} 
+                          items={dayItems} 
+                          places={combinedPlaces}
+                          distances={distances}
+                          reservations={reservations}
+                          selectedTrip={activeTrip}
+                          tripModeActive={tripModeActive}
+                          handleViewAttachment={handleViewAttachment}
+                          handleDeleteReservation={handleDeleteReservation}
+                          handleDeleteItineraryItem={handleDeleteItineraryItem}
+                          fetchOSRMDistance={fetchOSRMDistance}
+                          getHaversine={getHaversine}
+                          sortedActivePlaces={sortedActivePlaces}
+                          dayColor={getDayColor(dIdx)}
+                          userAddresses={userAddresses}
+                          locations={locations}
+                          photos={photos}
+                          isFirstDay={dIdx === 0}
+                          isLastDay={dIdx === itineraryDays.length - 1}
+                          prevDay={itineraryDays[dIdx - 1] || null}
+                          nextDay={itineraryDays[dIdx + 1] || null}
+                          pageBreakBefore={printOptPageBreakDays && dIdx > 0}
+                          onUpdateTrip={handleFullTripUpdate}
+                        />
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Trip Reservations */}
-              <div className={!printOptReservations ? 'no-print' : ''} style={{ background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <h3>Trip Reservations</h3>
+              <div id="trip-section-reservations" className={`${!printOptReservations ? 'no-print' : ''} ${focusedSection && focusedSection !== 'reservations' ? 'collapsed-on-screen' : ''}`} style={{ scrollMarginTop: '130px', background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: collapsedSections.reservations ? 0 : '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => toggleSectionCollapse('reservations')}>
+                    <button
+                      type="button"
+                      className="no-print"
+                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '6px', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      title={collapsedSections.reservations ? "Expand Reservations Section" : "Collapse Reservations Section"}
+                    >
+                      {collapsedSections.reservations ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                    <h3 style={{ margin: 0 }}>Trip Reservations</h3>
+                  </div>
                   {!tripModeActive && (
                     <button 
                       onClick={() => {
+                        setCollapsedSections(prev => ({ ...prev, reservations: false }));
                         setShowMainTravelForm(!showMainTravelForm);
                         setMainResTitle('');
                         setMainResDetails('');
@@ -4426,7 +6155,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                         setMainResFile(null);
                         setEditingReservationId(null);
                       }}
-                      className="btn btn-secondary"
+                      className="btn btn-secondary no-print"
                       style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}
                     >
                       {editingReservationId ? 'Cancel Edit' : (showMainTravelForm ? 'Cancel' : '+ Add Reservation')}
@@ -4434,411 +6163,811 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   )}
                 </div>
 
-                {showMainTravelForm && (
-                  <form onSubmit={handleAddMainReservation} style={{ background: '#1c1b22', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginBottom: '16px' }}>
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Type</label>
-                        <select className="form-control" style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }} value={mainResType} onChange={(e) => setMainResType(e.target.value)}>
-                          <option value="Air">✈️ Air</option>
-                          <option value="Bus">🚌 Bus</option>
-                          <option value="Train">🚉 Train</option>
-                          <option value="Ferry">🚢 Ferry</option>
-                          <option value="Car">🚗 Car / Taxi</option>
-                          <option value="Stay">🏨 Stay</option>
-                          <option value="Activity">🎟️ Activity</option>
-                        </select>
+                <div className={collapsedSections.reservations ? 'collapsed-on-screen' : ''}>
+                  {showMainTravelForm && (
+                    <form className="no-print" onSubmit={handleAddMainReservation} style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Type</label>
+                          <select className="form-control" style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }} value={mainResType} onChange={(e) => setMainResType(e.target.value)}>
+                            <option value="Air">✈️ Air</option>
+                            <option value="Bus">🚌 Bus</option>
+                            <option value="Train">🚉 Train</option>
+                            <option value="Ferry">🚢 Ferry</option>
+                            <option value="Car">🚗 Car / Taxi</option>
+                            <option value="Stay">🏨 Stay</option>
+                            <option value="Activity">🎟️ Activity</option>
+                          </select>
+                        </div>
+                        <div style={{ flex: 2 }}>
+                          <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Reservation Title</label>
+                          <input 
+                            type="text" 
+                            required 
+                            placeholder="e.g. Flight to Tokyo" 
+                            className="form-control" 
+                            style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }} 
+                            value={mainResTitle}
+                            onChange={(e) => setMainResTitle(e.target.value)}
+                          />
+                        </div>
                       </div>
-                      <div style={{ flex: 2 }}>
-                        <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Reservation Title</label>
-                        <input 
-                          type="text" 
-                          required 
-                          placeholder="e.g. Flight to Tokyo" 
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Cost ({baseCurrency})</label>
+                          <input 
+                            type="number" 
+                            placeholder="Optional cost" 
+                            className="form-control" 
+                            style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }} 
+                            value={mainResCost}
+                            onChange={(e) => setMainResCost(e.target.value)}
+                          />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Associated Date (Optional)</label>
+                          <select id="main-res-date-select" className="form-control" style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }}>
+                            <option value="">No specific date</option>
+                            {itineraryDays.map(day => (
+                              <option key={day.date} value={day.date}>{day.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: '8px' }}>
+                        <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Details / Confirmation #</label>
+                        <textarea 
+                          rows="2" 
+                          placeholder="Add addresses, booking references, etc." 
                           className="form-control" 
-                          style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }} 
-                          value={mainResTitle}
-                          onChange={(e) => setMainResTitle(e.target.value)}
+                          style={{ fontSize: '0.8rem', padding: '4px 8px' }} 
+                          value={mainResDetails}
+                          onChange={(e) => setMainResDetails(e.target.value)}
                         />
                       </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Cost ({baseCurrency})</label>
+                      <div className="form-group" style={{ marginBottom: '12px' }}>
+                        <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Document / PDF (Optional)</label>
                         <input 
-                          type="number" 
-                          placeholder="Optional cost" 
+                          type="file" 
                           className="form-control" 
-                          style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }} 
-                          value={mainResCost}
-                          onChange={(e) => setMainResCost(e.target.value)}
+                          style={{ fontSize: '0.8rem', padding: '4px' }} 
+                          onChange={(e) => setMainResFile(e.target.files[0])}
                         />
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Associated Date (Optional)</label>
-                        <select id="main-res-date-select" className="form-control" style={{ height: '32px', padding: '4px 8px', fontSize: '0.8rem' }}>
-                          <option value="">No specific date</option>
-                          {itineraryDays.map(day => (
-                            <option key={day.date} value={day.date}>{day.label}</option>
-                          ))}
-                        </select>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button type="button" onClick={() => { setShowMainTravelForm(false); setEditingReservationId(null); }} className="btn btn-secondary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}>
+                          {editingReservationId ? 'Update Reservation' : 'Save Reservation'}
+                        </button>
                       </div>
-                    </div>
-                    <div className="form-group" style={{ marginBottom: '8px' }}>
-                      <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Details / Confirmation #</label>
-                      <textarea 
-                        rows="2" 
-                        placeholder="Add addresses, booking references, etc." 
-                        className="form-control" 
-                        style={{ fontSize: '0.8rem', padding: '4px 8px' }} 
-                        value={mainResDetails}
-                        onChange={(e) => setMainResDetails(e.target.value)}
-                      />
-                    </div>
-                    <div className="form-group" style={{ marginBottom: '12px' }}>
-                      <label style={{ fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Document / PDF (Optional)</label>
-                      <input 
-                        type="file" 
-                        className="form-control" 
-                        style={{ fontSize: '0.8rem', padding: '4px' }} 
-                        onChange={(e) => setMainResFile(e.target.files[0])}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                      <button type="button" onClick={() => { setShowMainTravelForm(false); setEditingReservationId(null); }} className="btn btn-secondary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}>Cancel</button>
-                      <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem' }}>
-                        {editingReservationId ? 'Update Reservation' : 'Save Reservation'}
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="reservations-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-glass)', textAlign: 'left' }}>
-                        <th style={{ padding: '8px' }}>Type</th>
-                        <th style={{ padding: '8px' }}>Title</th>
-                        <th style={{ padding: '8px' }}>Details</th>
-                        <th style={{ padding: '8px' }}>Doc</th>
-                        <th className="no-print" style={{ padding: '8px' }}>Done</th>
-                        {!tripModeActive && <th className="no-print" style={{ padding: '8px' }}>Action</th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reservations.filter(r => {
-                        if (r.trip_id !== selectedTrip.id) return false;
-                        if (tripModeActive && r.completed === 1) return false;
-                        return true;
-                      }).map(res => (
-                        <tr key={res.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                          <td style={{ padding: '8px', textTransform: 'uppercase', color: 'var(--accent-secondary)' }}>{res.type}</td>
-                          <td style={{ padding: '8px', fontWeight: 600 }}>{res.title}</td>
-                          <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
-                            {res.details && (typeof res.details === 'string' ? JSON.parse(res.details).notes : res.details.notes)}
-                          </td>
-                          <td style={{ padding: '8px' }}>
-                            {res.file_path && (
-                              <button className="photo-action-btn" onClick={() => handleViewAttachment(res)}>
-                                <FileText size={12} />
-                              </button>
-                            )}
-                          </td>
-                          <td className="no-print" style={{ padding: '8px' }}>
-                            <input 
-                              type="checkbox" 
-                              checked={res.completed === 1} 
-                              onChange={async (e) => {
-                                const updated = { ...res, completed: e.target.checked ? 1 : 0 };
-                                await queueSyncAction('reservations', 'update', updated);
-                              }}
-                              style={{ accentColor: 'var(--accent-primary)', width: '14px', height: '14px' }}
-                            />
-                          </td>
-                          {!tripModeActive && (
-                            <td className="no-print" style={{ padding: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                              <button className="photo-action-btn" onClick={() => handleStartEditReservation(res)} title="Edit Reservation">
-                                <Edit size={12} />
-                              </button>
-                              <button className="photo-action-btn" onClick={() => handleDeleteReservation(res)} title="Delete Reservation">
-                                <Trash2 size={12} />
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Expenses List & Graph */}
-              {!tripModeActive && (
-                <div className={!printOptExpenses ? 'no-print' : ''} style={{ background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
-                  <h3 style={{ marginBottom: '16px', marginTop: 0 }}>Trip Expenses</h3>
-                  
-                  {tripExpensesList.length > 0 && (
-                    <div style={{ display: 'flex', gap: '24px', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap' }}>
-                      <div style={{ flex: 1, minWidth: '150px', display: 'flex', justifyContent: 'center' }}>
-                        <svg viewBox="0 0 100 100" style={{ maxWidth: '150px', maxHeight: '150px' }}>
-                          {(() => {
-                            const categories = {};
-                            tripExpensesList.forEach(e => {
-                              const converted = getConvertedAmount(e.amount, e.currency);
-                              categories[e.category] = (categories[e.category] || 0) + converted;
-                            });
-                            const total = Object.values(categories).reduce((a, b) => a + b, 0);
-                            let currentAngle = 0;
-                            const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
-                            
-                            return Object.keys(categories).map((cat, i) => {
-                              const val = categories[cat];
-                              const percentage = val / total;
-                              const angle = percentage * 360;
-                              
-                              const getCoordinatesForPercent = (percent) => {
-                                const x = Math.cos(2 * Math.PI * percent);
-                                const y = Math.sin(2 * Math.PI * percent);
-                                return [x, y];
-                              };
-
-                              const [startX, startY] = getCoordinatesForPercent(currentAngle / 360);
-                              currentAngle += angle;
-                              const [endX, endY] = getCoordinatesForPercent(currentAngle / 360);
-                              const largeArcFlag = percentage > 0.5 ? 1 : 0;
-                              
-                              const sx = 50 + startX * 40;
-                              const sy = 50 + startY * 40;
-                              const ex = 50 + endX * 40;
-                              const ey = 50 + endY * 40;
-
-                              if (percentage >= 0.999) {
-                                return (
-                                  <circle 
-                                    key={cat}
-                                    cx="50"
-                                    cy="50"
-                                    r="40"
-                                    fill={colors[i % colors.length]}
-                                    title={`${cat}: ${val.toFixed(2)}`}
-                                  />
-                                );
-                              }
-
-                              return (
-                                <path 
-                                  key={cat}
-                                  d={`M 50 50 L ${sx} ${sy} A 40 40 0 ${largeArcFlag} 1 ${ex} ${ey} Z`}
-                                  fill={colors[i % colors.length]}
-                                  title={`${cat}: ${val.toFixed(2)}`}
-                                />
-                              );
-                            });
-                          })()}
-                        </svg>
-                      </div>
-                      <div style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {(() => {
-                          const categories = {};
-                          tripExpensesList.forEach(e => {
-                            const converted = getConvertedAmount(e.amount, e.currency);
-                            categories[e.category] = (categories[e.category] || 0) + converted;
-                          });
-                          const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
-                          return Object.keys(categories).map((cat, i) => (
-                            <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
-                              <div style={{ width: '12px', height: '12px', background: colors[i % colors.length], borderRadius: '2px' }} />
-                              <span>{cat}: <b>{categories[cat].toFixed(2)} {baseCurrency}</b></span>
-                            </div>
-                          ));
-                        })()}
-                      </div>
-                    </div>
+                    </form>
                   )}
 
                   <div style={{ overflowX: 'auto' }}>
-                    <table className="expenses-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <table className="reservations-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                       <thead>
                         <tr style={{ borderBottom: '1px solid var(--border-glass)', textAlign: 'left' }}>
-                          <th style={{ padding: '8px' }}>Category</th>
-                          <th style={{ padding: '8px' }}>Notes</th>
-                          <th style={{ padding: '8px' }}>Amount</th>
-                          <th style={{ padding: '8px' }}>Date</th>
-                          <th className="no-print" style={{ padding: '8px' }}>Action</th>
+                          <th style={{ padding: '8px' }}>Type</th>
+                          <th style={{ padding: '8px' }}>Title</th>
+                          <th style={{ padding: '8px' }}>Details</th>
+                          <th style={{ padding: '8px' }}>Doc</th>
+                          <th className="no-print" style={{ padding: '8px' }}>Done</th>
+                          {!tripModeActive && <th className="no-print" style={{ padding: '8px' }}>Action</th>}
                         </tr>
                       </thead>
                       <tbody>
-                        {tripExpensesList.map(exp => {
-                          const isEditing = editingExpenseId === exp.id;
-                          return (
-                            <tr key={exp.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                              <td style={{ padding: '8px' }}>
-                                {isEditing ? (
-                                  <select 
-                                    className="form-control" 
-                                    style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', background: '#1c1b22', border: '1px solid var(--border-glass)', color: '#fff', borderRadius: '4px' }}
-                                    value={editExpCategory} 
-                                    onChange={(e) => setEditExpCategory(e.target.value)}
-                                  >
-                                    <option value="Food">🍽️ Food</option>
-                                    <option value="Hotel">🏨 Hotel</option>
-                                    <option value="Lodging">🏡 Lodging</option>
-                                    <option value="Dinner">🍽️ Dinner</option>
-                                    <option value="Lunch">🍲 Lunch</option>
-                                    <option value="Snacks">☕ Snacks</option>
-                                    <option value="Transportation">🚕 Transportation</option>
-                                    <option value="Fuel">⛽ Fuel</option>
-                                    <option value="Entertainment">🎟️ Entertainment</option>
-                                    <option value="Other">💼 Other</option>
-                                  </select>
-                                ) : (
-                                  <span 
-                                    className="tag-badge" 
-                                    style={{ 
-                                      backgroundColor: `${getCategoryColor(exp.category)}1A`, 
-                                      color: getCategoryColor(exp.category), 
-                                      border: `1px solid ${getCategoryColor(exp.category)}33`,
-                                      fontSize: '0.65rem' 
-                                    }}
-                                  >
-                                    {exp.category}
-                                  </span>
-                                )}
+                        {reservations.filter(r => {
+                          if (r.trip_id !== selectedTrip.id) return false;
+                          if (tripModeActive && r.completed === 1) return false;
+                          return true;
+                        }).map(res => (
+                          <tr key={res.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                            <td style={{ padding: '8px', textTransform: 'uppercase', color: 'var(--accent-secondary)' }}>{res.type}</td>
+                            <td style={{ padding: '8px', fontWeight: 600 }}>{res.title}</td>
+                            <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
+                              {res.details && (typeof res.details === 'string' ? JSON.parse(res.details).notes : res.details.notes)}
+                            </td>
+                            <td style={{ padding: '8px' }}>
+                              {res.file_path && (
+                                <button className="photo-action-btn" onClick={() => handleViewAttachment(res)}>
+                                  <FileText size={12} />
+                                </button>
+                              )}
+                            </td>
+                            <td className="no-print" style={{ padding: '8px' }}>
+                              <input 
+                                type="checkbox" 
+                                checked={res.completed === 1} 
+                                onChange={async (e) => {
+                                  const updated = { ...res, completed: e.target.checked ? 1 : 0 };
+                                  await queueSyncAction('reservations', 'update', updated);
+                                }}
+                                style={{ accentColor: 'var(--accent-primary)', width: '14px', height: '14px' }}
+                              />
+                            </td>
+                            {!tripModeActive && (
+                              <td className="no-print" style={{ padding: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <button className="photo-action-btn" onClick={() => handleStartEditReservation(res)} title="Edit Reservation">
+                                  <Edit size={12} />
+                                </button>
+                                <button className="photo-action-btn" onClick={() => handleDeleteReservation(res)} title="Delete Reservation">
+                                  <Trash2 size={12} />
+                                </button>
                               </td>
-                              <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
-                                {isEditing ? (
-                                  <input 
-                                    type="text" 
-                                    className="form-control" 
-                                    style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', background: '#1c1b22', border: '1px solid var(--border-glass)', color: '#fff', borderRadius: '4px' }}
-                                    value={editExpNotes} 
-                                    onChange={(e) => setEditExpNotes(e.target.value)}
-                                  />
-                                ) : (
-                                  exp.notes
-                                )}
-                              </td>
-                              <td style={{ padding: '8px', fontWeight: 600 }}>
-                                {isEditing ? (
-                                  <div style={{ display: 'flex', gap: '4px' }}>
-                                    <input 
-                                      type="number" 
-                                      className="form-control" 
-                                      style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', width: '70px', background: '#1c1b22', border: '1px solid var(--border-glass)', color: '#fff', borderRadius: '4px' }}
-                                      value={editExpAmount} 
-                                      onChange={(e) => setEditExpAmount(e.target.value)}
-                                    />
-                                    <select
-                                      className="form-control"
-                                      style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', width: '70px', background: '#1c1b22', border: '1px solid var(--border-glass)', color: '#fff', borderRadius: '4px' }}
-                                      value={editExpCurrency}
-                                      onChange={(e) => setEditExpCurrency(e.target.value)}
-                                    >
-                                      <option value="USD">USD</option>
-                                      {rates.filter(r => r.trip_id === selectedTrip.id).map(r => (
-                                        <option key={r.id} value={r.currency}>{r.currency}</option>
-                                      ))}
-                                      {editExpCurrency !== 'USD' && !rates.some(r => r.trip_id === selectedTrip.id && r.currency === editExpCurrency) && (
-                                        <option value={editExpCurrency}>{editExpCurrency}</option>
-                                      )}
-                                    </select>
-                                  </div>
-                                ) : (
-                                  <>
-                                    {exp.amount} {exp.currency} 
-                                    {exp.currency !== baseCurrency && ` (~${getConvertedAmount(exp.amount, exp.currency).toFixed(2)} ${baseCurrency})`}
-                                  </>
-                                )}
-                              </td>
-                              <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
-                                {isEditing ? (
-                                  <input 
-                                    type="date" 
-                                    className="form-control" 
-                                    style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', background: '#1c1b22', border: '1px solid var(--border-glass)', color: '#fff', borderRadius: '4px' }}
-                                    value={editExpDate} 
-                                    onChange={(e) => setEditExpDate(e.target.value)}
-                                  />
-                                ) : (
-                                  exp.date
-                                )}
-                              </td>
-                              <td className="no-print" style={{ padding: '8px' }}>
-                                {isEditing ? (
-                                  <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button className="photo-action-btn" onClick={() => handleSaveEditedExpense(exp.id)} title="Save changes">
-                                      <CheckSquare size={12} style={{ color: 'var(--success)' }} />
-                                    </button>
-                                    <button className="photo-action-btn" onClick={() => setEditingExpenseId(null)} title="Cancel">
-                                      <X size={12} style={{ color: 'var(--error)' }} />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button className="photo-action-btn" onClick={() => handleStartEditExpense(exp)} title="Edit expense">
-                                      <Edit size={12} />
-                                    </button>
-                                    <button className="photo-action-btn" onClick={() => handleDeleteExpense(exp)} title="Delete expense">
-                                      <Trash2 size={12} />
-                                    </button>
-                                  </div>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
+                            )}
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Expenses List, Split Settlement & Graph */}
+              {!tripModeActive && (
+                <div id="trip-section-expenses" className={`${!printOptExpenses ? 'no-print' : ''} ${focusedSection && focusedSection !== 'expenses' ? 'collapsed-on-screen' : ''}`} style={{ scrollMarginTop: '130px', background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: collapsedSections.expenses ? 0 : '16px', flexWrap: 'wrap', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => toggleSectionCollapse('expenses')}>
+                      <button
+                        type="button"
+                        className="no-print"
+                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '6px', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                        title={collapsedSections.expenses ? "Expand Expenses Section" : "Collapse Expenses Section"}
+                      >
+                        {collapsedSections.expenses ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                      </button>
+                      <h3 style={{ margin: 0 }}>Trip Expenses & Split</h3>
+                    </div>
+
+                    <div className="no-print" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => {
+                          setShowAddExpenseForm(true);
+                          setCollapsedSections(prev => ({ ...prev, budget: false }));
+                          if (focusedSection) setFocusedSection('budget');
+                          setTimeout(() => {
+                            const el = document.getElementById('trip-section-budget');
+                            scrollElementInTripOverlay(el, 110);
+                          }, 80);
+                        }}
+                        style={{ width: 'auto', padding: '5px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        title="Open the Log Expense form"
+                      >
+                        <Plus size={14} /> Log Expense
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setShowTravelersModal(true)}
+                        style={{ width: 'auto', padding: '5px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        title="Configure Main Split Members & Split Count"
+                      >
+                        👥 Configure Split ({tripSplitConfig.splitCount}-way)
+                      </button>
+                      {tripExpensesList.length > 0 && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={handleExportExpensesCsv}
+                          style={{ width: 'auto', padding: '5px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                          title="Download Expenses & Split Settlement as CSV (Excel / Sheets ready)"
+                        >
+                          <Download size={14} /> Export CSV
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className={collapsedSections.expenses ? 'collapsed-on-screen' : ''}>
+                    {tripExpensesList.length > 0 && (
+                      <div style={{ display: 'flex', gap: '24px', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap' }}>
+                        <div style={{ flex: 1, minWidth: '150px', display: 'flex', justifyContent: 'center' }}>
+                          <svg viewBox="0 0 100 100" style={{ maxWidth: '150px', maxHeight: '150px' }}>
+                            {(() => {
+                              const categories = {};
+                              tripExpensesList.forEach(e => {
+                                const myShare = getMyExpenseShare(e);
+                                if (myShare > 0) {
+                                  categories[e.category] = (categories[e.category] || 0) + myShare;
+                                }
+                              });
+                              const total = Object.values(categories).reduce((a, b) => a + b, 0);
+                              if (total <= 0) return null;
+                              let currentAngle = 0;
+                              const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
+                              
+                              return Object.keys(categories).map((cat, i) => {
+                                const val = categories[cat];
+                                const percentage = val / total;
+                                const angle = percentage * 360;
+                                
+                                const getCoordinatesForPercent = (percent) => {
+                                  const x = Math.cos(2 * Math.PI * percent);
+                                  const y = Math.sin(2 * Math.PI * percent);
+                                  return [x, y];
+                                };
+
+                                const [startX, startY] = getCoordinatesForPercent(currentAngle / 360);
+                                currentAngle += angle;
+                                const [endX, endY] = getCoordinatesForPercent(currentAngle / 360);
+                                const largeArcFlag = percentage > 0.5 ? 1 : 0;
+                                
+                                const sx = 50 + startX * 40;
+                                const sy = 50 + startY * 40;
+                                const ex = 50 + endX * 40;
+                                const ey = 50 + endY * 40;
+
+                                if (percentage >= 0.999) {
+                                  return (
+                                    <circle 
+                                      key={cat}
+                                      cx="50"
+                                      cy="50"
+                                      r="40"
+                                      fill={colors[i % colors.length]}
+                                      title={`${cat}: ${val.toFixed(2)} ${baseCurrency}`}
+                                    />
+                                  );
+                                }
+
+                                return (
+                                  <path 
+                                    key={cat}
+                                    d={`M 50 50 L ${sx} ${sy} A 40 40 0 ${largeArcFlag} 1 ${ex} ${ey} Z`}
+                                    fill={colors[i % colors.length]}
+                                    title={`${cat}: ${val.toFixed(2)} ${baseCurrency}`}
+                                  />
+                                );
+                              });
+                            })()}
+                          </svg>
+                        </div>
+                        <div style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '2px' }}>
+                            My Spend by Category (Me)
+                          </div>
+                          {(() => {
+                            const myCategories = {};
+                            const groupCategories = {};
+                            tripExpensesList.forEach(e => {
+                              const converted = getConvertedAmount(e.amount, e.currency);
+                              const myShare = getMyExpenseShare(e);
+                              groupCategories[e.category] = (groupCategories[e.category] || 0) + converted;
+                              myCategories[e.category] = (myCategories[e.category] || 0) + myShare;
+                            });
+                            const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
+                            return Object.keys(groupCategories).map((cat, i) => {
+                              const myVal = myCategories[cat] || 0;
+                              const groupVal = groupCategories[cat] || 0;
+                              return (
+                                <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
+                                  <div style={{ width: '12px', height: '12px', background: colors[i % colors.length], borderRadius: '2px' }} />
+                                  <span>
+                                    {cat}: <b>{myVal.toFixed(2)} {baseCurrency}</b>
+                                    {Math.abs(groupVal - myVal) > 0.005 && (
+                                      <span style={{ color: 'var(--text-muted)', fontSize: '0.74rem', marginLeft: '6px' }}>
+                                        (Group: {groupVal.toFixed(2)} {baseCurrency})
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Expense Split & Settlement Summary Card */}
+                    {(tripSplitConfig.isSplitConfigured || expenseSplitSummary.totalSplitExpenses > 0 || expenseSplitSummary.hasBehalfExpenses) && (
+                      <div
+                        className={`expense-split-summary-card ${!printOptExpenseSplit ? 'no-print' : ''}`}
+                        style={{
+                          background: 'rgba(139, 92, 246, 0.06)',
+                          border: '1px solid rgba(139, 92, 246, 0.28)',
+                          borderRadius: '10px',
+                          padding: '16px',
+                          marginBottom: '20px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+                          <div>
+                            <h4 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              🤝 Expense Split & Who Owes Whom Summary
+                            </h4>
+                            <p style={{ margin: '2px 0 0 0', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                              Splitting shared expenses across <b>{tripSplitConfig.splitCount}</b> {tripSplitConfig.splitCount === 1 ? 'share' : 'shares'} • Main Members: <b>{tripSplitConfig.mainMemberIds.map(id => getMemberName(id)).join(', ')}</b>
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-secondary no-print"
+                            onClick={() => setShowTravelersModal(true)}
+                            style={{ width: 'auto', padding: '4px 10px', fontSize: '0.74rem' }}
+                          >
+                            Edit Split Members
+                          </button>
+                        </div>
+
+                        {/* 4 Summary Metric Pills */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+                          <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px', padding: '10px 12px' }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--accent-emerald-text)', textTransform: 'uppercase' }}>My Trip Spend</div>
+                            <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--accent-emerald-strong)', marginTop: '2px' }}>
+                              {expenseSplitSummary.myTotalTripSpend.toFixed(2)} {baseCurrency}
+                            </div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                              Share: {expenseSplitSummary.mySplitShare.toFixed(2)} + Personal: {expenseSplitSummary.myPersonalSpend.toFixed(2)}
+                            </div>
+                          </div>
+                          <div style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)', borderRadius: '8px', padding: '10px 12px' }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--accent-purple-text)', textTransform: 'uppercase' }}>Split Pool (÷ {tripSplitConfig.splitCount})</div>
+                            <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--accent-purple-strong)', marginTop: '2px' }}>
+                              {expenseSplitSummary.totalSplitExpenses.toFixed(2)} {baseCurrency}
+                            </div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                              {expenseSplitSummary.perMemberShare.toFixed(2)} {baseCurrency} per main member
+                            </div>
+                          </div>
+                          <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px 12px' }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Paid by Me (Out of Pocket)</div>
+                            <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
+                              {expenseSplitSummary.myOutOfPocketPaid.toFixed(2)} {baseCurrency}
+                            </div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                              {expenseSplitSummary.myNetBalance > 0.005
+                                ? `Gets back +${expenseSplitSummary.myNetBalance.toFixed(2)} ${baseCurrency}`
+                                : (expenseSplitSummary.myNetBalance < -0.005
+                                  ? `Owes ${Math.abs(expenseSplitSummary.myNetBalance).toFixed(2)} ${baseCurrency}`
+                                  : 'Settled on split')}
+                            </div>
+                          </div>
+                          <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px 12px' }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Group Spend</div>
+                            <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-secondary)', marginTop: '2px' }}>
+                              {expenseSplitSummary.totalAllExpenses.toFixed(2)} {baseCurrency}
+                            </div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              Personal (All): {expenseSplitSummary.totalPersonalExpenses.toFixed(2)} {baseCurrency}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Dedicated WHO OWES WHOM Settlement Box */}
+                        <div style={{
+                          background: 'rgba(16, 185, 129, 0.08)',
+                          border: '1px solid rgba(16, 185, 129, 0.3)',
+                          borderRadius: '8px',
+                          padding: '12px 14px',
+                          marginBottom: '14px'
+                        }}>
+                          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent-emerald-text)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                            💸 Who Owes Whom (Final Settlement Summary)
+                          </div>
+                          {expenseSplitSummary.settlements.length > 0 ? (
+                            <>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                                {expenseSplitSummary.settlements.map((s, idx) => (
+                                  <span
+                                    key={idx}
+                                    style={{
+                                      background: 'rgba(16, 185, 129, 0.18)',
+                                      border: '1px solid rgba(16, 185, 129, 0.45)',
+                                      color: 'var(--accent-emerald-pill-text)',
+                                      padding: '6px 14px',
+                                      borderRadius: '999px',
+                                      fontSize: '0.84rem',
+                                      fontWeight: 600
+                                    }}
+                                  >
+                                    💸 <b>{s.fromFullName || s.fromName}</b> owes <b>{s.toFullName || s.toName}</b>: <b>{s.amount.toFixed(2)} {baseCurrency}</b>
+                                  </span>
+                                ))}
+                              </div>
+                              <div style={{ overflowX: 'auto' }}>
+                                <table className="expenses-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                                  <thead>
+                                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
+                                      <th style={{ padding: '5px 8px' }}>Who Owes (From)</th>
+                                      <th style={{ padding: '5px 8px' }}>Who Gets Paid (To)</th>
+                                      <th style={{ padding: '5px 8px' }}>Net Amount Owed</th>
+                                      <th style={{ padding: '5px 8px' }}>How It's Calculated</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {expenseSplitSummary.settlements.map((s, idx) => (
+                                      <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                        <td style={{ padding: '5px 8px', fontWeight: 700, color: 'var(--accent-red-text)' }}>{s.fromFullName || s.fromName}</td>
+                                        <td style={{ padding: '5px 8px', fontWeight: 700, color: 'var(--accent-emerald-text)' }}>{s.toFullName || s.toName}</td>
+                                        <td style={{ padding: '5px 8px', fontWeight: 700 }}>{s.amount.toFixed(2)} {baseCurrency}</td>
+                                        <td style={{ padding: '5px 8px', color: 'var(--text-secondary)', fontSize: '0.74rem' }}>{s.breakdownNote}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          ) : (
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                              {(expenseSplitSummary.totalSplitExpenses > 0 || expenseSplitSummary.hasBehalfExpenses)
+                                ? `✅ All split and on-behalf expenses are evenly settled — no one owes anything (0.00 ${baseCurrency}).`
+                                : `No split or on-behalf expenses recorded yet. Select "🤝 Split" or "💸 Paid for..." on any expense below to calculate who owes whom.`}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Member Spend & Balance Breakdown Table (Main & Active Payers Only) */}
+                        {expenseSplitSummary.participants.length > 0 && (
+                          <div style={{ overflowX: 'auto' }}>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                              Member Spend & Split Balance Breakdown
+                            </div>
+                            <table className="expenses-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid var(--border-glass)', textAlign: 'left' }}>
+                                  <th style={{ padding: '6px 8px' }}>Member</th>
+                                  <th style={{ padding: '6px 8px' }}>Role</th>
+                                  <th style={{ padding: '6px 8px' }}>Paid (Split)</th>
+                                  <th style={{ padding: '6px 8px' }}>Paid (Personal / For Others)</th>
+                                  <th style={{ padding: '6px 8px' }}>Total Paid</th>
+                                  <th style={{ padding: '6px 8px' }}>Fair Split Share</th>
+                                  <th style={{ padding: '6px 8px' }}>Actual Trip Cost</th>
+                                  <th style={{ padding: '6px 8px' }}>Net Balance</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {expenseSplitSummary.participants.map(p => (
+                                  <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    <td style={{ padding: '6px 8px', fontWeight: 600 }}>{p.name}</td>
+                                    <td style={{ padding: '6px 8px', color: 'var(--text-secondary)', fontSize: '0.74rem' }}>
+                                      {p.isMain ? '💰 Main Split Member' : '👥 Non-Split Companion'}
+                                    </td>
+                                    <td style={{ padding: '6px 8px' }}>{p.paidSplit.toFixed(2)} {baseCurrency}</td>
+                                    <td style={{ padding: '6px 8px' }}>
+                                      {p.paidPersonal.toFixed(2)} {baseCurrency}
+                                      {p.paidForOthers > 0.005 && (
+                                        <span style={{ display: 'block', fontSize: '0.68rem', color: 'var(--accent-amber-text)' }}>
+                                          (Incl. {p.paidForOthers.toFixed(2)} for others)
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td style={{ padding: '6px 8px', fontWeight: 600 }}>{p.totalPaid.toFixed(2)} {baseCurrency}</td>
+                                    <td style={{ padding: '6px 8px' }}>{p.fairShare.toFixed(2)} {baseCurrency}</td>
+                                    <td style={{ padding: '6px 8px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                      {p.actualTripCost.toFixed(2)} {baseCurrency}
+                                      {p.owedBehalf > 0.005 && (
+                                        <span style={{ display: 'block', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                          (Incl. {p.owedBehalf.toFixed(2)} paid by others)
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td style={{
+                                      padding: '6px 8px',
+                                      fontWeight: 700,
+                                      color: p.netBalance > 0.01 ? '#4ade80' : (p.netBalance < -0.01 ? '#f87171' : 'var(--text-muted)')
+                                    }}>
+                                      {p.netBalance > 0.01
+                                        ? `+${p.netBalance.toFixed(2)} ${baseCurrency} (Gets back)`
+                                        : (p.netBalance < -0.01
+                                          ? `${p.netBalance.toFixed(2)} ${baseCurrency} (Owes)`
+                                          : `0.00 ${baseCurrency} (Settled)`)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="expenses-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--border-glass)', textAlign: 'left' }}>
+                            <th style={{ padding: '8px' }}>Category</th>
+                            <th style={{ padding: '8px' }}>Notes</th>
+                            <th style={{ padding: '8px' }}>Amount</th>
+                            <th style={{ padding: '8px' }}>Paid By</th>
+                            <th style={{ padding: '8px' }}>Split / For Whom</th>
+                            <th style={{ padding: '8px' }}>Date</th>
+                            <th className="no-print" style={{ padding: '8px' }}>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tripExpensesList.map(exp => {
+                            const isEditing = editingExpenseId === exp.id;
+                            const isExpSplit = Number(exp.is_split) === 1;
+                            const payerId = exp.paid_by || 'self';
+                            const forMemberId = !isExpSplit ? normalizeForMemberId(exp.for_member, payerId) : null;
+                            const convertedAmt = getConvertedAmount(exp.amount, exp.currency);
+                            const perShareAmt = isExpSplit ? (convertedAmt / tripSplitConfig.splitCount) : convertedAmt;
+                            return (
+                              <tr key={exp.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                <td style={{ padding: '8px' }}>
+                                  {isEditing ? (
+                                    <select 
+                                      className="form-control" 
+                                      style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', borderRadius: '4px' }}
+                                      value={editExpCategory} 
+                                      onChange={(e) => setEditExpCategory(e.target.value)}
+                                    >
+                                      <option value="Food">🍽️ Food</option>
+                                      <option value="Hotel">🏨 Hotel</option>
+                                      <option value="Lodging">🏡 Lodging</option>
+                                      <option value="Dinner">🍽️ Dinner</option>
+                                      <option value="Lunch">🍲 Lunch</option>
+                                      <option value="Snacks">☕ Snacks</option>
+                                      <option value="Transportation">🚕 Transportation</option>
+                                      <option value="Fuel">⛽ Fuel</option>
+                                      <option value="Entertainment">🎟️ Entertainment</option>
+                                      <option value="Other">💼 Other</option>
+                                    </select>
+                                  ) : (
+                                    <span 
+                                      className="tag-badge" 
+                                      style={{ 
+                                        backgroundColor: `${getCategoryColor(exp.category)}1A`, 
+                                        color: getCategoryColor(exp.category), 
+                                        border: `1px solid ${getCategoryColor(exp.category)}33`,
+                                        fontSize: '0.65rem' 
+                                      }}
+                                    >
+                                      {exp.category}
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
+                                  {isEditing ? (
+                                    <input 
+                                      type="text" 
+                                      className="form-control" 
+                                      style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', borderRadius: '4px' }}
+                                      value={editExpNotes} 
+                                      onChange={(e) => setEditExpNotes(e.target.value)}
+                                    />
+                                  ) : (
+                                    exp.notes
+                                  )}
+                                </td>
+                                <td style={{ padding: '8px', fontWeight: 600 }}>
+                                  {isEditing ? (
+                                    <div style={{ display: 'flex', gap: '4px' }}>
+                                      <input 
+                                        type="number" 
+                                        className="form-control" 
+                                        style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', width: '70px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', borderRadius: '4px' }}
+                                        value={editExpAmount} 
+                                        onChange={(e) => setEditExpAmount(e.target.value)}
+                                      />
+                                      <select
+                                        className="form-control"
+                                        style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', width: '70px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', borderRadius: '4px' }}
+                                        value={editExpCurrency}
+                                        onChange={(e) => setEditExpCurrency(e.target.value)}
+                                      >
+                                        <option value="USD">USD</option>
+                                        {rates.filter(r => r.trip_id === selectedTrip.id).map(r => (
+                                          <option key={r.id} value={r.currency}>{r.currency}</option>
+                                        ))}
+                                        {editExpCurrency !== 'USD' && !rates.some(r => r.trip_id === selectedTrip.id && r.currency === editExpCurrency) && (
+                                          <option value={editExpCurrency}>{editExpCurrency}</option>
+                                        )}
+                                      </select>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      {exp.amount} {exp.currency} 
+                                      {exp.currency !== baseCurrency && ` (~${convertedAmt.toFixed(2)} ${baseCurrency})`}
+                                    </>
+                                  )}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
+                                  {isEditing ? (
+                                    <select
+                                      className="form-control"
+                                      style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', borderRadius: '4px' }}
+                                      value={editExpPaidBy || 'self'}
+                                      onChange={(e) => {
+                                        const nextPayer = e.target.value;
+                                        setEditExpPaidBy(nextPayer);
+                                        if (editExpForMember && String(editExpForMember) === String(nextPayer)) {
+                                          setEditExpForMember(null);
+                                        }
+                                      }}
+                                    >
+                                      <option value="self">{ownerProfile.displayName ? `${ownerProfile.displayName} (Me)` : 'Me'}</option>
+                                      {(tripSplitConfig.tripPeople || []).map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                      ))}
+                                      {editExpPaidBy && editExpPaidBy !== 'self' && !(tripSplitConfig.tripPeople || []).some(p => String(p.id) === String(editExpPaidBy)) && (
+                                        <option value={editExpPaidBy}>{getMemberName(editExpPaidBy)}</option>
+                                      )}
+                                    </select>
+                                  ) : (
+                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>
+                                      {getMemberName(exp.paid_by)}
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ padding: '8px' }}>
+                                  {isEditing ? (
+                                    <select
+                                      className="form-control"
+                                      style={{ height: '30px', padding: '2px 6px', fontSize: '0.78rem', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', borderRadius: '4px', maxWidth: '190px' }}
+                                      value={editExpIsSplit ? 'split' : (normalizeForMemberId(editExpForMember, editExpPaidBy || 'self') ? `for:${normalizeForMemberId(editExpForMember, editExpPaidBy || 'self')}` : 'self_payer')}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === 'split') {
+                                          setEditExpIsSplit(true);
+                                          setEditExpForMember(null);
+                                        } else if (val.startsWith('for:')) {
+                                          setEditExpIsSplit(false);
+                                          setEditExpForMember(val.replace('for:', ''));
+                                        } else {
+                                          setEditExpIsSplit(false);
+                                          setEditExpForMember(null);
+                                        }
+                                      }}
+                                    >
+                                      <option value="split">🤝 Split ({tripSplitConfig.splitCount}-way)</option>
+                                      <option value="self_payer">👤 Personal Expense</option>
+                                      {[
+                                        ...(tripSplitConfig.includeOwner ? ['self'] : []),
+                                        ...(tripSplitConfig.tripPeople || []).map(p => String(p.id))
+                                      ]
+                                        .filter((id, idx, arr) => arr.indexOf(id) === idx && id !== String(editExpPaidBy || 'self'))
+                                        .map(mId => (
+                                          <option key={mId} value={`for:${mId}`}>
+                                            💸 Paid for {getMemberName(mId)}
+                                          </option>
+                                        ))}
+                                    </select>
+                                  ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleExpenseSplit(exp)}
+                                        style={{
+                                          background: isExpSplit
+                                            ? 'rgba(139, 92, 246, 0.16)'
+                                            : (forMemberId ? 'rgba(245, 158, 11, 0.16)' : 'rgba(255,255,255,0.04)'),
+                                          border: isExpSplit
+                                            ? '1px solid rgba(139, 92, 246, 0.4)'
+                                            : (forMemberId ? '1px solid rgba(245, 158, 11, 0.45)' : '1px solid var(--border-glass)'),
+                                          color: isExpSplit
+                                            ? 'var(--accent-purple-text)'
+                                            : (forMemberId ? 'var(--accent-amber-text)' : 'var(--text-muted)'),
+                                          borderRadius: '999px',
+                                          padding: '2px 9px',
+                                          fontSize: '0.72rem',
+                                          fontWeight: 600,
+                                          cursor: 'pointer',
+                                          whiteSpace: 'nowrap'
+                                        }}
+                                        title="Click to toggle whether this expense is split across main members"
+                                      >
+                                        {isExpSplit
+                                          ? `🤝 Split (${perShareAmt.toFixed(2)}/ea)`
+                                          : (forMemberId
+                                            ? `💸 Paid for ${getMemberName(forMemberId)}`
+                                            : '👤 Personal Expense')}
+                                      </button>
+                                      {((isExpSplit && tripSplitConfig.splitCount > 1) || forMemberId) && (
+                                        <span style={{ fontSize: '0.68rem', color: forMemberId ? 'var(--accent-amber-text)' : 'var(--accent-emerald-text)', paddingLeft: '4px' }}>
+                                          {getExpenseWhoOwesText(exp)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
+                                  {isEditing ? (
+                                    <input 
+                                      type="date" 
+                                      className="form-control" 
+                                      style={{ height: '30px', padding: '2px 6px', fontSize: '0.8rem', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', borderRadius: '4px' }}
+                                      value={editExpDate} 
+                                      onChange={(e) => setEditExpDate(e.target.value)}
+                                    />
+                                  ) : (
+                                    exp.date
+                                  )}
+                                </td>
+                                <td className="no-print" style={{ padding: '8px' }}>
+                                  {isEditing ? (
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                      <button className="photo-action-btn" onClick={() => handleSaveEditedExpense(exp.id)} title="Save changes">
+                                        <CheckSquare size={12} style={{ color: 'var(--success)' }} />
+                                      </button>
+                                      <button className="photo-action-btn" onClick={() => setEditingExpenseId(null)} title="Cancel">
+                                        <X size={12} style={{ color: 'var(--error)' }} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                      <button className="photo-action-btn" onClick={() => handleStartEditExpense(exp)} title="Edit expense">
+                                        <Edit size={12} />
+                                      </button>
+                                      <button className="photo-action-btn" onClick={() => handleDeleteExpense(exp)} title="Delete expense">
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* Trip Notes & Travel Journal Section */}
-              <div style={{ background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <FileText size={20} style={{ color: 'var(--accent-primary)' }} /> Trip Notes & Travel Journal
-                  </h3>
+              <div id="trip-section-notes" className={`${!printOptNotes ? 'no-print' : ''} ${focusedSection && focusedSection !== 'notes' ? 'collapsed-on-screen' : ''}`} style={{ scrollMarginTop: '130px', background: 'var(--bg-surface-elevated)', padding: '24px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: collapsedSections.notes ? 0 : '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => toggleSectionCollapse('notes')}>
+                    <button
+                      type="button"
+                      className="no-print"
+                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '6px', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      title={collapsedSections.notes ? "Expand Notes Section" : "Collapse Notes Section"}
+                    >
+                      {collapsedSections.notes ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                    <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FileText size={20} style={{ color: 'var(--accent-primary)' }} /> Trip Notes & Travel Journal
+                    </h3>
+                  </div>
                   <button 
-                    className="btn btn-primary"
+                    className="btn btn-primary no-print"
                     style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                    onClick={() => setShowTripNoteModal(true)}
+                    onClick={() => {
+                      setCollapsedSections(prev => ({ ...prev, notes: false }));
+                      setShowTripNoteModal(true);
+                    }}
                   >
                     <Plus size={14} /> Add Note
                   </button>
                 </div>
 
-                {(() => {
-                  const currentNotes = notesList.filter(n => selectedTrip && n.trip_id === selectedTrip.id);
-                  if (currentNotes.length === 0) {
-                    return (
-                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontStyle: 'italic', margin: 0 }}>
-                        No notes added yet. Click "+ Add Note" to jot down flight details, hotel instructions, packing reminders, or daily reflections!
-                      </p>
-                    );
-                  }
+                <div className={collapsedSections.notes ? 'collapsed-on-screen' : ''}>
+                  {(() => {
+                    const currentNotes = notesList.filter(n => selectedTrip && n.trip_id === selectedTrip.id);
+                    if (currentNotes.length === 0) {
+                      return (
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontStyle: 'italic', margin: 0 }}>
+                          No notes added yet. Click "+ Add Note" to jot down flight details, hotel instructions, packing reminders, or daily reflections!
+                        </p>
+                      );
+                    }
 
-                  return (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-                      {currentNotes.map(note => (
-                        <div key={note.id} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '14px', position: 'relative' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-                            <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--text-primary)' }}>{note.title || 'Trip Note'}</span>
-                            <button className="photo-action-btn" onClick={() => handleDeleteTripNote(note.id)} title="Delete Note">
-                              <Trash2 size={13} />
-                            </button>
+                    return (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+                        {currentNotes.map(note => (
+                          <div key={note.id} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '14px', position: 'relative' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+                              <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--text-primary)' }}>{note.title || 'Trip Note'}</span>
+                              <button className="photo-action-btn no-print" onClick={() => handleDeleteTripNote(note.id)} title="Delete Note">
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                            <span style={{ fontSize: '0.68rem', backgroundColor: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent-primary-hover)', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 600, display: 'inline-block', marginBottom: '8px' }}>
+                              {note.category || 'General'}
+                            </span>
+                            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', margin: 0 }}>
+                              {note.content}
+                            </p>
                           </div>
-                          <span style={{ fontSize: '0.68rem', backgroundColor: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent-primary-hover)', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 600, display: 'inline-block', marginBottom: '8px' }}>
-                            {note.category || 'General'}
-                          </span>
-                          <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', margin: 0 }}>
-                            {note.content}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()}
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
 
             </div>
@@ -4971,6 +7100,28 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   style={{ width: '16px', height: '16px', accentColor: 'var(--accent-primary)' }}
                 />
                 <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>Trip Expenses</span>
+              </label>
+              {printOptExpenses && (
+                <div style={{ marginLeft: '24px', marginTop: '-4px', marginBottom: '2px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={printOptExpenseSplit} 
+                      onChange={(e) => setPrintOptExpenseSplit(e.target.checked)}
+                      style={{ width: '14px', height: '14px', accentColor: 'var(--accent-primary)' }}
+                    />
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>Include Expense Split & Settlement Summary</span>
+                  </label>
+                </div>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input 
+                  type="checkbox" 
+                  checked={printOptNotes} 
+                  onChange={(e) => setPrintOptNotes(e.target.checked)}
+                  style={{ width: '16px', height: '16px', accentColor: 'var(--accent-primary)' }}
+                />
+                <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>Trip Notes & Travel Journal</span>
               </label>
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
@@ -7740,6 +9891,9 @@ function ImportTripModal({ isOpen, onClose, token, onSelectTrip }) {
 }
 
 const ItineraryDay = ({ 
+  dayId,
+  isCollapsed = false,
+  onToggleCollapse,
   date, 
   label, 
   items, 
@@ -8002,9 +10156,11 @@ const ItineraryDay = ({
 
   return (
     <div 
+      id={dayId}
       className={`itinerary-day-card ${pageBreakBefore ? 'print-page-break-day' : ''}`}
       style={{ 
         '--day-accent-color': dayColor,
+        scrollMarginTop: '130px',
         marginBottom: '20px',
         background: `linear-gradient(135deg, ${dayColor}0f 0%, var(--bg-surface-elevated) 100%)`,
         border: '1px solid var(--border-glass)',
@@ -8015,8 +10171,18 @@ const ItineraryDay = ({
       }}
     >
       {/* Day Header Banner */}
-      <div className="itinerary-day-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+      <div className="itinerary-day-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: isCollapsed ? 'none' : '1px solid var(--border-glass)', paddingBottom: isCollapsed ? 0 : '12px', marginBottom: isCollapsed ? 0 : '14px', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', cursor: onToggleCollapse ? 'pointer' : 'default' }} onClick={onToggleCollapse}>
+          {onToggleCollapse && (
+            <button
+              type="button"
+              className="no-print"
+              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-glass)', borderRadius: '6px', width: '26px', height: '26px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              title={isCollapsed ? "Expand Day" : "Collapse Day"}
+            >
+              {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+            </button>
+          )}
           <span 
             className="itinerary-day-badge"
             style={{ 
@@ -8084,227 +10250,229 @@ const ItineraryDay = ({
         )}
       </div>
 
-      {/* Display reservations directly below the date */}
-      {dayReservations.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
-          {dayReservations.map(r => {
-            let fileExt = '';
-            if (r.file_path) {
-              fileExt = r.file_path.split('.').pop().toLowerCase();
-            }
-            const details = typeof r.details === 'string' ? JSON.parse(r.details) : r.details || {};
-            return (
-              <div 
-                key={r.id} 
-                style={{ 
-                  background: 'var(--bg-surface-elevated)', 
-                  border: '1px solid var(--border-glass)', 
-                  borderRadius: '4px', 
-                  padding: '4px 8px', 
-                  fontSize: '0.75rem', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '6px',
-                  color: 'var(--text-primary)'
-                }}
-              >
-                <span>🏢 {r.name || r.type}</span>
-                {details.confirmation && <span style={{ color: 'var(--text-muted)' }}>({details.confirmation})</span>}
-                {r.file_path && (
-                  <button 
-                    onClick={() => handleViewAttachment(r)}
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent-primary)' }}
-                    title="View attachment"
-                  >
-                    📎
-                  </button>
-                )}
-                {!tripModeActive && (
-                  <button 
-                    onClick={() => handleDeleteReservation(r.id)}
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--danger)', fontSize: '0.7rem' }}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div className={isCollapsed ? 'collapsed-on-screen' : ''}>
+        {/* Display reservations directly below the date */}
+        {dayReservations.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+            {dayReservations.map(r => {
+              let fileExt = '';
+              if (r.file_path) {
+                fileExt = r.file_path.split('.').pop().toLowerCase();
+              }
+              const details = typeof r.details === 'string' ? JSON.parse(r.details) : r.details || {};
+              return (
+                <div 
+                  key={r.id} 
+                  style={{ 
+                    background: 'var(--bg-surface-elevated)', 
+                    border: '1px solid var(--border-glass)', 
+                    borderRadius: '4px', 
+                    padding: '4px 8px', 
+                    fontSize: '0.75rem', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '6px',
+                    color: 'var(--text-primary)'
+                  }}
+                >
+                  <span>🏢 {r.name || r.type}</span>
+                  {details.confirmation && <span style={{ color: 'var(--text-muted)' }}>({details.confirmation})</span>}
+                  {r.file_path && (
+                    <button 
+                      onClick={() => handleViewAttachment(r)}
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent-primary)' }}
+                      title="View attachment"
+                    >
+                      📎
+                    </button>
+                  )}
+                  {!tripModeActive && (
+                    <button 
+                      onClick={() => handleDeleteReservation(r.id)}
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--danger)', fontSize: '0.7rem' }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-      {/* Boarding Pass / Outbound Transit Card for Day 1 */}
-      {isFirstDay && selectedTrip && (
-        <div style={{ marginBottom: '14px' }}>
-          <JourneyTransitBanner
-            trip={selectedTrip}
-            type="outbound"
-            title="Day 1 Outbound Journey"
-            userAddresses={userAddresses}
-            firstDayDate={date}
-            firstDayStayName={stayLocation}
-            onUpdateTrip={onUpdateTrip}
-          />
-        </div>
-      )}
-      
-      {dayElements.length === 0 ? (
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '8px 0', margin: 0 }}>No stops planned for this day.</p>
-      ) : (
-        <div className="timeline" style={{ position: 'relative', paddingLeft: '22px', marginTop: '14px', borderLeft: `2px solid ${dayColor}40`, marginLeft: '6px' }}>
-          {dayElements.map((el, idx) => {
-            const place = el.place;
-            const dist = dayDistancesList[idx - 1];
-            const isHomePlace = el.endpointType?.includes('home') || place?.is_home === true;
+        {/* Boarding Pass / Outbound Transit Card for Day 1 */}
+        {isFirstDay && selectedTrip && (
+          <div style={{ marginBottom: '14px' }}>
+            <JourneyTransitBanner
+              trip={selectedTrip}
+              type="outbound"
+              title="Day 1 Outbound Journey"
+              userAddresses={userAddresses}
+              firstDayDate={date}
+              firstDayStayName={stayLocation}
+              onUpdateTrip={onUpdateTrip}
+            />
+          </div>
+        )}
+        
+        {dayElements.length === 0 ? (
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '8px 0', margin: 0 }}>No stops planned for this day.</p>
+        ) : (
+          <div className="timeline" style={{ position: 'relative', paddingLeft: '22px', marginTop: '14px', borderLeft: `2px solid ${dayColor}40`, marginLeft: '6px' }}>
+            {dayElements.map((el, idx) => {
+              const place = el.place;
+              const dist = dayDistancesList[idx - 1];
+              const isHomePlace = el.endpointType?.includes('home') || place?.is_home === true;
 
-            const allPlacesSorted = [...places.filter(p => p.is_folder !== 1 && !p.is_home)].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-            const placeIdx = allPlacesSorted.findIndex(x => x.id === place?.id);
-            const placeNum = placeIdx !== -1 ? placeIdx + 1 : (idx + 1);
+              const allPlacesSorted = [...places.filter(p => p.is_folder !== 1 && !p.is_home)].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+              const placeIdx = allPlacesSorted.findIndex(x => x.id === place?.id);
+              const placeNum = placeIdx !== -1 ? placeIdx + 1 : (idx + 1);
 
-            return (
-              <div key={`${place?.id || 'elem'}-${idx}`} className="timeline-item" style={{ paddingBottom: idx === dayElements.length - 1 ? '4px' : '18px' }}>
-                {idx > 0 && dist !== undefined && (() => {
-                  const isUsingGmaps = typeof window !== 'undefined' && 
-                    localStorage.getItem('google_maps_api_key') && 
-                    localStorage.getItem('google_maps_enabled') !== 'false';
-                  const distVal = typeof dist === 'object' ? dist.distance : dist;
-                  const durVal = typeof dist === 'object' ? dist.duration : 0;
-                  const mode = typeof dist === 'object' ? (dist.mode || 'drive') : 'drive';
-                  const modeIcon = mode === 'walk' ? '🚶' : (mode === 'flight' ? '✈️' : (mode === 'train' ? '🚆' : (mode === 'ferry' ? '⛴️' : '🚗')));
+              return (
+                <div key={`${place?.id || 'elem'}-${idx}`} className="timeline-item" style={{ paddingBottom: idx === dayElements.length - 1 ? '4px' : '18px' }}>
+                  {idx > 0 && dist !== undefined && (() => {
+                    const isUsingGmaps = typeof window !== 'undefined' && 
+                      localStorage.getItem('google_maps_api_key') && 
+                      localStorage.getItem('google_maps_enabled') !== 'false';
+                    const distVal = typeof dist === 'object' ? dist.distance : dist;
+                    const durVal = typeof dist === 'object' ? dist.duration : 0;
+                    const mode = typeof dist === 'object' ? (dist.mode || 'drive') : 'drive';
+                    const modeIcon = mode === 'walk' ? '🚶' : (mode === 'flight' ? '✈️' : (mode === 'train' ? '🚆' : (mode === 'ferry' ? '⛴️' : '🚗')));
 
-                  return (
-                    <div className="timeline-distance" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: dayColor || 'var(--accent-secondary)' }}>
-                      <span>{modeIcon}</span>
-                      <img 
-                        src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
-                        style={{ width: 12, height: 12, objectFit: 'contain' }} 
-                        alt={isUsingGmaps ? "GMaps" : "OSM"}
-                        title={isUsingGmaps ? "Route calculated via Google Maps" : "Route calculated via OpenStreetMap (OSRM)"}
-                      />
-                      <span>
-                        {distVal} km{durVal > 0 ? ` (${formatDuration(durVal)})` : ''}
-                      </span>
-                    </div>
-                  );
-                })()}
-                
-                {el.isFixedEndpoint ? (
-                  <div style={{
-                    background: isHomePlace ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' : `${dayColor}12`,
-                    border: isHomePlace ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' : `1px solid ${dayColor}55`,
-                    padding: '10px 14px',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    fontSize: '0.85rem',
-                    color: isHomePlace ? 'var(--endpoint-color, #15803d)' : dayColor,
-                    fontWeight: 600,
-                    margin: '6px 0'
-                  }}>
-                    {(() => {
-                      const endpointPhotoUrl = (!isHomePlace && place?.id) ? getFeaturedPhotoUrl(place.id, photos, locations, places) : null;
-                      if (!endpointPhotoUrl) return null;
-                      return (
+                    return (
+                      <div className="timeline-distance" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: dayColor || 'var(--accent-secondary)' }}>
+                        <span>{modeIcon}</span>
                         <img 
-                          src={endpointPhotoUrl} 
-                          alt={place?.name || ''} 
-                          style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border-glass)', boxShadow: '0 2px 6px rgba(0,0,0,0.18)' }} 
-                          loading="lazy" 
+                          src={isUsingGmaps ? "/gmaps.png" : "/osm.png"} 
+                          style={{ width: 12, height: 12, objectFit: 'contain' }} 
+                          alt={isUsingGmaps ? "GMaps" : "OSM"}
+                          title={isUsingGmaps ? "Route calculated via Google Maps" : "Route calculated via OpenStreetMap (OSRM)"}
                         />
-                      );
-                    })()}
-                    <span>{el.label}</span>
-                  </div>
-                ) : (
-                  <div className="timeline-card" style={{
-                    background: 'var(--bg-surface-elevated)',
-                    border: '1px solid var(--border-glass)',
-                    borderLeft: isHomePlace ? '4px solid #4ade80' : `4px solid ${dayColor}`,
-                    borderRadius: 'var(--radius-sm)',
-                    padding: '12px 14px',
-                    marginTop: '6px'
-                  }}>
-                    {(() => {
-                      const stopPhotoUrl = (!isHomePlace && place?.id) ? getFeaturedPhotoUrl(place.id, photos, locations, places) : null;
-                      return (
-                        <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
-                          {stopPhotoUrl && (
-                            <img 
-                              src={stopPhotoUrl} 
-                              alt={place ? place.name : 'Place thumbnail'} 
-                              style={{
-                                width: '64px',
-                                height: '64px',
-                                borderRadius: '8px',
-                                objectFit: 'cover',
-                                flexShrink: 0,
-                                border: '1px solid var(--border-glass)',
-                                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
-                              }}
-                              loading="lazy"
-                            />
-                          )}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                                <span className="timeline-stop-badge" style={{
-                                  width: '22px',
-                                  height: '22px',
-                                  borderRadius: '50%',
-                                  background: isHomePlace ? '#4ade80' : (dayColor || 'var(--accent-primary)'),
-                                  color: isHomePlace ? '#000' : '#fff',
-                                  fontSize: '0.75rem',
-                                  fontWeight: 'bold',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0
-                                }}>
-                                  {isHomePlace ? '🏠' : placeNum}
-                                </span>
-                                <b style={{ color: 'var(--text-primary)', fontSize: '0.95rem' }}>
-                                  {place ? place.name : 'Unknown Stop'}
-                                </b>
-                              </div>
-                              {!tripModeActive && el.itemObj && (
-                                <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(el.itemObj.id)}>
-                                  <X size={12} />
-                                </button>
-                              )}
-                            </div>
-                            {place && (
-                              <div style={{ marginTop: '3px' }}>
-                                <span style={{ fontSize: '0.75rem', color: isHomePlace ? '#4ade80' : 'var(--text-secondary)' }}>{place.category}</span>
-                              </div>
+                        <span>
+                          {distVal} km{durVal > 0 ? ` (${formatDuration(durVal)})` : ''}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  
+                  {el.isFixedEndpoint ? (
+                    <div style={{
+                      background: isHomePlace ? 'var(--endpoint-bg, rgba(74, 222, 128, 0.08))' : `${dayColor}12`,
+                      border: isHomePlace ? '1px solid var(--endpoint-border, rgba(74, 222, 128, 0.35))' : `1px solid ${dayColor}55`,
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      fontSize: '0.85rem',
+                      color: isHomePlace ? 'var(--endpoint-color, #15803d)' : dayColor,
+                      fontWeight: 600,
+                      margin: '6px 0'
+                    }}>
+                      {(() => {
+                        const endpointPhotoUrl = (!isHomePlace && place?.id) ? getFeaturedPhotoUrl(place.id, photos, locations, places) : null;
+                        if (!endpointPhotoUrl) return null;
+                        return (
+                          <img 
+                            src={endpointPhotoUrl} 
+                            alt={place?.name || ''} 
+                            style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border-glass)', boxShadow: '0 2px 6px rgba(0,0,0,0.18)' }} 
+                            loading="lazy" 
+                          />
+                        );
+                      })()}
+                      <span>{el.label}</span>
+                    </div>
+                  ) : (
+                    <div className="timeline-card" style={{
+                      background: 'var(--bg-surface-elevated)',
+                      border: '1px solid var(--border-glass)',
+                      borderLeft: isHomePlace ? '4px solid #4ade80' : `4px solid ${dayColor}`,
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '12px 14px',
+                      marginTop: '6px'
+                    }}>
+                      {(() => {
+                        const stopPhotoUrl = (!isHomePlace && place?.id) ? getFeaturedPhotoUrl(place.id, photos, locations, places) : null;
+                        return (
+                          <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+                            {stopPhotoUrl && (
+                              <img 
+                                src={stopPhotoUrl} 
+                                alt={place ? place.name : 'Place thumbnail'} 
+                                style={{
+                                  width: '64px',
+                                  height: '64px',
+                                  borderRadius: '8px',
+                                  objectFit: 'cover',
+                                  flexShrink: 0,
+                                  border: '1px solid var(--border-glass)',
+                                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
+                                }}
+                                loading="lazy"
+                              />
                             )}
-                            {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>{place.notes}</p>}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                  <span className="timeline-stop-badge" style={{
+                                    width: '22px',
+                                    height: '22px',
+                                    borderRadius: '50%',
+                                    background: isHomePlace ? '#4ade80' : (dayColor || 'var(--accent-primary)'),
+                                    color: isHomePlace ? '#000' : '#fff',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 'bold',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0
+                                  }}>
+                                    {isHomePlace ? '🏠' : placeNum}
+                                  </span>
+                                  <b style={{ color: 'var(--text-primary)', fontSize: '0.95rem' }}>
+                                    {place ? place.name : 'Unknown Stop'}
+                                  </b>
+                                </div>
+                                {!tripModeActive && el.itemObj && (
+                                  <button className="photo-action-btn" onClick={() => handleDeleteItineraryItem(el.itemObj.id)}>
+                                    <X size={12} />
+                                  </button>
+                                )}
+                              </div>
+                              {place && (
+                                <div style={{ marginTop: '3px' }}>
+                                  <span style={{ fontSize: '0.75rem', color: isHomePlace ? '#4ade80' : 'var(--text-secondary)' }}>{place.category}</span>
+                                </div>
+                              )}
+                              {place && place.notes && <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>{place.notes}</p>}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-      {/* Boarding Pass / Return Transit Card for Final Day */}
-      {isLastDay && selectedTrip && (
-        <div style={{ marginTop: '14px' }}>
-          <JourneyTransitBanner
-            trip={selectedTrip}
-            type="return"
-            title={selectedTrip.length > 1 ? `Day ${selectedTrip.length} Return Journey` : "Return Journey"}
-            userAddresses={userAddresses}
-            lastDayDate={date}
-            lastDayStayName={stayLocation}
-            onUpdateTrip={onUpdateTrip}
-          />
-        </div>
-      )}
+        {/* Boarding Pass / Return Transit Card for Final Day */}
+        {isLastDay && selectedTrip && (
+          <div style={{ marginTop: '14px' }}>
+            <JourneyTransitBanner
+              trip={selectedTrip}
+              type="return"
+              title={selectedTrip.length > 1 ? `Day ${selectedTrip.length} Return Journey` : "Return Journey"}
+              userAddresses={userAddresses}
+              lastDayDate={date}
+              lastDayStayName={stayLocation}
+              onUpdateTrip={onUpdateTrip}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 };

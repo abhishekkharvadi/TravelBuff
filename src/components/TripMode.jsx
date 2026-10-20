@@ -5,7 +5,7 @@ import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
 import { 
   Calendar, Check, Plus, DollarSign, Image as ImageIcon, 
   MapPin, RefreshCw, Sparkles, Navigation, X, ShieldAlert,
-  Utensils, FileText, Star, Compass, Coffee, Trash2, Edit
+  Utensils, FileText, Star, Compass, Coffee, Trash2, Edit, Download
 } from 'lucide-react';
 import { performSync } from '../sync.js';
 import { getDayColor } from '../utils/dayColors.js';
@@ -111,6 +111,9 @@ export default function TripMode({ token }) {
   const [expCategory, setExpCategory] = useState('Snacks');
   const [expNotes, setExpNotes] = useState('');
   const [expFile, setExpFile] = useState(null);
+  const [expIsSplit, setExpIsSplit] = useState(false);
+  const [expPaidBy, setExpPaidBy] = useState('self');
+  const [expForMember, setExpForMember] = useState(null);
 
   useEffect(() => {
     const fetchSettingsCurrency = async () => {
@@ -401,7 +404,10 @@ export default function TripMode({ token }) {
       category: expCategory,
       notes: expNotes || 'Quick log',
       receipt_path: receiptUrl,
-      is_planned: 0 // Actual
+      is_planned: 0, // Actual
+      is_split: expIsSplit ? 1 : 0,
+      paid_by: expPaidBy || 'self',
+      for_member: expIsSplit ? null : (expForMember && String(expForMember) !== String(expPaidBy || 'self') ? String(expForMember) : null)
     };
 
     await queueSyncAction('expenses', 'insert', newExpense);
@@ -410,6 +416,9 @@ export default function TripMode({ token }) {
     setExpAmount('');
     setExpNotes('');
     setExpFile(null);
+    setExpIsSplit(false);
+    setExpPaidBy('self');
+    setExpForMember(null);
     setShowExpenseModal(false);
   };
 
@@ -1047,6 +1056,551 @@ export default function TripMode({ token }) {
     return notesObj.isActive === true;
   })();
 
+  const getMemberName = (memberId) => {
+    if (!memberId || memberId === 'self') return 'Me (You)';
+    const matched = people.find(p => String(p.id) === String(memberId));
+    return matched ? matched.name : 'Companion';
+  };
+
+  const tripSplitConfig = useMemo(() => {
+    if (!currentTrip) {
+      return {
+        compIds: [],
+        tripPeople: [],
+        mainMemberIds: ['self'],
+        splitCount: 1,
+        isSplitConfigured: false
+      };
+    }
+    let compIds = [];
+    try {
+      compIds = typeof currentTrip.companions === 'string' ? JSON.parse(currentTrip.companions) : (currentTrip.companions || []);
+    } catch (e) {
+      compIds = [];
+    }
+    if (!Array.isArray(compIds)) compIds = [];
+    const tripPeople = people.filter(p => compIds.some(cid => String(cid) === String(p.id)));
+    const parsedNotes = safeParseNotes(currentTrip.notes);
+
+    let mainMemberIds;
+    if (Array.isArray(parsedNotes.splitMainMembers) && parsedNotes.splitMainMembers.length > 0) {
+      const validSaved = parsedNotes.splitMainMembers
+        .map(id => String(id))
+        .filter(id => id === 'self' || compIds.some(cid => String(cid) === id));
+      if (
+        validSaved.length === 1 &&
+        validSaved[0] === 'self' &&
+        compIds.length > 0 &&
+        !parsedNotes.splitMainMembersCustomized
+      ) {
+        mainMemberIds = ['self', ...compIds.map(id => String(id))];
+      } else {
+        mainMemberIds = validSaved.includes('self') ? validSaved : ['self', ...validSaved];
+      }
+    } else {
+      mainMemberIds = ['self', ...compIds.map(id => String(id))];
+    }
+    mainMemberIds = Array.from(new Set(mainMemberIds));
+    if (mainMemberIds.length === 0) mainMemberIds = ['self'];
+
+    const defaultCount = Math.max(1, mainMemberIds.length);
+    const parsedSplitCount = parseInt(parsedNotes.splitCount, 10);
+    const splitCount = (!isNaN(parsedSplitCount) && parsedSplitCount >= 1)
+      ? ((parsedSplitCount === 1 && mainMemberIds.length > 1 && !parsedNotes.splitMainMembersCustomized) ? defaultCount : parsedSplitCount)
+      : defaultCount;
+
+    const isSplitConfigured =
+      compIds.length > 0 ||
+      splitCount > 1 ||
+      mainMemberIds.length > 1 ||
+      Boolean(parsedNotes.splitCount) ||
+      Boolean(parsedNotes.splitMainMembers);
+
+    return {
+      compIds,
+      tripPeople,
+      mainMemberIds,
+      splitCount,
+      isSplitConfigured
+    };
+  }, [currentTrip, people]);
+
+  const expenseSplitSummary = useMemo(() => {
+    const splitCount = Math.max(1, tripSplitConfig.splitCount);
+    const mainIds = tripSplitConfig.mainMemberIds;
+    const tripExps = currentTrip ? expenses.filter(e => String(e.trip_id) === String(currentTrip.id)) : [];
+    const tripRates = currentTrip ? rates.filter(r => String(r.trip_id) === String(currentTrip.id)) : [];
+    let baseCur = userBaseCurrency || 'USD';
+    if (currentTrip?.notes) {
+      const parsed = safeParseNotes(currentTrip.notes);
+      if (parsed.baseCurrency) baseCur = parsed.baseCurrency;
+    }
+
+    const participantSet = new Set(['self', ...mainIds.map(id => String(id))]);
+    tripSplitConfig.tripPeople.forEach(p => participantSet.add(String(p.id)));
+    tripExps.forEach(exp => {
+      if (exp.paid_by) participantSet.add(String(exp.paid_by));
+      if (exp.for_member) participantSet.add(String(exp.for_member));
+    });
+
+    const participantIds = Array.from(participantSet);
+    const paidAllByMember = {};
+    const paidSplitByMember = {};
+    const paidPersonalByMember = {};
+    const paidOnBehalfByMember = {};
+    const owedDirectByMember = {};
+    participantIds.forEach(id => {
+      paidAllByMember[id] = 0;
+      paidSplitByMember[id] = 0;
+      paidPersonalByMember[id] = 0;
+      paidOnBehalfByMember[id] = 0;
+      owedDirectByMember[id] = 0;
+    });
+
+    let totalAllExpenses = 0;
+    let totalSplitExpenses = 0;
+    let totalPersonalExpenses = 0;
+    let hasBehalfExpenses = false;
+
+    tripExps.forEach(exp => {
+      let converted = parseFloat(exp.amount) || 0;
+      if (exp.currency && exp.currency !== baseCur) {
+        const matchedRate = tripRates.find(r => r.currency === exp.currency);
+        if (matchedRate && matchedRate.rate) {
+          converted = converted * matchedRate.rate;
+        }
+      }
+      const rawPayer = exp.paid_by ? String(exp.paid_by) : 'self';
+      const payer = participantSet.has(rawPayer) ? rawPayer : 'self';
+      paidAllByMember[payer] = (paidAllByMember[payer] || 0) + converted;
+      totalAllExpenses += converted;
+
+      if (Number(exp.is_split) === 1) {
+        totalSplitExpenses += converted;
+        paidSplitByMember[payer] = (paidSplitByMember[payer] || 0) + converted;
+      } else {
+        totalPersonalExpenses += converted;
+        const rawFor = exp.for_member ? String(exp.for_member) : null;
+        const beneficiary = (rawFor && participantSet.has(rawFor)) ? rawFor : payer;
+        if (beneficiary !== payer) {
+          hasBehalfExpenses = true;
+          paidOnBehalfByMember[payer] = (paidOnBehalfByMember[payer] || 0) + converted;
+          owedDirectByMember[beneficiary] = (owedDirectByMember[beneficiary] || 0) + converted;
+        } else {
+          paidPersonalByMember[payer] = (paidPersonalByMember[payer] || 0) + converted;
+        }
+      }
+    });
+
+    const perMemberShare = totalSplitExpenses / splitCount;
+    const isSelfMain = mainIds.some(mid => String(mid) === 'self');
+    const mySplitShare = isSelfMain ? perMemberShare : 0;
+    const myPersonalSpend = (paidPersonalByMember['self'] || 0) + (owedDirectByMember['self'] || 0);
+    const myTotalTripSpend = mySplitShare + myPersonalSpend;
+    const myOutOfPocketPaid = paidAllByMember['self'] || 0;
+    const myNetBalance =
+      ((paidSplitByMember['self'] || 0) - mySplitShare) +
+      (paidOnBehalfByMember['self'] || 0) -
+      (owedDirectByMember['self'] || 0);
+
+    const allParticipants = participantIds.map(id => {
+      const isMain = mainIds.some(mid => String(mid) === String(id));
+      const paidSplit = paidSplitByMember[id] || 0;
+      const paidOnBehalfOfOthers = paidOnBehalfByMember[id] || 0;
+      const paidPersonalOwn = paidPersonalByMember[id] || 0;
+      const paidPersonal = paidPersonalOwn + paidOnBehalfOfOthers;
+      const paidTotal = paidAllByMember[id] || 0;
+      const owedDirectToOthers = owedDirectByMember[id] || 0;
+      const personalSpend = paidPersonalOwn + owedDirectToOthers;
+      const owedShare = isMain ? perMemberShare : 0;
+      const actualTripCost = owedShare + personalSpend;
+      const netBalance = (paidSplit - owedShare) + paidOnBehalfOfOthers - owedDirectToOthers;
+      return {
+        id,
+        name: getMemberName(id),
+        isMain,
+        paidSplit,
+        paidPersonal,
+        paidOnBehalfOfOthers,
+        owedDirectToOthers,
+        paidTotal,
+        personalSpend,
+        owedShare,
+        actualTripCost,
+        netBalance
+      };
+    });
+
+    // Exclude non-paying non-main members from the Member Spend & Split Balance Breakdown
+    const participants = allParticipants.filter(
+      p => p.isMain || p.paidTotal > 0.009 || p.actualTripCost > 0.009 || Math.abs(p.netBalance) > 0.009
+    );
+
+    // ==========================================
+    // Compute Bilateral Pairwise Settlements ("Who owes whom")
+    // ==========================================
+    // 1. Direct On-Behalf (Personal) Debts:
+    //    When Payer P pays for Beneficiary B (B != P): B directly owes P 100% of the expense.
+    // 2. Shared Split Pool Debts:
+    //    When Payer P pays for a split expense: each Main Member M (M != P) owes P their share (amount / divisor).
+    // 3. Bilateral Netting:
+    //    For each pair of individuals (A, B): net their mutual debts against each other so at most one transfer occurs between A and B.
+
+    const pairwiseDebts = {};
+    participantIds.forEach(id1 => {
+      pairwiseDebts[id1] = {};
+      participantIds.forEach(id2 => {
+        pairwiseDebts[id1][id2] = 0;
+      });
+    });
+
+    // 1. Add Direct On-Behalf (Personal) Debts & Shared Split Pool Debts
+    tripExps.forEach(exp => {
+      let converted = parseFloat(exp.amount) || 0;
+      if (exp.currency && exp.currency !== baseCur) {
+        const matchedRate = tripRates.find(r => r.currency === exp.currency);
+        if (matchedRate && matchedRate.rate) {
+          converted = converted * matchedRate.rate;
+        }
+      }
+      const rawPayer = exp.paid_by ? String(exp.paid_by) : 'self';
+      const payer = participantSet.has(rawPayer) ? rawPayer : 'self';
+
+      if (Number(exp.is_split) === 1) {
+        const share = splitCount > 0 ? (converted / splitCount) : 0;
+        mainIds.forEach(mId => {
+          if (String(mId) !== String(payer)) {
+            const debtorId = String(mId);
+            const creditorId = String(payer);
+            if (!pairwiseDebts[debtorId]) pairwiseDebts[debtorId] = {};
+            pairwiseDebts[debtorId][creditorId] = (pairwiseDebts[debtorId][creditorId] || 0) + share;
+          }
+        });
+      } else {
+        const rawFor = exp.for_member ? String(exp.for_member) : null;
+        const beneficiary = (rawFor && participantSet.has(rawFor)) ? rawFor : payer;
+        if (beneficiary !== payer) {
+          const debtorId = String(beneficiary);
+          const creditorId = String(payer);
+          if (!pairwiseDebts[debtorId]) pairwiseDebts[debtorId] = {};
+          pairwiseDebts[debtorId][creditorId] = (pairwiseDebts[debtorId][creditorId] || 0) + converted;
+        }
+      }
+    });
+
+    // 2. Bilateral Netting for each pair
+    const settlements = [];
+    for (let i = 0; i < participantIds.length; i++) {
+      for (let j = i + 1; j < participantIds.length; j++) {
+        const idA = participantIds[i];
+        const idB = participantIds[j];
+
+        const grossAOwesB = (pairwiseDebts[idA] && pairwiseDebts[idA][idB]) || 0;
+        const grossBOwesA = (pairwiseDebts[idB] && pairwiseDebts[idB][idA]) || 0;
+        const netDiff = grossAOwesB - grossBOwesA;
+
+        if (Math.abs(netDiff) > 0.009) {
+          const debtorId = netDiff > 0 ? idA : idB;
+          const creditorId = netDiff > 0 ? idB : idA;
+          const transferAmt = Math.abs(netDiff);
+          const debtorName = getMemberName(debtorId);
+          const creditorName = getMemberName(creditorId);
+
+          let directDebtorOwesCreditor = 0;
+          let directCreditorOwesDebtor = 0;
+          let grossSplitDebtorOwesCreditor = 0;
+          let grossSplitCreditorOwesDebtor = 0;
+
+          const debtorIsMain = mainIds.some(mid => String(mid) === String(debtorId));
+          const creditorIsMain = mainIds.some(mid => String(mid) === String(creditorId));
+
+          tripExps.forEach(exp => {
+            let converted = parseFloat(exp.amount) || 0;
+            if (exp.currency && exp.currency !== baseCur) {
+              const matchedRate = tripRates.find(r => r.currency === exp.currency);
+              if (matchedRate && matchedRate.rate) {
+                converted = converted * matchedRate.rate;
+              }
+            }
+            const rawPayer = exp.paid_by ? String(exp.paid_by) : 'self';
+            const payer = participantSet.has(rawPayer) ? rawPayer : 'self';
+
+            if (Number(exp.is_split) === 1) {
+              const share = splitCount > 0 ? (converted / splitCount) : 0;
+              if (String(payer) === String(creditorId) && debtorIsMain) {
+                grossSplitDebtorOwesCreditor += share;
+              }
+              if (String(payer) === String(debtorId) && creditorIsMain) {
+                grossSplitCreditorOwesDebtor += share;
+              }
+            } else {
+              const rawFor = exp.for_member ? String(exp.for_member) : null;
+              const beneficiary = (rawFor && participantSet.has(rawFor)) ? rawFor : payer;
+              if (String(payer) === String(creditorId) && String(beneficiary) === String(debtorId)) {
+                directDebtorOwesCreditor += converted;
+              }
+              if (String(payer) === String(debtorId) && String(beneficiary) === String(creditorId)) {
+                directCreditorOwesDebtor += converted;
+              }
+            }
+          });
+
+          const noteParts = [];
+          if (directDebtorOwesCreditor > 0.005) {
+            noteParts.push(`${creditorName} paid for ${debtorName}: +${directDebtorOwesCreditor.toFixed(2)} ${baseCur}`);
+          }
+          if (grossSplitDebtorOwesCreditor > 0.005) {
+            noteParts.push(`${debtorName}'s split share of ${creditorName}'s spend: +${grossSplitDebtorOwesCreditor.toFixed(2)} ${baseCur}`);
+          }
+          if (directCreditorOwesDebtor > 0.005) {
+            noteParts.push(`less ${debtorName} paid for ${creditorName}: −${directCreditorOwesDebtor.toFixed(2)} ${baseCur}`);
+          }
+          if (grossSplitCreditorOwesDebtor > 0.005) {
+            noteParts.push(`less ${creditorName}'s split share of ${debtorName}'s spend: −${grossSplitCreditorOwesDebtor.toFixed(2)} ${baseCur}`);
+          }
+
+          settlements.push({
+            fromId: debtorId,
+            fromName: debtorName,
+            toId: creditorId,
+            toName: creditorName,
+            amount: Math.round(transferAmt * 100) / 100,
+            grossDebtorOwesCreditor: grossAOwesB,
+            grossCreditorOwesDebtor: grossBOwesA,
+            directDebtorOwesCreditor,
+            directCreditorOwesDebtor,
+            breakdownNote: noteParts.length > 0 ? noteParts.join(' • ') : `${debtorName} owes ${creditorName} ${transferAmt.toFixed(2)} ${baseCur}`
+          });
+        }
+      }
+    }
+    settlements.sort((a, b) => b.amount - a.amount);
+
+    return {
+      baseCur,
+      totalAllExpenses,
+      totalSplitExpenses,
+      totalPersonalExpenses,
+      hasBehalfExpenses,
+      perMemberShare,
+      mySplitShare,
+      myPersonalSpend,
+      myTotalTripSpend,
+      myOutOfPocketPaid,
+      myNetBalance,
+      participants,
+      settlements
+    };
+  }, [currentTrip, expenses, rates, userBaseCurrency, tripSplitConfig, people]);
+
+  const getExpenseWhoOwesText = (exp, convAmt, baseCur) => {
+    const isSplit = Number(exp.is_split) === 1;
+    const payerId = exp.paid_by ? String(exp.paid_by) : 'self';
+    const payerName = getMemberName(payerId);
+    const splitCount = Math.max(1, tripSplitConfig.splitCount);
+    const perShare = isSplit ? (convAmt / splitCount) : convAmt;
+
+    if (!isSplit) {
+      const forId = exp.for_member ? String(exp.for_member) : null;
+      if (forId && forId !== payerId) {
+        const beneficiaryName = getMemberName(forId);
+        return `${beneficiaryName} owes ${payerName} ${convAmt.toFixed(2)} ${baseCur} (100% — paid on behalf)`;
+      }
+      return `Personal (${payerName} only — no split)`;
+    }
+    const otherMainMembers = tripSplitConfig.mainMemberIds.filter(mid => String(mid) !== payerId);
+    if (otherMainMembers.length === 0) {
+      return `Split (${splitCount}-way: ${perShare.toFixed(2)} ${baseCur}/share)`;
+    }
+    const otherNames = otherMainMembers.map(mid => getMemberName(mid));
+    if (otherNames.length === 1) {
+      return `${otherNames[0]} owes ${payerName} ${perShare.toFixed(2)} ${baseCur}`;
+    }
+    return `${otherNames.join(', ')} each owe ${payerName} ${perShare.toFixed(2)} ${baseCur}`;
+  };
+
+  const handleExportExpensesCsv = () => {
+    if (!currentTrip) return;
+    const tripExps = expenses.filter(e => String(e.trip_id) === String(currentTrip.id));
+    const tripRates = rates.filter(r => String(r.trip_id) === String(currentTrip.id));
+    const baseCur = expenseSplitSummary.baseCur;
+
+    const escapeCsvCell = (val) => {
+      if (val === null || val === undefined) return '""';
+      let str = String(val);
+      if (/^[=+\-@]/.test(str)) {
+        str = `'${str}`;
+      }
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const mainMembers = tripSplitConfig.mainMemberIds.map(id => ({
+      id,
+      name: getMemberName(id)
+    }));
+    const splitCount = Math.max(1, tripSplitConfig.splitCount);
+    const isSelfMain = tripSplitConfig.mainMemberIds.some(mid => String(mid) === 'self');
+
+    const rows = [];
+    const headerRow = [
+      'Date',
+      'Category',
+      'Notes / Description',
+      'Original Amount',
+      'Currency',
+      `Exchange Rate (to ${baseCur})`,
+      `Converted Amount (${baseCur})`,
+      'Paid By',
+      'Split / For Whom',
+      'Split Count',
+      `Per-Share Amount (${baseCur})`,
+      `My Trip Cost (Me) (${baseCur})`,
+      'Who Owes Payer (This Expense)',
+      ...mainMembers.map(m => `${m.name} Share (${baseCur})`)
+    ];
+    rows.push(headerRow.map(escapeCsvCell).join(','));
+
+    tripExps.forEach(exp => {
+      const origAmt = parseFloat(exp.amount) || 0;
+      let rate = 1;
+      if (exp.currency && exp.currency !== baseCur) {
+        const matchedRate = tripRates.find(r => r.currency === exp.currency);
+        if (matchedRate && matchedRate.rate) rate = parseFloat(matchedRate.rate) || 1;
+      }
+      const convAmt = origAmt * rate;
+      const isSplit = Number(exp.is_split) === 1;
+      const payerId = exp.paid_by ? String(exp.paid_by) : 'self';
+      const payerName = getMemberName(payerId);
+      const forId = (!isSplit && exp.for_member && String(exp.for_member) !== payerId) ? String(exp.for_member) : null;
+      const beneficiaryId = isSplit ? null : (forId || payerId);
+      const perShare = isSplit ? (convAmt / splitCount) : convAmt;
+      const myShare = isSplit ? (isSelfMain ? perShare : 0) : (beneficiaryId === 'self' ? convAmt : 0);
+      const whoOwesText = getExpenseWhoOwesText(exp, convAmt, baseCur);
+      const splitOrForLabel = isSplit
+        ? `Split (${splitCount}-way)`
+        : (forId ? `Paid for ${getMemberName(forId)} (100%)` : `Personal (${payerName})`);
+
+      const memberShareCols = mainMembers.map(m => {
+        if (isSplit) {
+          return perShare.toFixed(2);
+        }
+        return String(m.id) === String(beneficiaryId) ? convAmt.toFixed(2) : '0.00';
+      });
+
+      const row = [
+        exp.date || '',
+        exp.category || '',
+        exp.notes || '',
+        origAmt.toFixed(2),
+        exp.currency || baseCur,
+        rate.toFixed(4),
+        convAmt.toFixed(2),
+        payerName,
+        splitOrForLabel,
+        isSplit ? String(splitCount) : '1',
+        perShare.toFixed(2),
+        myShare.toFixed(2),
+        whoOwesText,
+        ...memberShareCols
+      ];
+      rows.push(row.map(escapeCsvCell).join(','));
+    });
+
+    rows.push('');
+    rows.push([escapeCsvCell('=== WHO OWES WHOM (FINAL SETTLEMENT SUMMARY) ===')].join(','));
+    if (expenseSplitSummary.settlements.length === 0) {
+      rows.push([escapeCsvCell('Status'), escapeCsvCell('All settled — no one owes anything')].join(','));
+    } else {
+      rows.push([
+        escapeCsvCell('Who Owes (Debtor)'),
+        escapeCsvCell('Owes To (Creditor)'),
+        escapeCsvCell(`Amount Owed (${baseCur})`),
+        escapeCsvCell('Plain-English Summary'),
+        escapeCsvCell('Calculation Breakdown')
+      ].join(','));
+      expenseSplitSummary.settlements.forEach(s => {
+        rows.push([
+          escapeCsvCell(s.fromName),
+          escapeCsvCell(s.toName),
+          escapeCsvCell(s.amount.toFixed(2)),
+          escapeCsvCell(`${s.fromName} owes ${s.toName} ${s.amount.toFixed(2)} ${baseCur}`),
+          escapeCsvCell(s.breakdownNote || '')
+        ].join(','));
+      });
+    }
+
+    rows.push('');
+    rows.push([escapeCsvCell('--- MY PERSONAL BUDGET TRACKER SUMMARY (ME) ---')].join(','));
+    rows.push([escapeCsvCell('Metric'), escapeCsvCell(`Value (${baseCur})`)].join(','));
+    rows.push([escapeCsvCell('My Total Trip Spend (My Split Share + My Personal Expenses)'), escapeCsvCell(expenseSplitSummary.myTotalTripSpend.toFixed(2))].join(','));
+    rows.push([escapeCsvCell('My Split Share'), escapeCsvCell(expenseSplitSummary.mySplitShare.toFixed(2))].join(','));
+    rows.push([escapeCsvCell('My Personal (Unsplit) Spend'), escapeCsvCell(expenseSplitSummary.myPersonalSpend.toFixed(2))].join(','));
+    rows.push([escapeCsvCell('Total Out-of-Pocket Paid by Me'), escapeCsvCell(expenseSplitSummary.myOutOfPocketPaid.toFixed(2))].join(','));
+    rows.push([
+      escapeCsvCell('My Net Settlement Position'),
+      escapeCsvCell(
+        expenseSplitSummary.myNetBalance > 0.01
+          ? `Others owe me +${expenseSplitSummary.myNetBalance.toFixed(2)} ${baseCur}`
+          : expenseSplitSummary.myNetBalance < -0.01
+            ? `I owe others ${Math.abs(expenseSplitSummary.myNetBalance).toFixed(2)} ${baseCur}`
+            : `Settled (0.00 ${baseCur})`
+      )
+    ].join(','));
+
+    rows.push('');
+    rows.push([escapeCsvCell('--- GROUP TRIP TOTALS & SPLIT POOL SUMMARY ---')].join(','));
+    rows.push([escapeCsvCell('Metric'), escapeCsvCell(`Value (${baseCur})`)].join(','));
+    rows.push([escapeCsvCell('Group Total Trip Spend (All Travelers)'), escapeCsvCell(expenseSplitSummary.totalAllExpenses.toFixed(2))].join(','));
+    rows.push([escapeCsvCell('Total Split Pool Expenses'), escapeCsvCell(expenseSplitSummary.totalSplitExpenses.toFixed(2))].join(','));
+    rows.push([escapeCsvCell('Total Personal (Unsplit) Expenses'), escapeCsvCell(expenseSplitSummary.totalPersonalExpenses.toFixed(2))].join(','));
+    rows.push([escapeCsvCell('Configured Split Count'), escapeCsvCell(String(splitCount))].join(','));
+    rows.push([escapeCsvCell('Per-Share Split Amount'), escapeCsvCell(expenseSplitSummary.perMemberShare.toFixed(2))].join(','));
+
+    rows.push('');
+    rows.push([escapeCsvCell('--- MEMBER-BY-MEMBER BALANCE BREAKDOWN (MAIN & ACTIVE PAYERS) ---')].join(','));
+    rows.push([
+      escapeCsvCell('Member'),
+      escapeCsvCell('Role'),
+      escapeCsvCell(`Total Paid (All) (${baseCur})`),
+      escapeCsvCell(`Paid Into Split Pool (${baseCur})`),
+      escapeCsvCell(`Fair Split Share (${baseCur})`),
+      escapeCsvCell(`Personal (Unsplit) Spend (${baseCur})`),
+      escapeCsvCell(`Actual Total Trip Cost (${baseCur})`),
+      escapeCsvCell(`Net Split Balance (${baseCur})`),
+      escapeCsvCell('Status')
+    ].join(','));
+    expenseSplitSummary.participants.forEach(p => {
+      const statusText = p.netBalance > 0.01
+        ? `Is owed +${p.netBalance.toFixed(2)} ${baseCur}`
+        : p.netBalance < -0.01
+          ? `Owes ${Math.abs(p.netBalance).toFixed(2)} ${baseCur}`
+          : 'Settled';
+      rows.push([
+        escapeCsvCell(p.name),
+        escapeCsvCell(p.isMain ? 'Main Split Member' : 'Active Companion'),
+        escapeCsvCell(p.paidTotal.toFixed(2)),
+        escapeCsvCell(p.paidSplit.toFixed(2)),
+        escapeCsvCell(p.owedShare.toFixed(2)),
+        escapeCsvCell(p.personalSpend.toFixed(2)),
+        escapeCsvCell(p.actualTripCost.toFixed(2)),
+        escapeCsvCell((p.netBalance >= 0 ? '+' : '') + p.netBalance.toFixed(2)),
+        escapeCsvCell(statusText)
+      ].join(','));
+    });
+
+    const csvContent = '\uFEFF' + rows.join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (currentTrip.name || 'trip').toLowerCase().replace(/[^a-z0-9-_]+/g, '-');
+    a.href = url;
+    a.download = `travelbuff-expenses-${safeName}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="container" style={{ maxWidth: '480px', padding: '16px' }}>
       
@@ -1138,27 +1692,13 @@ export default function TripMode({ token }) {
               </div>
             </div>
 
-            {/* Budget Tracker Progress */}
+            {/* Budget Tracker Progress (Main Person / Me) & Who Owes Whom Summary */}
             {(() => {
               const tripExps = expenses.filter(e => String(e.trip_id) === String(currentTrip.id));
-              const tripRates = rates.filter(r => String(r.trip_id) === String(currentTrip.id));
-              let baseCur = userBaseCurrency || 'USD';
-              if (currentTrip.notes) {
-                const parsed = safeParseNotes(currentTrip.notes);
-                if (parsed.baseCurrency) baseCur = parsed.baseCurrency;
-              }
-
-              let totalSpent = 0;
-              tripExps.forEach(e => {
-                let amt = parseFloat(e.amount) || 0;
-                if (e.currency && e.currency !== baseCur) {
-                  const matchedRate = tripRates.find(r => r.currency === e.currency);
-                  if (matchedRate && matchedRate.rate) {
-                    amt = amt * matchedRate.rate;
-                  }
-                }
-                totalSpent += amt;
-              });
+              const baseCur = expenseSplitSummary.baseCur;
+              const mySpent = expenseSplitSummary.myTotalTripSpend;
+              const groupTotal = expenseSplitSummary.totalAllExpenses;
+              const showSplitDetails = tripSplitConfig.isSplitConfigured || expenseSplitSummary.totalSplitExpenses > 0 || Math.abs(groupTotal - mySpent) > 0.01;
 
               let plannedBudget = 0;
               if (currentTrip.notes) {
@@ -1166,20 +1706,79 @@ export default function TripMode({ token }) {
                 if (parsed.plannedBudget) plannedBudget = parseFloat(parsed.plannedBudget) || 0;
               }
 
-              const pct = plannedBudget > 0 ? (totalSpent / plannedBudget) * 100 : 0;
+              const pct = plannedBudget > 0 ? (mySpent / plannedBudget) * 100 : 0;
 
               return (
                 <div style={{ marginTop: '14px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '6px' }}>
-                    <span>Total Spent: <b style={{ color: 'var(--accent-primary-hover)' }}>{totalSpent.toFixed(2)} {baseCur}</b></span>
-                    <span>Budget Limit: <b>{plannedBudget > 0 ? `${plannedBudget.toFixed(2)} ${baseCur}` : 'No limit set'}</b></span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+                    <span title="Your personal trip spend = Your Split Share + Your Personal (Unsplit) Expenses">
+                      My Spend (Me): <b style={{ color: 'var(--accent-primary-hover)' }}>{mySpent.toFixed(2)} {baseCur}</b>
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>Limit: <b>{plannedBudget > 0 ? `${plannedBudget.toFixed(2)} ${baseCur}` : 'None'}</b></span>
+                      {tripExps.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleExportExpensesCsv}
+                          className="btn btn-secondary"
+                          style={{ width: 'auto', padding: '2px 8px', fontSize: '0.7rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                          title="Export Expenses & Who Owes Whom CSV"
+                        >
+                          <Download size={11} /> CSV
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {plannedBudget > 0 && (
                     <div className="budget-progress-container" style={{ height: '6px' }}>
                       <div 
-                        className={`budget-progress-bar ${totalSpent > plannedBudget ? 'over' : ''}`}
+                        className={`budget-progress-bar ${mySpent > plannedBudget ? 'over' : ''}`}
                         style={{ width: `${Math.min(pct, 100)}%` }}
                       />
+                    </div>
+                  )}
+
+                  {showSplitDetails && (
+                    <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px dashed rgba(255,255,255,0.08)', fontSize: '0.74rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                        <span>Paid by Me: <b style={{ color: 'var(--text-primary)' }}>{expenseSplitSummary.myOutOfPocketPaid.toFixed(2)} {baseCur}</b></span>
+                        <span>Group Total: <b style={{ color: 'var(--text-primary)' }}>{groupTotal.toFixed(2)} {baseCur}</b></span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', color: 'var(--text-secondary)' }}>
+                        <span>🤝 Split Pool: <b style={{ color: '#c4b5fd' }}>{expenseSplitSummary.totalSplitExpenses.toFixed(2)} {baseCur}</b></span>
+                        <span>Per Share (÷{tripSplitConfig.splitCount}): <b style={{ color: '#4ade80' }}>{expenseSplitSummary.perMemberShare.toFixed(2)} {baseCur}</b></span>
+                      </div>
+
+                      <div style={{ marginTop: '8px' }}>
+                        <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          💸 Who Owes Whom
+                        </div>
+                        {expenseSplitSummary.settlements.length > 0 ? (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {expenseSplitSummary.settlements.map((s, idx) => (
+                              <span
+                                key={idx}
+                                style={{
+                                  background: 'rgba(16, 185, 129, 0.14)',
+                                  border: '1px solid rgba(16, 185, 129, 0.35)',
+                                  color: '#d1fae5',
+                                  padding: '3px 9px',
+                                  borderRadius: '999px',
+                                  fontSize: '0.73rem',
+                                  fontWeight: 600
+                                }}
+                                title={s.breakdownNote}
+                              >
+                                💸 <strong>{s.fromName}</strong> owes <strong>{s.toName}</strong>: <strong>{s.amount.toFixed(2)} {baseCur}</strong>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            ✅ All split expenses are settled — no one owes anything.
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1684,6 +2283,61 @@ export default function TripMode({ token }) {
                   <option value="Entertainment">🎟️ Ticket / Entry</option>
                   <option value="Other">💼 Other</option>
                 </select>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Paid By</label>
+                  <select
+                    className="form-control"
+                    value={expPaidBy}
+                    onChange={(e) => {
+                      const nextPayer = e.target.value;
+                      setExpPaidBy(nextPayer);
+                      if (expForMember && String(expForMember) === String(nextPayer)) {
+                        setExpForMember(null);
+                      }
+                    }}
+                  >
+                    <option value="self">👤 Me (You)</option>
+                    {tripSplitConfig.tripPeople.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Split / For Whom?</label>
+                  <select
+                    className="form-control"
+                    value={expIsSplit ? 'split' : (expForMember && String(expForMember) !== String(expPaidBy || 'self') ? `for:${expForMember}` : 'self_payer')}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === 'split') {
+                        setExpIsSplit(true);
+                        setExpForMember(null);
+                      } else if (val.startsWith('for:')) {
+                        setExpIsSplit(false);
+                        setExpForMember(val.replace('for:', ''));
+                      } else {
+                        setExpIsSplit(false);
+                        setExpForMember(null);
+                      }
+                    }}
+                  >
+                    <option value="split">🤝 Split ({tripSplitConfig.splitCount}-way)</option>
+                    <option value="self_payer">👤 Personal — For {getMemberName(expPaidBy)}</option>
+                    {[
+                      { id: 'self', name: 'Me (You)' },
+                      ...tripSplitConfig.tripPeople.map(p => ({ id: String(p.id), name: p.name }))
+                    ]
+                      .filter(m => String(m.id) !== String(expPaidBy || 'self'))
+                      .map(m => (
+                        <option key={m.id} value={`for:${m.id}`}>
+                          💸 Paid for {m.name} (100%)
+                        </option>
+                      ))}
+                  </select>
+                </div>
               </div>
 
               <div className="form-group">

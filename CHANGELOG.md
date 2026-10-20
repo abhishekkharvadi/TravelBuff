@@ -2,6 +2,31 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.8.0] - 2026-10-19
+
+### 🚀 Major Features & Enhancements
+- **Account Profiles & Immich Face Association**:
+  - **Personal Account Details**: Added `display_name`, `immich_person_id`, and `immich_person_name` to user accounts with instant self-service management in both the User Profile modal and Settings (`#section-profile`).
+  - **Immich Recognized Face Linking**: Link user accounts directly to a recognized face profile on self-hosted Immich servers, syncing avatar face thumbnails across the application.
+  - **Full Backup & Restore Compatibility**: Backups (`/api/backup/export` and `/api/backup/restore`) now automatically export and restore user profile metadata without compromising password hashes.
+- **Trip Owner Inclusion & Traveler Management**:
+  - **Default Trip Participation**: The Account Owner is added by default to all trips as a traveler, displayed with their photo thumbnail avatar in the header travelers bar.
+  - **Companion-Only Trip Support**: Users can toggle off Account Owner participation in **Manage Travelers (`👥`)** for trips where the account owner is not traveling (e.g. organizing trips for parents, friends, or clients), cleanly adjusting the split divisor and main member pool.
+- **Trip Expense Splitting & Pairwise Bilateral Settlement**:
+  - **Per-Expense Split & Payer Tracking**: Added `is_split` (Split vs. Personal) and `paid_by` (`Me (You)` or any trip traveler) to trip expenses across both `TripPlanning` and offline `TripMode`.
+  - **Family & Main Split Member Support**: In **Manage Travelers (`👥`)**, users can designate which trip travelers are **💰 Main Split Members** and customize the **Split Across (`N` Shares)** count so families can tag spouses/children on a trip while splitting shared expenses only among main family heads.
+  - **100% Reimbursable On-Behalf Expenses (`Paid for...`)**: Users can log personal expenses paid for a specific companion (or vice versa). Direct debts are attributed strictly to the beneficiary, without affecting uninvolved companions.
+  - **Bilateral Pairwise Debt Settlement Engine**: Replaced greedy single-pool settlement with pairwise bilateral netting. For example, when a companion pays for a personal expense on behalf of the trip organizer, the settlement table cleanly reflects that the organizer owes the companion, without creating false debts from other split members.
+  - **Clear Account Owner Identification**: Resolved confusion in the "Split / For Whom" table column and dropdowns when "Paid for Me" was selected, clearly attributing expenses to the Account Owner (`💸 Paid for [Display Name] (Me)`).
+  - **Zero Impact on Existing Trips**: Existing trips remain untouched until travelers or split settings are configured; users can add new people inline and retroactively toggle split status on any expense with 1 click.
+  - **Live Settlement & Net Balance Summary**: Added the **🤝 Expense Split & Settlement Summary** card displaying Total Trip Spend, Split Pool, Per-Share Amount (`÷ N`), Personal Spend, per-member net balances (`Gets back` / `Owes` / `Settled`), and bilateral settlement suggestions (`💸 X pays Y`).
+  - **Structured 3-Section CSV Export (`📥 Export CSV`)**: Restructured offline-capable UTF-8 BOM CSV exports into three clean, organized sections: (1) Summary & Member Balance Breakdown, (2) Final Settlement Summary ("Who Owes Whom"), and (3) Full Detailed Expense Ledger.
+  - **Print View & Trip Export/Import Support**: Updated Print Options and `@media print` styles to include `Paid By` & `Split` columns, the Expense Split & Settlement Summary card, and Trip Notes, and updated `.json` Trip Export/Import to preserve companions, main split members, and expense payer mappings across instances.
+- **Specific Trip Plan Navigation & Dialog Usability**:
+  - **Sticky Header & Section Jump-Bar**: Pinned the trip header and a quick-jump pill bar (`💰 Budget` • `📅 Itinerary` • `🎟️ Reservations` • `🧾 Expenses & Split` • `📝 Notes` + `Collapse/Expand All Sections`) to the top of the Specific Trip view.
+  - **Collapsible Sections & Itinerary Days**: Added collapse/expand toggles to all 5 major sections and individual itinerary days (`Day 1..N` jump chips + `Expand/Collapse All Days`), with automatic print expansion.
+  - **Modal-Safe Escape Key Handling**: Pressing `Escape` while submodals (such as "Manage Travelers & Expense Split" or "Log Expense") are open closes the active modal rather than exiting the trip plan back to the trips list.
+
 ## [v7.7.4] - 2026-10-03
 
 ### 🐞 Bug Fixes

@@ -63,6 +63,14 @@ db.version(10).stores({
   itinerary_items: 'id, trip_id, date, place_id, custom_name'
 });
 
+db.version(11).stores({
+  expenses: 'id, trip_id, date, category, is_planned, is_split, paid_by'
+});
+
+db.version(12).stores({
+  expenses: 'id, trip_id, date, category, is_planned, is_split, paid_by, for_member'
+});
+
 // Safe UUID generator supporting non-secure contexts
 export function generateUUID() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {

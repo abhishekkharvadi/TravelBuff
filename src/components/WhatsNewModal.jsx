@@ -7,11 +7,32 @@ export default function WhatsNewModal({ isOpen, onClose, onNavigateTab }) {
 
   const features = [
     {
-      icon: <Cloud size={22} style={{ color: '#38bdf8' }} />,
-      title: 'Trip Export & Import',
-      badge: 'Data Mobility',
+      icon: <Sparkles size={22} style={{ color: '#8b5cf6' }} />,
+      title: 'Account Profiles, Immich Face Link & Trip Owner Management',
+      badge: 'v7.8.0',
+      badgeColor: '#7c3aed',
+      desc: 'Set personal Display Names and link your user account directly to a recognized face profile in Immich. The Account Owner is added by default to all trips as a traveler with their photo avatar, but can be removed for companion-only trips. Split ledger and Who Owes Whom tables now clearly attribute expenses to the Account Owner.'
+    },
+    {
+      icon: <Sparkles size={22} style={{ color: '#10b981' }} />,
+      title: 'Expense Splitting, On-Behalf Payments & Pairwise Settlement',
+      badge: 'v7.8.0',
+      badgeColor: '#059669',
+      desc: 'Split shared expenses across Main Members, log 100% reimbursable expenses paid on behalf of a specific companion (or vice versa), and view bilateral pairwise settlements where non-active members paying for others are accurately settled without false cross-member debts.'
+    },
+    {
+      icon: <Navigation size={22} style={{ color: '#38bdf8' }} />,
+      title: 'Full-Page Trip Workspace, Sticky Jump-Bar & Focus Mode',
+      badge: 'v7.8.0',
       badgeColor: '#0284c7',
-      desc: 'Seamlessly export a full trip (including locations, itineraries, notes, and photos) as a single portable JSON package, and import it into any other TravelBuff instance. Missing locations and places will be automatically created on the destination server.'
+      desc: 'Specific Trip Plans now open in a spacious full-page workspace below the top header with a top-right close button, a sticky section jump-bar, 1-section Focus Mode toggle, collapsible "+ Log Expense" forms, and modal-safe Escape key handling.'
+    },
+    {
+      icon: <Cloud size={22} style={{ color: '#38bdf8' }} />,
+      title: '3-Section CSV Export & Trip Data Mobility',
+      badge: 'v7.8.0',
+      badgeColor: '#0284c7',
+      desc: 'Restructured CSV exports into three clean sections: Summary & Member Breakdown, Final Settlement Summary, and Detailed Ledger. Full trips can also be exported and imported across TravelBuff instances as portable JSON packages.'
     },
     {
       icon: <Sparkles size={22} style={{ color: '#10b981' }} />,
@@ -19,13 +40,6 @@ export default function WhatsNewModal({ isOpen, onClose, onNavigateTab }) {
       badge: 'v7.7.4',
       badgeColor: '#059669',
       desc: 'Fixed an issue preventing edits to the Outbound/Return Journey configuration from saving in the chronological itinerary view. Also fixed a rendering glitch that caused the mobile navigation bar to appear in print previews.'
-    },
-    {
-      icon: <Sparkles size={22} style={{ color: '#10b981' }} />,
-      title: 'Import Bug Fixes',
-      badge: 'v7.7.3',
-      badgeColor: '#059669',
-      desc: 'Fixed an issue where imported trips failed to map day locations/hotels, and resolved a background sync crash preventing itinerary downloads. Also fixed a double-click routing bug for duplicate location names.'
     }
   ];
 

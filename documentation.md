@@ -573,9 +573,14 @@ TravelBuff includes a full multi-currency budgeting engine to help you plan, tra
 
 ---
 
-### Expense Analytics & Printable Reports
-- **Category Breakdown Charts**: View interactive visual charts showing how your budget is distributed across categories (Lodging vs Food vs Transportation).
-- **Printable Expense Summary**: Export or print detailed expense logs alongside your trip itineraries for tax records or business reimbursement. The printable table is automatically formatted with fixed boundary constraints, hidden action buttons, multi-currency conversion wrapping, and row page-break isolation to ensure all columns fit perfectly inside standard page margins.
+### Expense Analytics, Splitting & Printable Reports
+- **Category Breakdown Charts**: View interactive visual charts showing how your personal budget (`Me`) is distributed across categories (Lodging vs Food vs Transportation), with group totals shown alongside when different.
+- **Group Expense Splitting, On-Behalf Payments (`Paid for...`) & Main Member Settlement**:
+  - **Per-Expense Split / For Whom & Payer**: Choose who paid (`Me (You)` or any trip companion) and select whether the expense is `🤝 Split (N-way)`, `👤 Personal — For <Payer>`, or `💸 Paid for <Companion> (100% reimbursement)`. When you pay from your pocket for someone else's personal expense (or they pay for yours), it counts toward the beneficiary's personal spend and adds a 100% direct reimbursement obligation to the settlement calculation.
+  - **Main Split Members (Family Support)**: In the **👥 Manage Travelers** modal, add new people inline and toggle which travelers are **💰 Main Split Members**. Non-paying `👥 Family / No Split` companions are automatically excluded from the **Member Spend & Split Balance Breakdown** table.
+  - **Live Settlement Calculation**: The **🤝 Expense Split & Who Owes Whom Summary** card computes the Split Pool, Per-Share Amount, each active member's net balance (`Gets back` vs. `Owes`), and the minimum set of pairwise settlement transfers (`💸 X owes Y`).
+- **CSV Export (Excel / Google Sheets Ready)**: Click **📥 Export CSV** in either Trip Planning or offline Trip Mode to download a UTF-8 `.csv` spreadsheet containing the full expense ledger, `Split / For Whom` and `Who Owes Payer` columns, dynamically generated per-member share columns, trip totals, member balances, and settlement transfers.
+- **Printable Expense & Split Summary**: Export or print detailed expense logs and the Expense Split & Settlement Summary alongside your trip itineraries. The printable table is automatically formatted with fixed boundary constraints, hidden action buttons, multi-currency conversion wrapping, and row page-break isolation to ensure all columns fit perfectly inside standard page margins.
 
 ---
 
@@ -610,7 +615,7 @@ When you are actively traveling—standing in an airport line, riding a train, o
 
 #### 3. Quick Expense Logger (One-Tap Currency Logging)
 - Easily log cash or card expenses on the fly (e.g. coffee, taxi fares, street food).
-- Select currency, category, amount, notes, and snap a receipt photo.
+- Select currency, category, amount, who paid, whether it is split / personal / paid on behalf of a companion, notes, and snap a receipt photo.
 - Works offline seamlessly and syncs automatically when reconnected to the internet.
 
 #### 4. Nearby Food & Cafe Finder
@@ -641,7 +646,7 @@ The **Settings** page is organized into a clean, **6-tab Hybrid Layout** with an
 * **3. 🏷️ Taxonomy & Tags**: Keyword tags with custom color badges and custom categories with emoji icons.
 * **4. 💾 Data & Backups**: Full JSON backup export, chunked restore engine, media cache resync, archived items & retention options, and saved travel guides.
 * **5. 👤 Account**: My Profile & Security (self-service profile picture avatar upload, password change with current password validation) and Admin User Management (user registry, role assignment, password resets, cascade user deletion).
-* **6. 🖥️ System**: Privacy & Telemetry opt-in controls, external API usage logs (past 6 months with CSV export), Guided UI Spotlight Tour restart, Getting Started checklist, and "What's New in v7.4.0" release notes.
+* **6. 🖥️ System**: Privacy & Telemetry opt-in controls, external API usage logs (past 6 months with CSV export), Guided UI Spotlight Tour restart, Getting Started checklist, and "What's New in v7.8.0" release notes.
 
 ---
 
@@ -813,7 +818,26 @@ TravelBuff is built as an installable Progressive Web App (PWA) with complete of
 
 ## 12. Release Notes & Version History
 
-### Version 5 (v5) - Current Release
+### Version 7.8.0 (Current Release)
+* **Personal Account Profiles & Immich Face Profile Linking**:
+  - Self-service Display Name / Full Name configuration in both the User Profile modal and Settings (`#section-profile`).
+  - One-click association with recognized face profiles on self-hosted Immich servers, syncing avatar face thumbnails across the application.
+  - Seamless backup and restore (`/api/backup/export` and `/api/backup/restore`) preserving profile metadata.
+* **Trip Owner Default & Removable Participation**:
+  - The Account Owner is included by default as a traveler on all trips with their avatar thumbnail.
+  - Can be cleanly removed in **Manage Travelers (`👥`)** for companion-only trips, dynamically adjusting split divisors and member pools.
+* **Trip Expense Splitting, On-Behalf Payments & Pairwise Bilateral Settlement**:
+  - Added per-expense **Paid By** (`Me (You)` or any trip companion) and **Split / For Whom?** (`🤝 Split (N-way)`, `👤 Personal — For <Payer>`, and `💸 Paid for <Companion> (100% reimbursement)`) controls across both Trip Planning and offline Trip Mode.
+  - Added **💰 Main Split Member** vs **👥 Family / No Split** role toggles and configurable **Split Across (`N` Shares)** inside **Manage Travelers**, plus inline companion creation. Non-paying companions are automatically excluded from the **Member Spend & Split Balance Breakdown** table.
+  - Built a pairwise bilateral settlement engine with direct debt netting, accurately calculating debts when companions or non-active members pay on behalf of someone, eliminating false cross-member debts.
+  - Scoped the **Budget Spend Tracker (`Me`)** and **My Spend by Category** chart to the main user's actual trip cost (`My Split Share + My Personal Spend`, including expenses paid on your behalf by a companion and excluding expenses you paid strictly for someone else), while displaying `Paid by Me` (out-of-pocket) and `Group Total` alongside it.
+  - Added structured 3-section CSV exports (Summary & Member Breakdown, Final Settlement Summary, Detailed Ledger) and updated Print view.
+* **Full-Page Trip Workspace, Sticky Section Jump-Bar & Focus Mode**:
+  - Replaced the floating Trip Details modal with a spacious **Full-Page Trip Workspace** below the top header bar, with top-right close button navigation, a sticky section jump-bar, **🎯 Focus 1 Section** mode, collapsible `+ Log Expense` forms, horizontal `Day 1..N` jump chips, and modal-safe Escape key handling.
+
+---
+
+### Version 5 (v5)
 * **Dynamic 160+ ISO World Currencies**: Expanded Base Currency configurations in Settings and Trip Planner from static lists to all official ISO 4217 world currencies (~160+) dynamically resolved via browser-native `Intl.supportedValuesOf('currency')` and `Intl.DisplayNames`.
 * **Searchable Currency Combobox Component**: Added custom searchable combobox (`SearchableCurrencySelect`) allowing instant search filtering by currency code (e.g. `CAD`), currency name (e.g. `Rupee`, `Euro`, `Yen`), and currency symbol (e.g. `€`, `₹`, `$`).
 * **Pinned Popular Currencies**: Top 12 major world currencies (USD, EUR, GBP, INR, JPY, CAD, AUD, CHF, SGD, AED, CNY, NZD) pinned at the top for 1-click selection.

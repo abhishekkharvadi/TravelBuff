@@ -350,10 +350,21 @@ Click **+ New Trip**, specify the destination, start date, duration (number of d
 ### Mark Trip Active
 Click the **"Set as Active"** star button on a trip card. The designated active trip will synchronize across all devices.
 
-### Track Expenses
+### Track & Split Expenses
 Add items to the expense ledger (stays, transit, restaurants).
 * **Multi-currency**: Enter expenses in local currencies (e.g. `JPY` in Japan). TravelBuff calculates totals using default market exchange rates or your custom overrides.
-* **Planned vs Actual**: Draft items as "Planned" during design, and convert them to "Actual" expenses when paid.
+* **Personal Budget Spend Tracker (`Me`)**: The **Budget Spend Tracker** and **My Spend by Category** chart track your personal trip spend (`My Split Share + My Personal Unsplit Spend`, including expenses someone else paid on your behalf and excluding expenses you paid strictly on someone else's behalf) against your planned budget limit, while displaying `Paid by Me` (total out-of-pocket) and `Group Total` alongside it.
+* **Expense Splitting, On-Behalf Payments (`Paid for...`) & Who Owes Whom**:
+  - For each expense, choose **Paid By** (`Me (You)` or any trip traveler) and select **Split / For Whom?**:
+    - `🤝 Split (N-way)`: Shared across main split members.
+    - `👤 Personal — For <Payer>`: Personal unsplit expense for the payer.
+    - `💸 Paid for <Companion> (100% reimbursement)`: Paid out of pocket by one person strictly for another person's personal expense (100% owed back by the beneficiary to the payer).
+  - Open **👥 Manage Travelers** on any trip to add new people inline, designate which travelers are **💰 Main Split Members** (ideal when families travel together with spouses/children but split expenses only between main family heads), and configure **Split Across (`N` Shares)**. Non-paying `👥 Family / No Split` companions are automatically excluded from the **Member Spend & Split Balance Breakdown** table to keep it clean.
+  - View **💸 Who Owes Whom** directly in the top Budget Spend Tracker, in the dedicated **🤝 Expense Split & Who Owes Whom Summary** card (and Print view), and on each row of the expense ledger.
+  - Click **📥 Export CSV** to download an Excel / Google Sheets ready `.csv` file with the full expense ledger, per-expense `Split / For Whom` and `Who Owes Payer` breakdown, `WHO OWES WHOM (FINAL SETTLEMENT SUMMARY)` table, personal budget summary, and member balance breakdown.
+
+### Full-Page Trip Workspace, Sticky Section Jump-Bar & Focus Mode
+Specific Trip Plans open in a spacious **Full-Page Workspace** below the top navigation bar (return anytime via the top-right **Close (`✕`)** button, the top **`Trips`** tab, or the browser `Back` button). Long trip plans include a sticky top **Jump-Bar** (`💰 Budget` • `📅 Itinerary` • `🎟️ Reservations` • `🧾 Expenses & Split` • `📝 Notes`), a **🎯 Focus 1 Section / 📑 Show All Sections** mode toggle, collapsible `+ Log Expense` / `+ Add Reservation` forms, and horizontal **Day 1..N** chips inside the Chronological Daily Itinerary. Any section or day can be collapsed on screen while remaining fully visible when printing.
 
 ### International vs Domestic Trip
 Trips can be flagged as "International". This enables multi-currency conversions and highlights local customs and tax tracking.
@@ -361,16 +372,16 @@ Trips can be flagged as "International". This enables multi-currency conversions
 ### Trip Mode vs Planning Mode
 Toggle modes in the header:
 * **Planning Mode**: Open workspace to edit descriptions, drag-and-drop days, view stop photo thumbnails in the Chronological Daily Itinerary, query AI itineraries, and edit reservations. Requires an active server connection.
-* **Trip Mode (Offline-First)**: Clean, streamlined mobile-first layout designed specifically for on-the-go travel. It operates 100% offline from local browser storage, allowing you to view your daily itinerary timeline, access cached booking confirmations & tickets, calculate multi-currency exchange, and log expenses in airplane mode. Any changes made while disconnected are automatically queued and synced when internet connectivity returns.
+* **Trip Mode (Offline-First)**: Clean, streamlined mobile-first layout designed specifically for on-the-go travel. It operates 100% offline from local browser storage, allowing you to view your daily itinerary timeline, access cached booking confirmations & tickets, calculate multi-currency exchange, log personal, split, or on-behalf expenses in airplane mode, and export expense CSVs. Any changes made while disconnected are automatically queued and synced when internet connectivity returns.
 
 ### Create Trip Itinerary (Manual vs AI)
 * **Manual**: Click **+ Add Stop** on any itinerary day list to search for sights in your locations.
 * **AI Generation**: If an AI key is set up, enter target descriptions (e.g., "Foodie tour in Tokyo") and click **Generate with AI** to let the model build structured daily activities.
 
 ### Export & Import Trips Across Instances
-* **Export Trip (.json)**: Click the **Download (Export)** button in the top action toolbar of any specific trip plan. TravelBuff generates a self-contained `.json` package with all scheduled itinerary days, stops, custom notes, currency rates, booking attachments (PDF/images), receipts, and referenced Locations and Places (with coordinates, tags, and cover photos).
+* **Export Trip (.json)**: Click the **Download (Export)** button in the top action toolbar of any specific trip plan. TravelBuff generates a self-contained `.json` package with all scheduled itinerary days, stops, custom notes, currency rates, booking attachments (PDF/images), receipts, companions/main split members, and referenced Locations and Places (with coordinates, tags, and cover photos).
 * **Import Trip**: Click **Import Trip** from the main Trips list header (or empty state) to upload any `.json` trip bundle.
-  - **Smart Resolution**: If referenced locations or places don't exist in your library, they are automatically created with full metadata and photos. If matching locations/places already exist, they are seamlessly linked.
+  - **Smart Resolution**: If referenced locations, places, or travel companions don't exist in your library, they are automatically created with full metadata and photos. If matching locations/places/people already exist, they are seamlessly linked.
   - **Collision Prevention**: All primary and foreign keys are safely remapped to fresh UUIDs, and duplicate trip names are marked with `(Copy)`.
 
 ---
@@ -400,10 +411,10 @@ TravelBuff provides a unified, **6-tab Hybrid Settings** interface with a persis
   - **Archived Items & Data Retention**: View, restore, or permanently delete archived folders and locations.
   - **Saved Travel Guides & Markdowns**: View and resume curating scraped markdown travel guides.
 * **5. 👤 Account**:
-  - **My Profile & Security**: Upload or change your personal profile picture avatar and self-service password updates with current password validation.
+  - **My Profile & Security**: Set your personal Display Name / Full Name, upload custom avatar pictures, link your user account directly to a recognized face profile in Immich, and perform self-service password updates with current password validation.
   - **User Management & Administration**: (Admin only) View registered accounts, assign roles, reset user passwords, or permanently delete users with cascade data wiping. Standard users view session info and logout.
 * **6. 🖥️ System**:
-  - **Help & Guided Onboarding**: Restart interactive spotlight tours, reopen the Getting Started checklist, and access the "What's New in v7.4.0" release notes.
+  - **Help & Guided Onboarding**: Restart interactive spotlight tours, reopen the Getting Started checklist, and access the "What's New in v7.8.0" release notes.
   - **Privacy & Telemetry**: Toggle 100% anonymous usage statistics, preview telemetry payloads, and send test pings.
   - **External API Usage Logs**: Inspect 6-month call volume history across Google Maps, OSRM, Wikipedia, and AI.
   - **Database Maintenance**: Re-sync offline IndexedDB cache and companion avatars with the server.
@@ -450,7 +461,21 @@ Keep your travel data safe:
 
 ## 9. Release Notes & Version History
 
-### Version 7.5.2 (Current Release)
+### Version 7.8.0 (Current Release)
+* **Account Profiles, Immich Face Profile Linking & Trip Owner Management**:
+  - Added personal account details (`display_name`, `immich_person_id`, and `immich_person_name`) with self-service management in Profile and Settings.
+  - Link accounts directly to recognized face profiles on self-hosted Immich instances, syncing avatar thumbnails across the application.
+  - The Account Owner is included by default as a traveler on all trips with their avatar photo, and can be removed in **Manage Travelers (`👥`)** for companion-only trips.
+* **Trip Expense Splitting, On-Behalf Payments & Pairwise Bilateral Settlement**:
+  - Added per-expense **Paid By** and **Split / For Whom?** (`🤝 Split (N-way)`, `👤 Personal — For <Payer>`, or `💸 Paid for <Companion> (100% reimbursement)`) controls across Trip Planning and offline Trip Mode.
+  - Added **💰 Main Split Member** vs **👥 Family / No Split** role toggles and configurable **Split Across (`N` Shares)** inside **Manage Travelers**, and automatically excluded non-paying companions from the **Member Spend & Split Balance Breakdown** table.
+  - Built a pairwise bilateral settlement engine with direct debt netting, accurately calculating debts when companions or non-active members pay on behalf of someone, eliminating false cross-member debts.
+  - Scoped the **Budget Spend Tracker (`Me`)** and **My Spend by Category** chart to the main user's actual trip cost (`My Split Share + My Personal Spend`), accurately accounting for expenses paid on your behalf or paid by you for others.
+  - Added structured 3-section CSV exports (Summary & Member Breakdown, Final Settlement Summary, Detailed Ledger) and updated Print view.
+* **Full-Page Trip Workspace, Sticky Jump-Bar & Focus Mode**:
+  - Upgraded the Specific Trip Plan view from a modal overlay to a full-page workspace below the universal top header with top-right close navigation, a sticky section jump-bar, **🎯 Focus 1 Section** mode, collapsible `+ Log Expense` forms, and modal-safe Escape key handling.
+
+### Version 7.5.2
 * **High-Contrast Printable Itinerary Day Differentiation & Pagination**:
   - Distinct day header banners with bold typography, prominent date labels, and colored left-border accent bars.
   - Clear location indicator badges (`📍 Location`) and overnight stay badges (`🏨 Stay: Hotel`) formatted cleanly in print.
