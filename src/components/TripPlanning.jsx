@@ -573,6 +573,7 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip, acco
   const [editTripStartAddressId, setEditTripStartAddressId] = useState('');
   const [editTripStopAddressId, setEditTripStopAddressId] = useState('');
   const [showTravelersModal, setShowTravelersModal] = useState(false);
+  const [travelerModalMode, setTravelerModalMode] = useState('split'); // 'split' | 'travelers'
   const [travelerSearch, setTravelerSearch] = useState('');
   const [travelerTab, setTravelerTab] = useState('local'); // 'local' | 'immich'
   const [immichPeople, setImmichPeople] = useState([]);
@@ -4658,15 +4659,336 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
           padding: '20px'
         }}>
           <div className="login-card" style={{ maxWidth: '540px', width: '100%', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                👥 Manage Travelers & Expense Split
-              </h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {travelerModalMode === 'split' ? (
+                    <>🤝 Configure Expense Split</>
+                  ) : (
+                    <>👥 Manage Trip Travelers</>
+                  )}
+                </h3>
+                {travelerModalMode === 'split' && (
+                  <span style={{ fontSize: '0.74rem', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.15)', color: 'var(--accent-emerald-text)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                    {tripSplitConfig.splitCount}-way Split
+                  </span>
+                )}
+              </div>
               <X size={20} style={{ cursor: 'pointer' }} onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }} />
             </div>
 
-            {/* Inline Quick Add New Person */}
-            <form onSubmit={handleAddInlineTraveler} style={{ display: 'flex', gap: '8px', marginBottom: '14px', background: 'rgba(139, 92, 246, 0.08)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.25)', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+              {travelerModalMode === 'split'
+                ? 'Configure which members of this trip share group expenses and set the number of split shares.'
+                : 'Add or remove members for this trip from your saved members, Immich server, or create new people.'}
+            </div>
+
+            {/* VIEW 1: CONFIGURE EXPENSE SPLIT (TRIP MEMBERS ONLY) */}
+            {travelerModalMode === 'split' && (
+              <div>
+                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px' }}>
+                  Trip Members ({tripSplitConfig.tripPeople.length + (tripSplitConfig.includeOwner ? 1 : 0)})
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto', marginBottom: '14px' }}>
+                  {/* Account Owner Row */}
+                  {(() => {
+                    const userToken = token || localStorage.getItem('token') || '';
+                    const isChecked = tripSplitConfig.includeOwner;
+                    const isMainMember = isChecked && tripSplitConfig.mainMemberIds.includes('self');
+                    return (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 12px',
+                        background: 'var(--bg-app)',
+                        border: isMainMember ? '1.5px solid #10b981' : (isChecked ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-glass)'),
+                        borderRadius: '8px',
+                        gap: '8px',
+                        boxShadow: isChecked ? '0 2px 8px rgba(139, 92, 246, 0.12)' : 'none'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                          {ownerProfile.immichPersonId ? (
+                            <img
+                              src={`/api/immich/person/thumbnail/${ownerProfile.immichPersonId}?token=${encodeURIComponent(userToken)}`}
+                              alt={ownerProfile.displayName || 'Me'}
+                              style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          ) : ownerProfile.profilePicture ? (
+                            <img
+                              src={ownerProfile.profilePicture}
+                              alt={ownerProfile.displayName || 'Me'}
+                              style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                            />
+                          ) : (
+                            <span style={{ width: '34px', height: '34px', borderRadius: '50%', background: 'var(--accent-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.85rem', flexShrink: 0 }}>
+                              {ownerProfile.displayName ? ownerProfile.displayName.charAt(0).toUpperCase() : (ownerProfile.username ? ownerProfile.username.charAt(0).toUpperCase() : 'M')}
+                            </span>
+                          )}
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                              {ownerProfile.displayName || ownerProfile.username || 'Me'} <span style={{ fontSize: '0.74rem', color: 'var(--accent-primary)' }}>(You / Account Owner)</span>
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: isChecked ? (isMainMember ? 'var(--accent-emerald-text)' : 'var(--text-secondary)') : 'var(--text-muted)' }}>
+                              {isChecked ? (isMainMember ? '🎒 Traveling • 💰 Main Split Member' : '🎒 Traveling • 👥 Personal Expenses Only') : '🏠 Not traveling on this trip'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {isChecked ? (
+                          <button
+                            type="button"
+                            title="Toggle whether you are a Main Member for splitting expenses"
+                            onClick={async () => {
+                              const isMain = tripSplitConfig.mainMemberIds.includes('self');
+                              const existingNotes = safeParseNotes(selectedTrip?.notes);
+                              const compIds = safeParseArray(selectedTrip?.companions);
+                              const baseMain = tripSplitConfig.mainMemberIds.length > 0 ? [...tripSplitConfig.mainMemberIds] : ['self'];
+
+                              let nextMain;
+                              if (isMain) {
+                                nextMain = baseMain.filter(mId => mId !== 'self');
+                                if (nextMain.length === 0 && compIds.length > 0) {
+                                  nextMain = [...compIds];
+                                } else if (nextMain.length === 0) {
+                                  nextMain = ['self'];
+                                }
+                              } else {
+                                nextMain = [...new Set(['self', ...baseMain])];
+                              }
+
+                              const updatedNotes = {
+                                ...existingNotes,
+                                splitMainMembers: nextMain,
+                                splitMainMembersCustomized: true,
+                                splitCount: Math.max(1, nextMain.length),
+                                splitCountCustomized: false
+                              };
+                              const updatedTrip = {
+                                ...selectedTrip,
+                                notes: JSON.stringify(updatedNotes)
+                              };
+                              await queueSyncAction('trips', 'update', updatedTrip);
+                              setSelectedTrip(updatedTrip);
+                            }}
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '0.73rem',
+                              fontWeight: 600,
+                              borderRadius: '14px',
+                              cursor: 'pointer',
+                              border: isMainMember ? '1px solid #10b981' : '1px solid var(--border-glass)',
+                              background: isMainMember ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                              color: isMainMember ? 'var(--accent-emerald-text)' : 'var(--text-secondary)',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {isMainMember ? '💰 Main Split Member' : '👥 Traveling (No Split)'}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>Not on trip</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Trip Companions (ONLY those in this trip) */}
+                  {tripSplitConfig.tripPeople.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '16px 12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px dashed var(--border-glass)', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                      <p style={{ margin: '0 0 8px 0' }}>No companions added to this trip yet.</p>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setTravelerModalMode('travelers')}
+                        style={{ width: 'auto', padding: '4px 12px', fontSize: '0.76rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      >
+                        <Plus size={13} /> Add Companions from Saved Members / Immich
+                      </button>
+                    </div>
+                  ) : (
+                    tripSplitConfig.tripPeople.map(p => {
+                      const currentMainIds = tripSplitConfig.mainMemberIds;
+                      const isMainMember = currentMainIds.some(mId => String(mId) === String(p.id));
+                      const userToken = token || localStorage.getItem('token') || '';
+
+                      return (
+                        <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--bg-app)', border: isMainMember ? '1px solid rgba(16, 185, 129, 0.45)' : '1px solid var(--border-glass)', borderRadius: '8px', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {p.immich_person_id ? (
+                              <img
+                                src={`/api/immich/person/thumbnail/${p.immich_person_id}?token=${encodeURIComponent(userToken)}`}
+                                alt={p.name}
+                                style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--accent-primary)', flexShrink: 0 }}
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                              />
+                            ) : (
+                              <span style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--accent-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.85rem', flexShrink: 0 }}>
+                                {p.name ? p.name.charAt(0).toUpperCase() : '?'}
+                              </span>
+                            )}
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: '0.86rem', color: 'var(--text-primary)' }}>{p.name}</div>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--accent-primary)' }}>{p.relation || 'Companion'}</div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            title="Toggle whether this person is a Main Member for splitting trip expenses"
+                            onClick={async () => {
+                              const baseMain = currentMainIds.length > 0 ? [...currentMainIds] : ['self'];
+                              let nextMain;
+                              if (isMainMember) {
+                                nextMain = baseMain.filter(mId => String(mId) !== String(p.id));
+                              } else {
+                                nextMain = [...new Set([...baseMain, p.id])];
+                              }
+                              if (nextMain.length === 0) {
+                                nextMain = tripSplitConfig.includeOwner ? ['self'] : (tripSplitConfig.tripPeople.length > 0 ? [tripSplitConfig.tripPeople[0].id] : ['self']);
+                              }
+                              const existingNotes = safeParseNotes(selectedTrip?.notes);
+                              const updatedNotes = {
+                                ...existingNotes,
+                                splitMainMembers: nextMain,
+                                splitMainMembersCustomized: true,
+                                splitCount: Math.max(1, nextMain.length),
+                                splitCountCustomized: false
+                              };
+                              const updatedTrip = {
+                                ...selectedTrip,
+                                notes: JSON.stringify(updatedNotes)
+                              };
+                              await queueSyncAction('trips', 'update', updatedTrip);
+                              setSelectedTrip(updatedTrip);
+                            }}
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '0.73rem',
+                              fontWeight: 600,
+                              borderRadius: '14px',
+                              cursor: 'pointer',
+                              border: isMainMember ? '1px solid #10b981' : '1px solid var(--border-glass)',
+                              background: isMainMember ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                              color: isMainMember ? 'var(--accent-emerald-text)' : 'var(--text-secondary)',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {isMainMember ? '💰 Main Split Member' : '👥 Family / No Split'}
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Split Calculation Box */}
+                {(() => {
+                  const currentMainIds = tripSplitConfig.mainMemberIds;
+                  const selfIncluded = currentMainIds.includes('self');
+                  const configuredCount = tripSplitConfig.splitCount;
+
+                  return (
+                    <div style={{ padding: '12px 14px', background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                          🤝 Expense Split Configuration (Main Members)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const nextMain = selfIncluded
+                              ? currentMainIds.filter(id => id !== 'self')
+                              : ['self', ...currentMainIds.filter(id => id !== 'self')];
+                            const safeMain = nextMain.length > 0 ? nextMain : ['self'];
+                            await handleUpdateTripConfig({
+                              splitMainMembers: safeMain,
+                              splitMainMembersCustomized: true,
+                              splitCount: Math.max(1, safeMain.length),
+                              splitCountCustomized: false
+                            });
+                          }}
+                          style={{
+                            padding: '3px 9px',
+                            fontSize: '0.72rem',
+                            fontWeight: 600,
+                            borderRadius: '12px',
+                            cursor: 'pointer',
+                            border: selfIncluded ? '1px solid #10b981' : '1px solid var(--border-glass)',
+                            background: selfIncluded ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255,255,255,0.04)',
+                            color: selfIncluded ? 'var(--accent-emerald-text)' : 'var(--text-secondary)'
+                          }}
+                        >
+                          👤 Me: {selfIncluded ? 'Included in Split' : 'Excluded'}
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', flex: '1 1 200px' }}>
+                          Split shared expenses across how many main members / shares?
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>÷</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            className="form-control"
+                            value={configuredCount}
+                            onChange={(e) => {
+                              const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                              let nextMain = currentMainIds;
+                              if (val > 1 && nextMain.length <= 1) {
+                                const compIds = safeParseArray(selectedTrip?.companions);
+                                nextMain = ['self', ...compIds];
+                              }
+                              handleUpdateTripConfig({
+                                splitCount: val,
+                                splitCountCustomized: true,
+                                splitMainMembers: nextMain
+                              });
+                            }}
+                            style={{ width: '72px', height: '32px', padding: '4px 8px', fontSize: '0.85rem', fontWeight: 'bold', textAlign: 'center' }}
+                          />
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                            {configuredCount === 1 ? 'person (No split)' : 'main members'}
+                          </span>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                        💡 Tip: Tag all family members as trip travelers, and mark only paying adults/heads as <b>💰 Main Split Member</b> so expenses divide only among main members.
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', gap: '10px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setTravelerModalMode('travelers')}
+                    style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Plus size={14} /> Add / Manage Trip Travelers
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }}
+                    style={{ width: 'auto', minWidth: '100px', padding: '6px 16px', fontSize: '0.82rem' }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 2: MANAGE TRIP TRAVELERS (FROM SAVED MEMBERS OR IMMICH) */}
+            {travelerModalMode === 'travelers' && (
+              <div>
+                {/* Inline Quick Add New Person */}
+                <form onSubmit={handleAddInlineTraveler} style={{ display: 'flex', gap: '8px', marginBottom: '14px', background: 'rgba(139, 92, 246, 0.08)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.25)', flexWrap: 'wrap', alignItems: 'center' }}>
               <input
                 type="text"
                 className="form-control"
@@ -5105,89 +5427,26 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
               )
             )}
 
-            {/* Trip Expense Split Configuration Box */}
-            {(() => {
-              const currentMainIds = tripSplitConfig.mainMemberIds;
-              const selfIncluded = currentMainIds.includes('self');
-              const configuredCount = tripSplitConfig.splitCount;
-
-              return (
-                <div style={{ marginTop: '14px', padding: '12px 14px', background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '8px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                    <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                      🤝 Expense Split Configuration (Main Members)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const nextMain = selfIncluded
-                          ? currentMainIds.filter(id => id !== 'self')
-                          : ['self', ...currentMainIds.filter(id => id !== 'self')];
-                        const safeMain = nextMain.length > 0 ? nextMain : ['self'];
-                        await handleUpdateTripConfig({
-                          splitMainMembers: safeMain,
-                          splitMainMembersCustomized: true,
-                          splitCount: Math.max(1, safeMain.length),
-                          splitCountCustomized: false
-                        });
-                      }}
-                      style={{
-                        padding: '3px 9px',
-                        fontSize: '0.72rem',
-                        fontWeight: 600,
-                        borderRadius: '12px',
-                        cursor: 'pointer',
-                        border: selfIncluded ? '1px solid #10b981' : '1px solid var(--border-glass)',
-                        background: selfIncluded ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255,255,255,0.04)',
-                        color: selfIncluded ? 'var(--accent-emerald-text)' : 'var(--text-secondary)'
-                      }}
-                    >
-                      👤 Me: {selfIncluded ? 'Included in Split' : 'Excluded'}
-                    </button>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', flex: '1 1 200px' }}>
-                      Split shared expenses across how many main members / shares?
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>÷</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="50"
-                        className="form-control"
-                        value={configuredCount}
-                        onChange={(e) => {
-                          const val = Math.max(1, parseInt(e.target.value, 10) || 1);
-                          let nextMain = currentMainIds;
-                          if (val > 1 && nextMain.length <= 1) {
-                            const compIds = safeParseArray(selectedTrip?.companions);
-                            nextMain = ['self', ...compIds];
-                          }
-                          handleUpdateTripConfig({
-                            splitCount: val,
-                            splitCountCustomized: true,
-                            splitMainMembers: nextMain
-                          });
-                        }}
-                        style={{ width: '72px', height: '32px', padding: '4px 8px', fontSize: '0.85rem', fontWeight: 'bold', textAlign: 'center' }}
-                      />
-                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                        {configuredCount === 1 ? 'person (No split)' : 'main members'}
-                      </span>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: '6px' }}>
-                    💡 Tip: Tag all family members as trip travelers, and mark only paying adults/heads as <b>💰 Main Split Member</b> so expenses divide only among main members.
-                  </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', gap: '10px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setTravelerModalMode('split')}
+                    style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    🤝 Configure Expense Split ({tripSplitConfig.splitCount}-way) →
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }}
+                    style={{ width: 'auto', minWidth: '100px', padding: '6px 16px', fontSize: '0.82rem' }}
+                  >
+                    Done
+                  </button>
                 </div>
-              );
-            })()}
-
-            <button className="btn btn-primary" onClick={() => { setShowTravelersModal(false); setTravelerSearch(''); setTravelerTab('local'); }} style={{ marginTop: '14px', width: '100%' }}>
-              Done
-            </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -5368,9 +5627,12 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                               ))}
                               <button
                                 type="button"
-                                onClick={() => setShowTravelersModal(true)}
+                                onClick={() => {
+                                  setTravelerModalMode('travelers');
+                                  setShowTravelersModal(true);
+                                }}
                                 style={{ background: 'rgba(139, 92, 246, 0.15)', border: '1px solid var(--accent-primary)', borderRadius: '50%', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', color: 'var(--accent-primary)', cursor: 'pointer', fontWeight: 600 }}
-                                title="Manage Travelers & Expense Split"
+                                title="Add or Manage Trip Travelers"
                               >
                                 +
                               </button>
@@ -5623,10 +5885,13 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   {/* Actions toolbar */}
                   <div className="no-print" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <button 
-                      onClick={() => setShowTravelersModal(true)}
+                      onClick={() => {
+                        setTravelerModalMode('split');
+                        setShowTravelersModal(true);
+                      }}
                       className="btn btn-secondary"
                       style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                      title="Manage Travelers & Expense Split Configuration"
+                      title="Configure Expense Split"
                     >
                       👥 <span className="desktop-only">Split ({tripSplitConfig.splitCount})</span>
                     </button>
@@ -5902,6 +6167,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                               value={expPaidBy}
                               onChange={(e) => {
                                 if (e.target.value === '__manage_travelers__') {
+                                  setTravelerModalMode('travelers');
                                   setShowTravelersModal(true);
                                   return;
                                 }
@@ -6340,7 +6606,10 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                       <button
                         type="button"
                         className="btn btn-secondary"
-                        onClick={() => setShowTravelersModal(true)}
+                        onClick={() => {
+                          setTravelerModalMode('split');
+                          setShowTravelersModal(true);
+                        }}
                         style={{ width: 'auto', padding: '5px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                         title="Configure Main Split Members & Split Count"
                       >
@@ -6484,7 +6753,10 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                           <button
                             type="button"
                             className="btn btn-secondary no-print"
-                            onClick={() => setShowTravelersModal(true)}
+                            onClick={() => {
+                              setTravelerModalMode('split');
+                              setShowTravelersModal(true);
+                            }}
                             style={{ width: 'auto', padding: '4px 10px', fontSize: '0.74rem' }}
                           >
                             Edit Split Members

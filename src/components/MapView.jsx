@@ -6,6 +6,10 @@ const loadGoogleMapsScript = (apiKey) => {
   return new Promise((resolve, reject) => {
     // Set up global auth failure handler
     window.gm_authFailure = () => {
+      window.__tb_gmaps_auth_failed = true;
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('tb:gmaps-auth-failure'));
+      }
       const errorMsg = 'Google Maps API authentication failed (e.g. invalid key, blocked API targets, or missing billing). Reverting maps/search to OpenStreetMap.';
       console.warn(errorMsg);
 
@@ -15,7 +19,14 @@ const loadGoogleMapsScript = (apiKey) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ errorMsg, context: 'MapView' })
       }).catch(e => console.error('Failed to log error to backend:', e));
+
+      reject(new Error(errorMsg));
     };
+
+    if (window.__tb_gmaps_auth_failed) {
+      reject(new Error('Google Maps authentication failed'));
+      return;
+    }
 
     if (window.google && window.google.maps) {
       resolve();
@@ -23,13 +34,25 @@ const loadGoogleMapsScript = (apiKey) => {
     }
     const existingScript = document.getElementById('google-maps-script');
     if (existingScript) {
-      existingScript.addEventListener('load', resolve);
+      existingScript.addEventListener('load', () => {
+        if (window.__tb_gmaps_auth_failed) {
+          reject(new Error('Google Maps authentication failed'));
+        } else {
+          resolve();
+        }
+      });
       existingScript.addEventListener('error', reject);
       return;
     }
 
     // Google Bootstrap dynamic async script loading pattern
-    window.gmpSelfLoop = () => { resolve(); };
+    window.gmpSelfLoop = () => {
+      if (window.__tb_gmaps_auth_failed) {
+        reject(new Error('Google Maps authentication failed'));
+      } else {
+        resolve();
+      }
+    };
 
     const cleanKey = (apiKey || '').trim();
     const script = document.createElement('script');
@@ -68,8 +91,32 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
 
   const [isDark, setIsDark] = useState(checkIsDark);
   const [isGoogleMapsReady, setIsGoogleMapsReady] = useState(false);
+  const [hasGmapsAuthFailed, setHasGmapsAuthFailed] = useState(() => {
+    return typeof window !== 'undefined' && Boolean(window.__tb_gmaps_auth_failed);
+  });
+  const [authFailureNotice, setAuthFailureNotice] = useState(false);
   const apiKey = (localStorage.getItem('google_maps_api_key') || '').trim();
   const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
+
+  // Listen for Google Maps auth or billing failures
+  useEffect(() => {
+    const handleAuthFailure = () => {
+      setHasGmapsAuthFailed(true);
+      setAuthFailureNotice(true);
+      setIsGoogleMapsReady(false);
+      if (googleMapInstanceRef.current) {
+        googleMapInstanceRef.current = null;
+      }
+      if (mapContainerRef.current) {
+        mapContainerRef.current.innerHTML = '';
+      }
+    };
+
+    window.addEventListener('tb:gmaps-auth-failure', handleAuthFailure);
+    return () => {
+      window.removeEventListener('tb:gmaps-auth-failure', handleAuthFailure);
+    };
+  }, []);
 
   // React to theme changes from App settings or OS dark/light switch
   useEffect(() => {
@@ -154,24 +201,20 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
   };
 
   useEffect(() => {
-    if (apiKey && (googleMapsEnabled || localStorage.getItem('google_maps_api_key'))) {
-      // Clear legacy lockout flag if key exists
-      if (localStorage.getItem('google_maps_enabled') === 'false' && apiKey) {
-        localStorage.setItem('google_maps_enabled', 'true');
-      }
+    if (apiKey && googleMapsEnabled && !hasGmapsAuthFailed) {
       loadGoogleMapsScript(apiKey)
         .then(() => {
           trackApiCall('Google Maps JavaScript');
           setIsGoogleMapsReady(true);
         })
         .catch(err => {
-          console.error('Failed to load Google Maps:', err);
+          console.warn('Failed to load Google Maps, falling back to Leaflet:', err);
           setIsGoogleMapsReady(false);
         });
     } else {
       setIsGoogleMapsReady(false);
     }
-  }, [apiKey, googleMapsEnabled]);
+  }, [apiKey, googleMapsEnabled, hasGmapsAuthFailed]);
 
   // Responsive Visibility & ResizeObserver
   useEffect(() => {
@@ -793,5 +836,49 @@ export default function MapView({ points = [], drawLine = false, isVisible = tru
     };
   }, []);
 
-  return <div ref={mapContainerRef} className="map-container" style={{ width: '100%', height: '100%' }} />;
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: '200px' }}>
+      {authFailureNotice && (
+        <div style={{
+          position: 'absolute',
+          top: '10px',
+          left: '10px',
+          right: '10px',
+          zIndex: 1000,
+          background: 'rgba(220, 38, 38, 0.92)',
+          color: '#ffffff',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          fontSize: '0.8rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          backdropFilter: 'blur(6px)',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          gap: '8px'
+        }}>
+          <span>
+            ⚠️ <strong>Google Maps Error:</strong> Billing or authentication failed on your Google Cloud project. Automatically switched to OpenStreetMap.
+          </span>
+          <button
+            type="button"
+            onClick={() => setAuthFailureNotice(false)}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: 'none',
+              color: '#ffffff',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              borderRadius: '4px',
+              padding: '2px 8px',
+              fontSize: '0.75rem'
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      <div ref={mapContainerRef} className="map-container" style={{ width: '100%', height: '100%' }} />
+    </div>
+  );
 }

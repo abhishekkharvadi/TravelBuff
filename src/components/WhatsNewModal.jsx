@@ -1,11 +1,32 @@
 import React from 'react';
-import { X, Sparkles, MapPin, ArrowUpDown, Trash2, Cloud, Navigation } from 'lucide-react';
+import { X, Sparkles, MapPin, ArrowUpDown, Trash2, Cloud, Navigation, Users, ShieldCheck } from 'lucide-react';
 import { APP_VERSION } from '../version.js';
 
 export default function WhatsNewModal({ isOpen, onClose, onNavigateTab }) {
   if (!isOpen) return null;
 
   const features = [
+    {
+      icon: <ShieldCheck size={22} style={{ color: '#10b981' }} />,
+      title: 'Security Patch & Dependency Hardening',
+      badge: 'v7.8.3',
+      badgeColor: '#059669',
+      desc: 'Updated core dependencies to patch known vulnerabilities, upgrading Vite to v7.3.7 to resolve dev-server file exposure advisories and overriding follow-redirects to v1.16.1 to address header leak risks.'
+    },
+    {
+      icon: <Users size={22} style={{ color: '#8b5cf6' }} />,
+      title: 'Focused Trip Member Expense Splitting',
+      badge: 'v7.8.2',
+      badgeColor: '#7c3aed',
+      desc: 'Configuring expense splits now displays only the active members on your trip rather than your entire saved contacts directory. Adding trip travelers remains cleanly accessible via the "+" button in the trip header.'
+    },
+    {
+      icon: <MapPin size={22} style={{ color: '#10b981' }} />,
+      title: 'Google Maps Resilience & Seamless OpenStreetMap Fallback',
+      badge: 'v7.8.1',
+      badgeColor: '#059669',
+      desc: 'Fixed an issue where disabling Google Maps in Settings could be overridden when opening trips. Also introduced automatic, silent fallback to OpenStreetMap/Leaflet whenever Google Cloud billing or authentication issues occur, eliminating blocking pop-ups.'
+    },
     {
       icon: <Sparkles size={22} style={{ color: '#8b5cf6' }} />,
       title: 'Account Profiles, Immich Face Link & Trip Owner Management',

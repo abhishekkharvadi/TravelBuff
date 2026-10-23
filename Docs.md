@@ -8,7 +8,7 @@ Welcome to the comprehensive documentation for **TravelBuff** — your ultimate 
 
 ### Terminology
 * **Maps (Google Maps)**: High-performance map canvas integrations. Enabling Google Maps unlocks Places Autocomplete, Geocoding APIs, and distance matrices.
-* **OSM (OpenStreetMap)**: The default, open-source mapping engine powered by Leaflet and Nominatim. Used as the automatic fallback if no Google Maps API key is configured.
+* **OSM (OpenStreetMap)**: The default, open-source mapping engine powered by Leaflet and Nominatim. Used as the automatic fallback if no Google Maps API key is configured, if Google Maps is disabled, or if Google Cloud billing/authentication fails.
 * **JWT Secret (`JWT_SECRET`)**: A cryptographically secure random string used by the server to sign and verify user authentication tokens.
 * **Trip-Scoped Offline Architecture**: Active and upcoming trips (including daily schedules, ticket/booking vouchers, expense ledgers, notes, and route coordinates) are cached locally in your browser's IndexedDB (via Dexie.js). You can navigate, check off stops, and log expenses completely offline without cellular data.
 * **Online-First Library**: Locations, collections, and AI import queues operate directly against the server to keep your mobile device storage and memory fast and lightweight.
@@ -414,7 +414,7 @@ TravelBuff provides a unified, **6-tab Hybrid Settings** interface with a persis
   - **My Profile & Security**: Set your personal Display Name / Full Name, upload custom avatar pictures, link your user account directly to a recognized face profile in Immich, and perform self-service password updates with current password validation.
   - **User Management & Administration**: (Admin only) View registered accounts, assign roles, reset user passwords, or permanently delete users with cascade data wiping. Standard users view session info and logout.
 * **6. 🖥️ System**:
-  - **Help & Guided Onboarding**: Restart interactive spotlight tours, reopen the Getting Started checklist, and access the "What's New in v7.8.0" release notes.
+  - **Help & Guided Onboarding**: Restart interactive spotlight tours, reopen the Getting Started checklist, and access the "What's New in v7.8.3" release notes.
   - **Privacy & Telemetry**: Toggle 100% anonymous usage statistics, preview telemetry payloads, and send test pings.
   - **External API Usage Logs**: Inspect 6-month call volume history across Google Maps, OSRM, Wikipedia, and AI.
   - **Database Maintenance**: Re-sync offline IndexedDB cache and companion avatars with the server.
@@ -461,7 +461,24 @@ Keep your travel data safe:
 
 ## 9. Release Notes & Version History
 
-### Version 7.8.0 (Current Release)
+### Version 7.8.3 (Current Release)
+* **Security Hardening & Dependency Updates**:
+  - Upgraded **Vite** to `v7.3.7` to patch known development server arbitrary file read and endpoint bypass advisories (GHSA-587h-7wmj-h5pm, GHSA-698v-4r3x-3vcv, GHSA-9jrq-w75r-8gcw, GHSA-r825-w8mm-5pxw, GHSA-rq7h-c2jc-7f22).
+  - Overrode transitive dependency **`follow-redirects`** to `v1.16.1` to patch URL/header authorization leak vulnerabilities (GHSA-8r9p-f939-6h3c, GHSA-q3jh-wrc6-jgq8).
+
+### Version 7.8.2
+* **Focused Trip Member Expense Splitting & Travelers Management**:
+  - Clicking **👥 Configure Split** in Trip Expenses or the Budget Tracker now opens a focused modal displaying exclusively the members participating in the active trip (`Account Owner` and trip companions), rather than the entire saved contacts directory.
+  - Added dedicated role toggles (`💰 Main Split Member` vs `👥 Family / No Split`) and split share divisor settings directly on active trip members.
+  - Adding or removing trip members from saved contacts or the Immich photo server is cleanly handled via the **`+`** button in the trip header's traveler avatars list.
+  - Seamless 1-click transition links allow jumping between traveler management and split configuration without losing context.
+
+### Version 7.8.1
+* **Google Maps Resilience & Seamless OpenStreetMap Fallback**:
+  - Fixed an issue where disabling Google Maps in Settings could be overridden when opening trips.
+  - Introduced automatic, silent fallback to OpenStreetMap/Leaflet whenever Google Cloud billing or authentication issues occur.
+
+### Version 7.8.0
 * **Account Profiles, Immich Face Profile Linking & Trip Owner Management**:
   - Added personal account details (`display_name`, `immich_person_id`, and `immich_person_name`) with self-service management in Profile and Settings.
   - Link accounts directly to recognized face profiles on self-hosted Immich instances, syncing avatar thumbnails across the application.

@@ -1,5 +1,11 @@
+export const resetGoogleMapsAuthFailure = () => {
+  if (typeof window !== 'undefined') {
+    window.__tb_gmaps_auth_failed = false;
+  }
+};
+
 export const loadGoogleMaps = () => {
-  const apiKey = localStorage.getItem('google_maps_api_key');
+  const apiKey = (localStorage.getItem('google_maps_api_key') || '').trim();
   const googleMapsEnabled = localStorage.getItem('google_maps_enabled') !== 'false';
 
   if (typeof window !== 'undefined' && !window.__gmaps_unhandled_handler_set) {
@@ -15,6 +21,10 @@ export const loadGoogleMaps = () => {
     });
   }
 
+  if (typeof window !== 'undefined' && window.__tb_gmaps_auth_failed) {
+    return Promise.reject(new Error('Google Maps authentication failed (billing or key issue). Reverting to OSM.'));
+  }
+
   if (!apiKey || !googleMapsEnabled) {
     return Promise.reject(new Error('Google Maps is disabled or API Key is missing'));
   }
@@ -22,6 +32,10 @@ export const loadGoogleMaps = () => {
   return new Promise((resolve, reject) => {
     // Set up global auth failure handler
     window.gm_authFailure = () => {
+      window.__tb_gmaps_auth_failed = true;
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('tb:gmaps-auth-failure'));
+      }
       const errorMsg = 'Google Maps API authentication failed (e.g. invalid key, blocked API targets, or missing billing). Reverting maps/search to OpenStreetMap.';
       console.warn(errorMsg);
       
@@ -31,6 +45,8 @@ export const loadGoogleMaps = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ errorMsg, context: 'GoogleMapsLoader' })
       }).catch(e => console.error('Failed to log error to backend:', e));
+
+      reject(new Error(errorMsg));
     };
 
     if (window.google && window.google.maps) {
@@ -40,6 +56,11 @@ export const loadGoogleMaps = () => {
     const existingScript = document.getElementById('google-maps-script');
     if (existingScript) {
       const checkLoaded = setInterval(() => {
+        if (window.__tb_gmaps_auth_failed) {
+          clearInterval(checkLoaded);
+          reject(new Error('Google Maps authentication failed'));
+          return;
+        }
         if (window.google && window.google.maps) {
           clearInterval(checkLoaded);
           resolve(window.google);
@@ -48,7 +69,13 @@ export const loadGoogleMaps = () => {
       return;
     }
 
-    window.gmpSelfLoop = () => { resolve(window.google); };
+    window.gmpSelfLoop = () => {
+      if (window.__tb_gmaps_auth_failed) {
+        reject(new Error('Google Maps authentication failed'));
+      } else {
+        resolve(window.google);
+      }
+    };
 
     const script = document.createElement('script');
     script.id = 'google-maps-script';

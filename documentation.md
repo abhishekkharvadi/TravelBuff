@@ -674,7 +674,7 @@ Power TravelBuff's smart features—including travel guide extraction, automated
 TravelBuff defaults to free OpenStreetMap and Leaflet maps out of the box. You can optionally enable Google Maps for alternative map displays and routing:
 * **Google Maps API Key**: Enter your Google Maps API key.
 * **Required APIs**: For full functionality, enable **Maps JavaScript API**, **Directions API**, **Distance Matrix API**, **Geocoding API**, and **Places API** in your Google Cloud Console.
-* **Cost & Billing Notice**: Google provides $200 in free monthly credits (approx. 28,000 map loads). We recommend setting budget alerts in your Google Cloud Console for heavy usage.
+* **Cost & Billing Notice**: Google provides $200 in free monthly credits (approx. 28,000 map loads). Google requires an active Billing Account attached to your Google Cloud project to activate the Maps JavaScript API. If billing is inactive, the key is unauthorized, or Google Maps is disabled, TravelBuff automatically falls back to OpenStreetMap and Leaflet with zero disruption.
 
 ---
 

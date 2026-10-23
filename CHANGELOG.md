@@ -2,6 +2,48 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.8.3] - 2026-10-22
+
+### 🛡️ Security Hardening & Dependency Updates
+- **Vite Upgrade (v7.3.6 → v7.3.7)**:
+  - Upgraded `vite` to `v7.3.7` under `devDependencies` to remediate development server security advisories:
+    - `GHSA-587h-7wmj-h5pm` (High): Development server arbitrary file read / directory traversal bypass.
+    - `GHSA-698v-4r3x-3vcv` (Medium): Endpoint validation bypass.
+    - `GHSA-9jrq-w75r-8gcw` (Low): Content type parsing vulnerability.
+    - `GHSA-r825-w8mm-5pxw` (Medium): Sensitive file leak via crafted dev server request.
+    - `GHSA-rq7h-c2jc-7f22` (Medium): Path sanitization flaw.
+- **Transitive Dependency Override (follow-redirects v1.16.0 → v1.16.1)**:
+  - Added `"follow-redirects": "^1.16.1"` into `package.json` overrides to remediate URL redirection vulnerabilities:
+    - `GHSA-8r9p-f939-6h3c` (High): Authorization header leak across cross-origin redirects.
+    - `GHSA-q3jh-wrc6-jgq8` (High): Sensitive cookie/header leak on redirect.
+- **Audit Verification**:
+  - Validated with `npm run audit` (`osv-scanner scan source -L package-lock.json`), clearing all 7 fixable vulnerabilities across dev and runtime dependencies.
+
+## [v7.8.2] - 2026-10-22
+
+### 🚀 Enhancements & Usability
+- **Focused Trip Member Expense Splitting**:
+  - **Scoped Split Configuration Modal**: Clicking **👥 Configure Split** in Trip Expenses or the Budget Tracker now opens a dedicated modal that strictly displays active trip participants (`Account Owner` and trip companions from `selectedTrip.companions`), hiding the entire saved members database, Immich API tabs, and quick-add forms.
+  - **Direct Role Toggles**: Added 1-click **💰 Main Split Member** vs **👥 Family / No Split** toggles and split share divisor settings (`÷ N main members`) directly on active trip members.
+  - **Trip Companions Empty State**: Added an empty state with a direct shortcut to add companions when a trip currently has only the Account Owner.
+- **Dedicated Trip Traveler Assembly**:
+  - Clicking the **`+`** button in the trip header's traveler avatars list opens the dedicated **Manage Trip Travelers** view to add or remove members from saved contacts, query the Immich server API, or quick-add new companions.
+  - Added seamless 1-click navigation links (`+ Add / Manage Trip Travelers` and `🤝 Configure Expense Split →`) between both views.
+
+## [v7.8.1] - 2026-10-22
+
+### 🐛 Bug Fixes & Resilience
+- **Google Maps Integration & Settings Preference Lock**:
+  - Fixed an issue in `MapView` where disabling the "Google Maps Integration" toggle in Settings was overwritten back to enabled upon opening any trip plan or location view.
+  - User preference for `google_maps_enabled` is now strictly preserved.
+- **Graceful OpenStreetMap & Leaflet Fallback**:
+  - Implemented an automatic auth-failure handler for the Google Maps JavaScript API (`BillingNotEnabledMapError`, invalid API key, unlinked GCP billing, or blocked quotas).
+  - When an auth failure is detected, TravelBuff clears broken map overlays and instantly switches to OpenStreetMap and Leaflet without blocking modal alerts.
+  - Places autocomplete and geocoding fall back to OpenStreetMap / Nominatim immediately.
+  - Added a non-intrusive dismissible notification banner explaining the billing/auth status and indicating fallback to OpenStreetMap.
+- **Settings & GCP Documentation Guidance**:
+  - Added direct links and clear guidance in Settings regarding Google Cloud Platform's requirement to link an active Billing Account to activate Maps APIs (even within the \$200/month free tier).
+
 ## [v7.8.0] - 2026-10-19
 
 ### 🚀 Major Features & Enhancements

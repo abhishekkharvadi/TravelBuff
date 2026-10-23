@@ -4,6 +4,7 @@ import { db, queueSyncAction, generateUUID, clearLocalDb, populateLocalDb } from
 import { Plus, Trash2, Tag, Compass, Folder, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock, Users, Home, MapPin, Search, User, Edit2, ChevronDown, Archive, Map as MapIcon, Copy, Sliders, ShieldCheck, LogOut, AlertTriangle, Link, Unlink } from 'lucide-react';
 import { APP_VERSION } from '../version.js';
 import ImmichLocationImportModal from './ImmichLocationImportModal.jsx';
+import { resetGoogleMapsAuthFailure } from '../utils/googleMapsLoader.js';
 
 const POPULAR_CURRENCIES = [
   { code: 'USD', name: 'US Dollar', symbol: '$' },
@@ -1912,6 +1913,7 @@ export default function SettingsComponent({ token, userId, username, displayName
   const handleSaveMapsKey = (val) => {
     setStatus('maps', 'Saving...');
     localStorage.setItem('google_maps_api_key', val);
+    resetGoogleMapsAuthFailure();
     setStatus('maps', 'Saved');
   };
 
@@ -2693,6 +2695,7 @@ export default function SettingsComponent({ token, userId, username, displayName
                       const val = e.target.checked;
                       setGoogleMapsEnabled(val);
                       localStorage.setItem('google_maps_enabled', val ? 'true' : 'false');
+                      resetGoogleMapsAuthFailure();
                       setCardStatus(prev => ({ ...prev, maps: 'Saved' }));
                       setTimeout(() => setCardStatus(prev => ({ ...prev, maps: '' })), 2000);
                     }} 
@@ -2759,15 +2762,16 @@ export default function SettingsComponent({ token, userId, username, displayName
                     <h5 style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--accent-primary-hover)' }}>🛠️ Setup Instructions</h5>
                     <ol style={{ margin: '0 0 12px 18px', padding: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
                       <li>Go to the <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>Google Cloud Console</a>.</li>
-                      <li>Create or select a project, then go to **APIs & Services &gt; Library**.</li>
-                      <li>Search for and enable the three APIs listed above.</li>
-                      <li>Go to **APIs & Services &gt; Credentials**, click **Create Credentials**, and select **API Key**.</li>
+                      <li>Create or select a project, then go to <b>APIs &amp; Services &gt; Library</b>.</li>
+                      <li>Search for and enable the APIs listed above.</li>
+                      <li>Link an active <b>Billing Account</b> under <a href="https://console.cloud.google.com/project/_/billing/enable" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>Google Cloud Billing</a> (Google requires this to use the Maps JavaScript API, even for the $200 free monthly tier).</li>
+                      <li>Go to <b>APIs &amp; Services &gt; Credentials</b>, click <b>Create Credentials</b>, and select <b>API Key</b>.</li>
                       <li>(Recommended) Set HTTP Referrer restrictions to limit usage to your domain.</li>
                     </ol>
 
-                    <h5 style={{ margin: '0 0 6px 0', fontSize: '0.85rem', color: 'var(--danger)' }}>⚠️ Cost & Billing Warning</h5>
+                    <h5 style={{ margin: '0 0 6px 0', fontSize: '0.85rem', color: 'var(--danger)' }}>⚠️ Cost &amp; Billing Warning</h5>
                     <p style={{ margin: 0 }}>
-                      Google offers <b>$200 in free monthly credits</b> (approx. 28,000 map loads). However, usage exceeding this limit will be billed to your Google Cloud account. It is highly recommended to set budget notifications and billing alerts in your GCP console.
+                      Google offers <b>$200 in free monthly credits</b> (approx. 28,000 map loads). Usage exceeding this will be billed to your GCP account. If billing is not attached or the key fails, TravelBuff automatically falls back to OpenStreetMap / Leaflet.
                     </p>
                   </div>
                 )}
@@ -2781,7 +2785,7 @@ export default function SettingsComponent({ token, userId, username, displayName
                   onBlur={(e) => handleSaveMapsKey(e.target.value)}
                 />
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                  When left blank, the app defaults to OpenStreetMap/Leaflet.
+                  When disabled, blank, or if Google Cloud billing is inactive, the app automatically defaults to OpenStreetMap/Leaflet.
                 </span>
               </div>
             </div>

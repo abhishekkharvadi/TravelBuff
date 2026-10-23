@@ -1,0 +1,1 @@
+[2026-10-22T07:19:09.049Z] [MapView] Google Maps API authentication failed (e.g. invalid key, blocked API targets, or missing billing). Reverting maps/search to OpenStreetMap.
