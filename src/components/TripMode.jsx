@@ -825,7 +825,12 @@ export default function TripMode({ token }) {
   const dayEndpoints = notesObj.dayEndpoints || {};
   const dayStayBehaviors = notesObj.dayStayBehaviors || {};
   const segmentTransport = notesObj.segmentTransport || {};
-  const dayLocations = notesObj.dayLocations || {};
+  const rawDayLocations = notesObj.dayLocations || {};
+  const dayLocations = {};
+  Object.keys(rawDayLocations).forEach(k => {
+    const v = rawDayLocations[k];
+    dayLocations[k] = Array.isArray(v) ? (v[0] ? String(v[0]) : '') : (v ? String(v) : '');
+  });
 
   const dayEndpointConfig = dayEndpoints[displayDayStr] || (activeDayObj ? dayEndpoints[activeDayObj.label] : null) || (activeDayObj ? dayEndpoints[`Day ${activeDayObj.dayNumber}`] : null) || {};
   const startFromHome = dayEndpointConfig.startFromHome ?? (isFirstDay && Boolean(currentTrip?.start_address_id));
@@ -1056,8 +1061,15 @@ export default function TripMode({ token }) {
     return notesObj.isActive === true;
   })();
 
+  const isReadOnlyTrip = Boolean(currentTrip && currentTrip.shared_permission === 'view');
+
   const getMemberName = (memberId) => {
-    if (!memberId || memberId === 'self') return 'Me (You)';
+    if (!memberId || memberId === 'self') {
+      if (currentTrip && currentTrip.shared_permission) {
+        return currentTrip.owner_display_name || currentTrip.owner_username || 'Trip Owner';
+      }
+      return 'Me (You)';
+    }
     const matched = people.find(p => String(p.id) === String(memberId));
     return matched ? matched.name : 'Companion';
   };
@@ -1635,7 +1647,24 @@ export default function TripMode({ token }) {
           <div style={{ background: 'var(--bg-surface-elevated)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
               <div>
-                <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{currentTrip.name}</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{currentTrip.name}</h2>
+                  {currentTrip.shared_permission && (
+                    <span
+                      style={{
+                        fontSize: '0.68rem',
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: '999px',
+                        background: currentTrip.shared_permission === 'edit' ? 'rgba(16, 185, 129, 0.16)' : 'rgba(56, 189, 248, 0.16)',
+                        color: currentTrip.shared_permission === 'edit' ? '#4ade80' : '#38bdf8',
+                        border: `1px solid ${currentTrip.shared_permission === 'edit' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(56, 189, 248, 0.4)'}`
+                      }}
+                    >
+                      {currentTrip.shared_permission === 'edit' ? '✏️ Co-Editor' : '👁️ View-Only'} • Shared by {currentTrip.owner_display_name || currentTrip.owner_username || 'User'}
+                    </span>
+                  )}
+                </div>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px', margin: 0 }}>
                   {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})
                 </p>
@@ -1668,13 +1697,15 @@ export default function TripMode({ token }) {
 
               {/* Quick Action Toolbar */}
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button 
-                  onClick={() => setShowExpenseModal(true)}
-                  className="btn btn-primary"
-                  style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                >
-                  <DollarSign size={14} /> Log Expense
-                </button>
+                {!isReadOnlyTrip && (
+                  <button 
+                    onClick={() => setShowExpenseModal(true)}
+                    className="btn btn-primary"
+                    style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <DollarSign size={14} /> Log Expense
+                  </button>
+                )}
                 <button 
                   onClick={() => handleFindNearbyFood('all')}
                   className="btn btn-secondary"
@@ -1682,13 +1713,15 @@ export default function TripMode({ token }) {
                 >
                   <Utensils size={14} /> Find Nearby Food
                 </button>
-                <button 
-                  onClick={() => setShowTripNoteModal(true)}
-                  className="btn btn-secondary"
-                  style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                >
-                  <FileText size={14} /> Add Note
-                </button>
+                {!isReadOnlyTrip && (
+                  <button 
+                    onClick={() => setShowTripNoteModal(true)}
+                    className="btn btn-secondary"
+                    style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <FileText size={14} /> Add Note
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1879,6 +1912,7 @@ export default function TripMode({ token }) {
                   userAddresses={userAddresses}
                   firstDayDate={activeDayObj?.date || displayDayStr}
                   firstDayStayName={hotelPlace ? hotelPlace.name : 'Destination Stay'}
+                  readOnly={isReadOnlyTrip}
                   onUpdateTrip={async (updatedTrip) => {
                     await db.trips.update(updatedTrip.id, updatedTrip);
                     await queueSyncAction('trips', 'update', updatedTrip);
@@ -2043,7 +2077,7 @@ export default function TripMode({ token }) {
                                           <Navigation size={12} style={{ color: 'var(--accent-secondary)' }} />
                                         </button>
                                       )}
-                                      {place && !isVisited && (
+                                      {place && !isVisited && !isReadOnlyTrip && (
                                         <button 
                                           onClick={async () => {
                                             await queueSyncAction('places', 'update', { ...place, visited: 1 });
@@ -2094,6 +2128,7 @@ export default function TripMode({ token }) {
                   userAddresses={userAddresses}
                   lastDayDate={activeDayObj?.date || displayDayStr}
                   lastDayStayName={hotelPlace ? hotelPlace.name : 'Destination Stay'}
+                  readOnly={isReadOnlyTrip}
                   onUpdateTrip={async (updatedTrip) => {
                     await db.trips.update(updatedTrip.id, updatedTrip);
                     await queueSyncAction('trips', 'update', updatedTrip);
@@ -2164,13 +2199,15 @@ export default function TripMode({ token }) {
                 <h3 style={{ margin: 0, fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <FileText size={18} style={{ color: 'var(--accent-primary)' }} /> Trip Notes & Journal
                 </h3>
-                <button 
-                  className="btn btn-primary"
-                  style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                  onClick={() => setShowTripNoteModal(true)}
-                >
-                  <Plus size={12} /> Add Note
-                </button>
+                {!isReadOnlyTrip && (
+                  <button 
+                    className="btn btn-primary"
+                    style={{ width: 'auto', padding: '4px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    onClick={() => setShowTripNoteModal(true)}
+                  >
+                    <Plus size={12} /> Add Note
+                  </button>
+                )}
               </div>
 
               {(() => {
@@ -2189,9 +2226,11 @@ export default function TripMode({ token }) {
                       <div key={note.id} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '12px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                           <span style={{ fontWeight: 'bold', fontSize: '0.88rem', color: 'var(--text-primary)' }}>{note.title || 'Trip Note'}</span>
-                          <button className="photo-action-btn" onClick={() => handleDeleteTripNote(note.id)} title="Delete Note">
-                            <Trash2 size={12} />
-                          </button>
+                          {!isReadOnlyTrip && (
+                            <button className="photo-action-btn" onClick={() => handleDeleteTripNote(note.id)} title="Delete Note">
+                              <Trash2 size={12} />
+                            </button>
+                          )}
                         </div>
                         <span style={{ fontSize: '0.65rem', backgroundColor: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent-primary-hover)', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 600, display: 'inline-block', marginBottom: '6px' }}>
                           {note.category || 'General'}
@@ -2215,7 +2254,7 @@ export default function TripMode({ token }) {
       )}
 
       {/* Floating Action Button (Quick Expense Logger) */}
-      {currentTrip && (
+      {currentTrip && !isReadOnlyTrip && (
         <button 
           onClick={() => setShowExpenseModal(true)}
           style={{
@@ -2299,7 +2338,7 @@ export default function TripMode({ token }) {
                       }
                     }}
                   >
-                    <option value="self">👤 Me (You)</option>
+                    <option value="self">👤 {getMemberName('self')}</option>
                     {tripSplitConfig.tripPeople.map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
@@ -2327,7 +2366,7 @@ export default function TripMode({ token }) {
                     <option value="split">🤝 Split ({tripSplitConfig.splitCount}-way)</option>
                     <option value="self_payer">👤 Personal — For {getMemberName(expPaidBy)}</option>
                     {[
-                      { id: 'self', name: 'Me (You)' },
+                      { id: 'self', name: getMemberName('self') },
                       ...tripSplitConfig.tripPeople.map(p => ({ id: String(p.id), name: p.name }))
                     ]
                       .filter(m => String(m.id) !== String(expPaidBy || 'self'))
@@ -2467,34 +2506,36 @@ export default function TripMode({ token }) {
                       >
                         🗺️ Maps
                       </button>
-                      <button
-                        className="btn btn-primary"
-                        style={{ padding: '6px 10px', fontSize: '0.75rem', width: 'auto' }}
-                        onClick={async () => {
-                          const newPlaceId = generateUUID();
-                          const newPlace = {
-                            id: newPlaceId,
-                            location_id: locations[0]?.id || '',
-                            name: r.name,
-                            category: 'restaurant',
-                            latitude: r.lat,
-                            longitude: r.lon,
-                            address: r.address,
-                            visited: 0
-                          };
-                          await queueSyncAction('places', 'insert', newPlace);
-                          await queueSyncAction('itinerary_items', 'insert', {
-                            id: generateUUID(),
-                            trip_id: currentTrip.id,
-                            date: currentDayStr || 'Day 1',
-                            place_id: newPlaceId,
-                            sequence_order: (itineraries.filter(i => String(i.trip_id) === String(currentTrip.id)).length + 1)
-                          });
-                          alert(`Added "${r.name}" to today's itinerary!`);
-                        }}
-                      >
-                        + Add Stop
-                      </button>
+                      {!isReadOnlyTrip && (
+                        <button
+                          className="btn btn-primary"
+                          style={{ padding: '6px 10px', fontSize: '0.75rem', width: 'auto' }}
+                          onClick={async () => {
+                            const newPlaceId = generateUUID();
+                            const newPlace = {
+                              id: newPlaceId,
+                              location_id: locations[0]?.id || '',
+                              name: r.name,
+                              category: 'restaurant',
+                              latitude: r.lat,
+                              longitude: r.lon,
+                              address: r.address,
+                              visited: 0
+                            };
+                            await queueSyncAction('places', 'insert', newPlace);
+                            await queueSyncAction('itinerary_items', 'insert', {
+                              id: generateUUID(),
+                              trip_id: currentTrip.id,
+                              date: currentDayStr || 'Day 1',
+                              place_id: newPlaceId,
+                              sequence_order: (itineraries.filter(i => String(i.trip_id) === String(currentTrip.id)).length + 1)
+                            });
+                            alert(`Added "${r.name}" to today's itinerary!`);
+                          }}
+                        >
+                          + Add Stop
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))

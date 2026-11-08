@@ -4,9 +4,9 @@ import {
   Calendar, MapPin, Plus, Trash2, Tag, Receipt, 
   ChevronRight, ChevronDown, Printer, AlertTriangle, FileText, 
   Map, Edit, CheckSquare, X, DollarSign, RefreshCw, Star, Compass,
-  Search, Folder, Download, Upload, CheckCircle2, FileUp
+  Search, Folder, Download, Upload, CheckCircle2, FileUp, Share2, Users, Mail, Copy, Sparkles, Lock
 } from 'lucide-react';
-import { db, queueSyncAction, generateUUID } from '../clientDb.js';
+import { db, queueSyncAction, generateUUID, populateLocalDb } from '../clientDb.js';
 import { trackApiCall } from '../utils/apiTracker.js';
 import { loadGoogleMaps } from '../utils/googleMapsLoader.js';
 import { getDayColor } from '../utils/dayColors.js';
@@ -81,6 +81,13 @@ const safeParseNotes = (val) => {
     return { description: val };
   }
   return {};
+};
+
+const getScalarDayLocationId = (dayLocationsObj, dateKey) => {
+  if (!dayLocationsObj || !dateKey) return '';
+  const raw = dayLocationsObj[dateKey];
+  if (Array.isArray(raw)) return raw[0] ? String(raw[0]) : '';
+  return raw ? String(raw) : '';
 };
 
 const safeIncludes = (arr, val) => Array.isArray(arr) && arr.includes(val);
@@ -327,7 +334,7 @@ const getItineraryDays = (trip) => {
   return days;
 };
 
-export default function TripPlanning({ token, selectedTripId, onSelectTrip, accountOwner }) {
+export default function TripPlanning({ token, selectedTripId, onSelectTrip, smtpEnabled = false, userEmail = '', accountOwner }) {
   // Dexie query
   // Consolidate all Dexie queries to avoid back-to-back renders (WebSocket flickering)
   const syncData = useLiveQuery(async () => {
@@ -426,7 +433,17 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip, acco
       const matched = trips.find(t => String(t.id) === String(selectedTripId));
       if (matched) {
         setSelectedTrip(prev => {
-          if (prev && String(prev.id) === String(matched.id) && prev.name === matched.name && prev.start_date === matched.start_date && prev.length === matched.length && prev.notes === matched.notes && String(prev.start_address_id || '') === String(matched.start_address_id || '') && String(prev.stop_address_id || '') === String(matched.stop_address_id || '')) {
+          if (
+            prev &&
+            String(prev.id) === String(matched.id) &&
+            prev.name === matched.name &&
+            prev.start_date === matched.start_date &&
+            prev.length === matched.length &&
+            prev.notes === matched.notes &&
+            prev.shared_permission === matched.shared_permission &&
+            String(prev.start_address_id || '') === String(matched.start_address_id || '') &&
+            String(prev.stop_address_id || '') === String(matched.stop_address_id || '')
+          ) {
             return prev;
           }
           return matched;
@@ -494,6 +511,41 @@ export default function TripPlanning({ token, selectedTripId, onSelectTrip, acco
     }
   }, []);
   const currentTrip = selectedTrip ? (trips.find(t => t.id === selectedTrip.id) || selectedTrip) : null;
+  const isSharedTrip = Boolean(currentTrip?.shared_permission && currentTrip.shared_permission !== 'owner');
+  const isReadOnlyTrip = currentTrip?.shared_permission === 'view';
+  const isTripOwner = !currentTrip?.shared_permission || currentTrip.shared_permission === 'owner';
+
+  // Live Collaborative Trip Sharing states
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [localUsersDirectory, setLocalUsersDirectory] = useState([]);
+  const [tripSharesList, setTripSharesList] = useState([]);
+  const [shareSelectedUserId, setShareSelectedUserId] = useState('');
+  const [sharePermission, setSharePermission] = useState('view');
+  const [shareSendEmail, setShareSendEmail] = useState(true);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareMsg, setShareMsg] = useState(null);
+
+  // Email Trip Summary & Settlement states
+  const [emailSummaryRecipient, setEmailSummaryRecipient] = useState(userEmail || '');
+  const [sendingSummaryEmail, setSendingSummaryEmail] = useState(false);
+  const [emailSummaryStatus, setEmailSummaryStatus] = useState(null);
+  const [showSettlementEmailInput, setShowSettlementEmailInput] = useState(false);
+  const [settlementEmailRecipient, setSettlementEmailRecipient] = useState('');
+  const [sendingSettlementEmail, setSendingSettlementEmail] = useState(false);
+  const [settlementEmailStatus, setSettlementEmailStatus] = useState(null);
+
+  // AI Prompt-Based Trip Discovery (Wizard Step 2) states
+  const [aiStep2SourceMode, setAiStep2SourceMode] = useState('prompt'); // 'prompt' | 'manual_select'
+  const [aiDiscoveryPrompt, setAiDiscoveryPrompt] = useState('');
+  const [aiDiscoveryProposal, setAiDiscoveryProposal] = useState(null);
+  const [isExecutingTwoPhaseAi, setIsExecutingTwoPhaseAi] = useState(false);
+  const [twoPhaseProgressMsg, setTwoPhaseProgressMsg] = useState('');
+
+  useEffect(() => {
+    if (userEmail && !emailSummaryRecipient) {
+      setEmailSummaryRecipient(userEmail);
+    }
+  }, [userEmail]);
   const [forceUpdateActiveTrip, setForceUpdateActiveTrip] = useState(0);
   const [showFullScreenMap, setShowFullScreenMap] = useState(false);
   const [unmappedRecommendations, setUnmappedRecommendations] = useState([]);
@@ -2024,23 +2076,38 @@ ${locLines.join('\n')}
 ${placeLines.join('\n')}`;
   };
 
+  const getTripSelectedPlacesAndLocations = (activeTripObj) => {
+    if (!activeTripObj) return { filterLocs: [], bankPlaces: [] };
+    const parsedNotes = safeParseNotes(activeTripObj.notes);
+    const savedLocIds = safeParseArray(parsedNotes.locationIds);
+    const savedColIds = safeParseArray(parsedNotes.collectionIds);
+    const dayLocValues = Object.values(parsedNotes.dayLocations || {}).flat().filter(Boolean);
+
+    const baseLocs = stopFilterLocationIds.length > 0 ? stopFilterLocationIds : savedLocIds;
+    const filterLocs = [...new Set([...baseLocs, ...dayLocValues])];
+
+    const bankPlaces = places.filter(p => {
+      if (p.is_folder === 1 || isStayPlace(p)) return false;
+      const inSelectedLoc = filterLocs.length > 0 && safeIncludes(filterLocs, p.location_id);
+      const inSelectedCol = savedColIds.length > 0 && collections.some(col =>
+        safeIncludes(savedColIds, col.id) &&
+        safeIncludes(safeParseArray(col.place_ids), p.id)
+      );
+      return inSelectedLoc || inSelectedCol;
+    });
+
+    return { filterLocs, bankPlaces };
+  };
+
   const getBankAiPromptText = () => {
     const activeTripObj = selectedTrip || currentTrip;
     if (!activeTripObj) return '';
 
-    let filterLocs = stopFilterLocationIds;
-    if (filterLocs.length === 0 && activeTripObj.notes) {
-      const parsedNotes = safeParseNotes(activeTripObj.notes);
-      if (Array.isArray(parsedNotes.locationIds)) {
-        filterLocs = parsedNotes.locationIds;
-      }
-    }
-
-    const bankPlaces = places.filter(p => p.is_folder !== 1 && !isStayPlace(p) && (filterLocs.length === 0 || filterLocs.includes(p.location_id)));
+    const { bankPlaces } = getTripSelectedPlacesAndLocations(activeTripObj);
     const locMap = {};
     locations.forEach(l => { locMap[l.id] = l.name; });
 
-    const formattedPlaces = bankPlaces.map((p, i) => ({
+    const formattedPlaces = bankPlaces.map((p) => ({
       name: p.name,
       rating: p.rating || null,
       folder_location: locMap[p.location_id] || '',
@@ -2060,7 +2127,8 @@ ${placeLines.join('\n')}`;
     const hasStopHome = Boolean(activeTripObj.stop_address_id) && (dayEndpoints[itineraryDays[itineraryDays.length - 1]?.date]?.lastDayGoHome !== false);
 
     const dayConstraints = itineraryDays.map((d, i) => {
-      const locId = dayLocations[d.date];
+      const rawLocId = dayLocations[d.date];
+      const locId = Array.isArray(rawLocId) ? rawLocId[0] : rawLocId;
       const locName = locMap[locId];
       const hotelPlaceId = hotelsObj[d.date];
       const hotelPlace = hotelPlaceId ? combinedPlaces.find(p => p.id === hotelPlaceId) : null;
@@ -2095,7 +2163,22 @@ ${placeLines.join('\n')}`;
       return `Day ${i + 1} (${d.date}):\n  - ${parts.join('\n  - ')}`;
     });
 
-    return `Plan an optimized ${itineraryDays.length || activeTripObj.length || 3}-day itinerary using the places in the Places Bank.
+    const hasAssignedDayLoc = itineraryDays.some(d => Boolean(getScalarDayLocationId(dayLocations, d.date)));
+
+    if (bankPlaces.length === 0) {
+      const locationTagLine = !hasAssignedDayLoc
+        ? `\n[Location: Enter a single destination for all days (e.g., Kyoto, Japan) OR day-wise locations (e.g., Day 1-2: Tokyo, Day 3-4: Kyoto)]\n`
+        : '';
+      return `Plan an optimized ${itineraryDays.length || activeTripObj.length || 3}-day itinerary for "${activeTripObj.name}".${locationTagLine}
+Arrival time on Day 1: ${bankAiArrivalTime || 'Morning'}.
+Prioritize important places and places with >4 star ratings when schedule capacity is limited.
+Take into account daily departure origins, accommodation check-out/late check-in flows, and evening returns to assigned accommodations when ordering sightseeing stops.
+
+Per-Day Constraints & Accommodation Plan:
+${dayConstraints.join('\n\n')}`;
+    }
+
+    return `Plan an optimized ${itineraryDays.length || activeTripObj.length || 3}-day itinerary using the selected places in the Places Bank.
 Arrival time on Day 1: ${bankAiArrivalTime || 'Morning'}.
 Prioritize important places and places with >4 star ratings when schedule capacity is limited.
 Take into account daily departure origins, accommodation check-out/late check-in flows, and evening returns to assigned accommodations when ordering sightseeing stops.
@@ -2105,6 +2188,98 @@ ${dayConstraints.join('\n\n')}
 
 Places Bank List (${bankPlaces.length} places):
 ${JSON.stringify(formattedPlaces, null, 2)}`;
+  };
+
+  const buildDefaultAiDiscoveryPrompt = (overrideTrip = null) => {
+    const tName = (overrideTrip?.name ?? tripName ?? '').trim() || 'My Trip';
+    const len = parseInt(overrideTrip?.length ?? tripLength, 10) || 1;
+    const sDate = overrideTrip?.start_date ?? tripStartDate ?? '';
+    const arr = overrideTrip ? (safeParseNotes(overrideTrip.notes).arrivalTime || arrivalTime || 'morning') : (arrivalTime || 'morning');
+    const intl = overrideTrip ? Boolean(safeParseNotes(overrideTrip.notes).isInternational) : Boolean(isInternational);
+    const budgetVal = overrideTrip ? (safeParseNotes(overrideTrip.notes).plannedBudget || 0) : (parseFloat(tripBudget) || 0);
+    const desc = (overrideTrip ? (safeParseNotes(overrideTrip.notes).description || '') : (tripNotes || '')).trim();
+    const travCount = (selectedCompanions?.length || 0) + 1;
+
+    const detailsLines = [
+      `- Trip Name: "${tName}"`,
+      `- Duration: ${len} ${len === 1 ? 'day' : 'days'}${sDate ? ` (Starting ${sDate})` : ''}`,
+      `- Day 1 Arrival Time: ${arr}`,
+      `- Trip Scope: ${intl ? 'International' : 'Domestic'}`,
+      `- Travelers: ${travCount} ${travCount === 1 ? 'person' : 'people'}`
+    ];
+    if (budgetVal > 0) {
+      detailsLines.push(`- Planned Budget: ${budgetVal} ${baseCurrency || 'USD'}`);
+    }
+    if (desc) {
+      detailsLines.push(`- Additional Trip Notes: ${desc}`);
+    }
+
+    return `Plan a ${len}-${len === 1 ? 'day' : 'day'} trip itinerary based on the following trip details:
+${detailsLines.join('\n')}
+
+[Location: Enter a single destination for all days (e.g., Kyoto, Japan) OR day-wise locations (e.g., Day 1-2: Tokyo, Day 3-4: Kyoto)]
+
+Preferences / Interests (Optional): Sightseeing, iconic landmarks, local food, and scenic neighborhoods.`;
+  };
+
+  const validatePromptHasDestination = (promptText, activeTripObj = null) => {
+    const raw = (promptText || '').trim();
+    if (!raw) {
+      return {
+        valid: false,
+        error: 'Please enter your destination and trip details in the prompt before generating.'
+      };
+    }
+
+    // 1. Check if the default [Location: ...] placeholder is still unedited
+    const uneditedTagRegex = /\[Location:\s*Enter a single destination[^\]]*\]/i;
+    if (uneditedTagRegex.test(raw)) {
+      return {
+        valid: false,
+        error: 'Please replace the [Location: ...] tag in the prompt with your actual destination (either a single location for all days or day-wise locations).'
+      };
+    }
+
+    // 2. Check if user left [Location:] or Location: empty / TBD
+    const emptyBracketLoc = /\[Location:\s*(?:tbd|none|any|n\/a|\?|-)*\s*\]/i;
+    if (emptyBracketLoc.test(raw)) {
+      return {
+        valid: false,
+        error: 'The [Location: ...] tag is empty. Please enter a destination city, region, or country.'
+      };
+    }
+
+    // 3. Check if any day already has a location assigned in trip notes
+    const notesObj = safeParseNotes(activeTripObj?.notes);
+    const dayLocs = notesObj.dayLocations || {};
+    const hasAssignedDayLoc = Object.keys(dayLocs).some(k => Boolean(getScalarDayLocationId(dayLocs, k)));
+    if (hasAssignedDayLoc) {
+      return { valid: true };
+    }
+
+    // 4. Strip out known auto-generated boilerplate lines to see if any user-provided destination/content remains
+    const stripped = raw
+      .replace(/^Plan a \d+-day trip itinerary based on the following trip details:.*$/gim, '')
+      .replace(/^Plan an optimized \d+-day itinerary for .*$/gim, '')
+      .replace(/^- (?:Trip Name|Duration|Day 1 Arrival Time|Trip Scope|Travelers|Planned Budget):.*$/gim, '')
+      .replace(/^Arrival time on Day 1:.*$/gim, '')
+      .replace(/^Prioritize important places.*$/gim, '')
+      .replace(/^Take into account daily departure.*$/gim, '')
+      .replace(/^Per-Day Constraints & Accommodation Plan:.*$/gim, '')
+      .replace(/^Day \d+ \([^)]+\):.*$/gim, '')
+      .replace(/^\s*-\s*(?:Location:\s*Any|Origin:.*|Conclusion:.*|Stay\/Accommodation:.*)$/gim, '')
+      .replace(/^Preferences \/ Interests \(Optional\):\s*Sightseeing, iconic landmarks, local food, and scenic neighborhoods\.?$/gim, '')
+      .trim();
+
+    const meaningfulWords = stripped.split(/\s+/).filter(Boolean);
+    if (meaningfulWords.length === 0) {
+      return {
+        valid: false,
+        error: 'No destination or custom trip details were found in the prompt. Please specify where you are traveling (e.g., a city, region, or day-wise locations).'
+      };
+    }
+
+    return { valid: true };
   };
 
   const handleOpenBankAiModal = () => {
@@ -2118,34 +2293,96 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
     const activeTripObj = selectedTrip || currentTrip;
     if (!activeTripObj) return;
 
+    const { filterLocs, bankPlaces } = getTripSelectedPlacesAndLocations(activeTripObj);
+    if (bankPlaces.length === 0) {
+      const preCheck = validatePromptHasDestination(bankAiPrompt, activeTripObj);
+      if (!preCheck.valid) {
+        setBankAiError(preCheck.error);
+        return;
+      }
+    }
+
     setIsGeneratingBankAi(true);
     setBankAiError('');
-    setBankAiStatusMsg('📡 Connecting to AI model & packaging place constraints...');
+    setBankAiStatusMsg('📡 Packaging trip details and contacting AI model...');
 
     const timer1 = setTimeout(() => {
-      setBankAiStatusMsg('📍 AI is analyzing geocoordinates, ratings, and day constraints...');
+      setBankAiStatusMsg('📍 AI is analyzing locations, geocoordinates, and day constraints...');
     }, 2500);
 
     const timer2 = setTimeout(() => {
-      setBankAiStatusMsg('✨ Optimizing day-by-day route sequence and sightseeing times...');
+      setBankAiStatusMsg('✨ Generating optimal day-wise itinerary schedule...');
     }, 7000);
 
     const timer3 = setTimeout(() => {
-      setBankAiStatusMsg('⏳ Waiting for AI provider response (model experiencing traffic, please hold on)...');
+      setBankAiStatusMsg('⏳ Waiting for AI provider response (this may take a few moments)...');
     }, 15000);
 
     try {
-      let filterLocs = stopFilterLocationIds;
-      if (filterLocs.length === 0 && activeTripObj.notes) {
-        const parsedNotes = safeParseNotes(activeTripObj.notes);
-        if (Array.isArray(parsedNotes.locationIds)) {
-          filterLocs = parsedNotes.locationIds;
-        }
-      }
-
-      const bankPlaces = places.filter(p => p.is_folder !== 1 && !isStayPlace(p) && (filterLocs.length === 0 || filterLocs.includes(p.location_id)));
       const locMap = {};
       locations.forEach(l => { locMap[l.id] = l.name; });
+
+      // If NO locations/places are selected for this specific trip, use the 2-phase AI prompt planner
+      // so AI discovers locations/places from the user's prompt, adds them to Locations first, and populates the itinerary.
+      if (bankPlaces.length === 0) {
+        trackApiCall('AI Assistant');
+        const promptRes = await fetch('/api/ai/plan-from-prompt', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            prompt: bankAiPrompt.trim(),
+            tripName: activeTripObj.name,
+            startDate: activeTripObj.start_date,
+            lengthDays: itineraryDays.length || activeTripObj.length || 1,
+            arrivalTime: bankAiArrivalTime || 'morning',
+            isInternational: getTripIsInternational(activeTripObj),
+            plannedBudget: getTripPlannedBudget(activeTripObj),
+            baseCurrency: baseCurrency || 'USD'
+          })
+        });
+
+        const promptData = await promptRes.json().catch(() => ({}));
+        if (!promptRes.ok) {
+          throw new Error(promptData.error || `AI planning failed (HTTP ${promptRes.status})`);
+        }
+
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+        clearTimeout(timer3);
+
+        if (promptData.needs_more_info) {
+          throw new Error(promptData.missing_info_message || 'AI needs a destination location or more trip details to build your plan. Please add a [Location: ...] line in the prompt and try again.');
+        }
+
+        const locs = Array.isArray(promptData.locations) ? promptData.locations : [];
+        const itin = Array.isArray(promptData.itinerary) ? promptData.itinerary : [];
+        if (locs.length === 0) {
+          throw new Error(promptData.missing_info_message || 'AI did not return any suggested locations or places. Please specify your destination or select locations for this trip.');
+        }
+
+        const checkedLocs = {};
+        const checkedPlaces = {};
+        locs.forEach((l, lIdx) => {
+          const lKey = `loc_${lIdx}`;
+          checkedLocs[lKey] = true;
+          (l.places || []).forEach((_, pIdx) => {
+            checkedPlaces[`${lKey}_place_${pIdx}`] = true;
+          });
+        });
+
+        await executeTwoPhaseProposalForTrip(
+          activeTripObj,
+          { locations: locs, itinerary: itin, checkedLocs, checkedPlaces },
+          (msg) => setBankAiStatusMsg(msg),
+          true
+        );
+
+        setShowBankAiModal(false);
+        return;
+      }
 
       const formattedPlaces = bankPlaces.map(p => ({
         name: p.name,
@@ -2165,7 +2402,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          locations: locations.filter(l => filterLocs.includes(l.id)).map(l => l.name),
+          locations: locations.filter(l => safeIncludes(filterLocs, l.id)).map(l => l.name),
           collections: [],
           lengthDays: itineraryDays.length || activeTripObj.length || 1,
           prompt: bankAiPrompt,
@@ -2193,7 +2430,10 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
         throw new Error('AI did not return any itinerary days. Please retry.');
       }
 
-      setBankAiStatusMsg('💾 Processing AI response & saving itinerary to trip database...');
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      setBankAiStatusMsg('💾 Processing AI response & saving itinerary items...');
 
       // Clear existing non-hotel itinerary items for this trip
       const existingItems = itineraries.filter(i => i.trip_id === activeTripObj.id);
@@ -2214,7 +2454,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
         for (let idx = 0; idx < (day.activities || []).length; idx++) {
           const activityText = day.activities[idx];
-          const matchedPlace = places.find(p => {
+          const matchedPlace = bankPlaces.find(p => {
             return p.name.toLowerCase() === activityText.toLowerCase() ||
               activityText.toLowerCase().includes(p.name.toLowerCase()) ||
               p.name.toLowerCase().includes(activityText.toLowerCase());
@@ -2314,6 +2554,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
     await queueSyncAction('trips', 'insert', newTrip);
     setWizardTrip(newTrip);
+    setAiDiscoveryPrompt(buildDefaultAiDiscoveryPrompt(newTrip));
     setWizardStep(2);
   };
 
@@ -2348,6 +2589,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
       };
       await queueSyncAction('trips', 'update', updatedTrip);
       setSelectedTrip(updatedTrip);
+      if (onSelectTrip) onSelectTrip(updatedTrip);
     }
 
     let locIdsToSet = [...selectedLocationsForAi];
@@ -2523,6 +2765,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
       setWizardStep(1);
       setTripBudget('');
       setSelectedTrip(updatedTrip);
+      if (onSelectTrip) onSelectTrip(updatedTrip);
       setWizardTrip(null);
       setShow3ColumnWorkspace(true);
     } catch (err) {
@@ -2534,6 +2777,827 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
       clearTimeout(timer3);
       setIsGeneratingTrip(false);
       setWizardAiStatusMsg('');
+    }
+  };
+
+  // ==============================================================
+  // AI PROMPT-BASED TRIP CREATION (Step 2: Prompt -> Confirmation -> Phase 1 Locations -> Phase 2 Itinerary)
+  // ==============================================================
+  const handleGenerateAiPromptProposal = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!wizardTrip) return;
+    if (!aiDiscoveryPrompt.trim()) {
+      setWizardAiError('Please describe the destinations and details you want for your trip.');
+      return;
+    }
+
+    const preCheck = validatePromptHasDestination(aiDiscoveryPrompt, wizardTrip);
+    if (!preCheck.valid) {
+      setWizardAiError(preCheck.error);
+      return;
+    }
+
+    setIsGeneratingTrip(true);
+    setWizardAiError('');
+    setWizardAiStatusMsg('📡 Packaging trip details and contacting AI model...');
+
+    const timer1 = setTimeout(() => {
+      setWizardAiStatusMsg('🧭 AI is researching destinations, landmarks, and places of visit...');
+    }, 2500);
+
+    const timer2 = setTimeout(() => {
+      setWizardAiStatusMsg('✨ Generating optimal day-wise itinerary and location grouping...');
+    }, 7000);
+
+    const timer3 = setTimeout(() => {
+      setWizardAiStatusMsg('⏳ Waiting for AI provider response (this may take a few moments)...');
+    }, 15000);
+
+    try {
+      trackApiCall('AI Assistant');
+      const res = await fetch('/api/ai/plan-from-prompt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          prompt: aiDiscoveryPrompt.trim(),
+          tripName: wizardTrip.name || tripName,
+          startDate: wizardTrip.start_date || tripStartDate,
+          lengthDays: parseInt(tripLength, 10) || 1,
+          arrivalTime: arrivalTime || 'morning',
+          isInternational: Boolean(isInternational),
+          plannedBudget: parseFloat(tripBudget) || 0,
+          baseCurrency: baseCurrency || 'USD',
+          companionsCount: (selectedCompanions?.length || 0) + 1
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `AI prompt planning failed (HTTP ${res.status})`);
+      }
+
+      if (data.needs_more_info) {
+        setWizardAiError(data.missing_info_message || 'Please specify your destination location (single location for all days or day-wise locations) in the prompt.');
+        return;
+      }
+
+      const locs = Array.isArray(data.locations) ? data.locations : [];
+      const itin = Array.isArray(data.itinerary) ? data.itinerary : [];
+      if (locs.length === 0) {
+        throw new Error(data.missing_info_message || 'AI did not return any suggested locations or places. Please specify your destination in the [Location: ...] line and try again.');
+      }
+
+      const checkedLocs = {};
+      const checkedPlaces = {};
+      locs.forEach((l, lIdx) => {
+        const lKey = `loc_${lIdx}`;
+        checkedLocs[lKey] = true;
+        (l.places || []).forEach((p, pIdx) => {
+          checkedPlaces[`${lKey}_place_${pIdx}`] = true;
+        });
+      });
+
+      setAiDiscoveryProposal({
+        locations: locs,
+        itinerary: itin,
+        checkedLocs,
+        checkedPlaces
+      });
+    } catch (err) {
+      console.error('AI Prompt Discovery Error:', err);
+      setWizardAiError(err.message || 'Failed to generate trip proposal from prompt.');
+    } finally {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      setIsGeneratingTrip(false);
+      setWizardAiStatusMsg('');
+    }
+  };
+
+  const executeTwoPhaseProposalForTrip = async (targetTripObj, proposalObj, setStatusFn, clearExistingItinerary = false) => {
+    const createdLocationIds = [];
+    const locationNameToIdMap = {};
+    const placeNameToRecordMap = {};
+
+    // ==============================================================
+    // PHASE 1: POPULATE LOCATIONS & PLACES IN THE LOCATIONS APP FIRST
+    // (If a place/location does not exist or cannot be pulled from Wiki/geocoder,
+    //  still add the Location/Place record and leave unverifiable fields empty)
+    // ==============================================================
+    const proposalLocs = proposalObj.locations || [];
+    for (let lIdx = 0; lIdx < proposalLocs.length; lIdx++) {
+      const lKey = `loc_${lIdx}`;
+      if (!proposalObj.checkedLocs[lKey]) continue;
+
+      const locSuggestion = proposalLocs[lIdx];
+      const locName = (locSuggestion.name || '').trim();
+      if (!locName) continue;
+
+      if (setStatusFn) setStatusFn(`Phase 1/2: Resolving location "${locName}" (${lIdx + 1}/${proposalLocs.length})...`);
+
+      // Check if location already exists in personal library
+      let existingLoc = locations.find(
+        l => Number(l.is_folder) !== 1 && Number(l.is_shared_external) !== 1 && (l.name || '').trim().toLowerCase() === locName.toLowerCase()
+      );
+
+      let targetLocId = existingLoc ? existingLoc.id : null;
+
+      if (!targetLocId) {
+        targetLocId = generateUUID();
+        let lat = locSuggestion.latitude !== undefined && locSuggestion.latitude !== null ? parseFloat(locSuggestion.latitude) : null;
+        let lon = locSuggestion.longitude !== undefined && locSuggestion.longitude !== null ? parseFloat(locSuggestion.longitude) : null;
+        if (isNaN(lat) || isNaN(lon)) {
+          lat = null;
+          lon = null;
+        }
+        let photoData = null;
+        let wikiNotes = locSuggestion.description || '';
+        let photoSyncStatus = 'failed';
+
+        // Best-effort geocode lookup via GET /api/import/geocode (leave empty if not found)
+        if (lat === null || lon === null) {
+          try {
+            const geoQuery = [locName, locSuggestion.state, locSuggestion.country].filter(Boolean).join(', ');
+            const geoRes = await fetch(`/api/import/geocode?query=${encodeURIComponent(geoQuery)}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (geoRes.ok) {
+              const geoData = await geoRes.json();
+              const firstGeo = Array.isArray(geoData) ? geoData[0] : geoData;
+              if (firstGeo && firstGeo.lat !== undefined && firstGeo.lon !== undefined && firstGeo.lat !== null && firstGeo.lon !== null) {
+                const parsedLat = parseFloat(firstGeo.lat);
+                const parsedLon = parseFloat(firstGeo.lon);
+                if (!isNaN(parsedLat) && !isNaN(parsedLon)) {
+                  lat = parsedLat;
+                  lon = parsedLon;
+                }
+              }
+            }
+          } catch (_) {
+            // Leave coordinates null if geocode fails
+          }
+        }
+
+        // Best-effort Wikipedia/photo lookup (leave empty if not found)
+        try {
+          const photoRes = await fetch('/api/import/search-photo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ query: locName, latitude: lat, longitude: lon })
+          });
+          if (photoRes.ok) {
+            const photoJson = await photoRes.json();
+            const resolvedUrl = photoJson?.fileUrl || photoJson?.imageUrl || null;
+            if (resolvedUrl) {
+              photoData = resolvedUrl;
+              photoSyncStatus = 'completed';
+            }
+            if (photoJson && photoJson.description) {
+              wikiNotes = photoJson.description;
+            }
+          }
+        } catch (_) {
+          // Leave photo & wiki notes empty if lookup fails
+        }
+
+        const newLocationRecord = {
+          id: targetLocId,
+          name: locName,
+          state: locSuggestion.state || '',
+          country: locSuggestion.country || '',
+          latitude: lat,
+          longitude: lon,
+          notes: wikiNotes || '',
+          visited: 0,
+          local_file_data: photoData || null,
+          is_folder: 0,
+          parent_id: null,
+          photo_sync_status: photoSyncStatus
+        };
+
+        await queueSyncAction('locations', 'insert', newLocationRecord);
+
+        if (photoData) {
+          const locPhotoObj = {
+            id: generateUUID(),
+            entity_id: targetLocId,
+            file_path: photoData,
+            is_featured: 1,
+            created_at: new Date().toISOString()
+          };
+          await queueSyncAction('entity_photos', 'insert', locPhotoObj);
+        }
+      }
+
+      createdLocationIds.push(targetLocId);
+      locationNameToIdMap[locName.toLowerCase()] = targetLocId;
+
+      // Now add all checked Places of Visit under this Location
+      const locPlaces = Array.isArray(locSuggestion.places) ? locSuggestion.places : [];
+      for (let pIdx = 0; pIdx < locPlaces.length; pIdx++) {
+        const pKey = `${lKey}_place_${pIdx}`;
+        if (!proposalObj.checkedPlaces[pKey]) continue;
+
+        const placeSuggestion = locPlaces[pIdx];
+        const placeName = (placeSuggestion.name || '').trim();
+        if (!placeName) continue;
+
+        if (setStatusFn) setStatusFn(`Phase 1/2: Adding place ${pIdx + 1}/${locPlaces.length} "${placeName}" (${locName})...`);
+
+        let existingPlace = places.find(
+          p => String(p.location_id) === String(targetLocId) && (p.name || '').trim().toLowerCase() === placeName.toLowerCase()
+        );
+
+        if (existingPlace) {
+          placeNameToRecordMap[placeName.toLowerCase()] = existingPlace;
+          continue;
+        }
+
+        const newPlaceId = generateUUID();
+        let pLat = placeSuggestion.latitude !== undefined && placeSuggestion.latitude !== null ? parseFloat(placeSuggestion.latitude) : null;
+        let pLon = placeSuggestion.longitude !== undefined && placeSuggestion.longitude !== null ? parseFloat(placeSuggestion.longitude) : null;
+        if (isNaN(pLat) || isNaN(pLon)) {
+          pLat = null;
+          pLon = null;
+        }
+        let pPhoto = null;
+        let pNotes = placeSuggestion.description || placeSuggestion.short_description || '';
+        let pPhotoStatus = 'failed';
+
+        // Best-effort geocode for Place (leave empty if place does not exist or fails)
+        if (pLat === null || pLon === null) {
+          try {
+            const pGeoQuery = `${placeName}, ${locName}`;
+            const pGeoRes = await fetch(`/api/import/geocode?query=${encodeURIComponent(pGeoQuery)}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (pGeoRes.ok) {
+              const pGeoData = await pGeoRes.json();
+              const firstPGeo = Array.isArray(pGeoData) ? pGeoData[0] : pGeoData;
+              if (firstPGeo && firstPGeo.lat !== undefined && firstPGeo.lon !== undefined && firstPGeo.lat !== null && firstPGeo.lon !== null) {
+                const parsedPLat = parseFloat(firstPGeo.lat);
+                const parsedPLon = parseFloat(firstPGeo.lon);
+                if (!isNaN(parsedPLat) && !isNaN(parsedPLon)) {
+                  pLat = parsedPLat;
+                  pLon = parsedPLon;
+                }
+              }
+            }
+          } catch (_) {
+            // Leave coordinates null
+          }
+        }
+
+        // Best-effort Wiki photo/summary for Place (leave empty if unable to pull from Wiki)
+        try {
+          const pPhotoRes = await fetch('/api/import/search-photo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ query: `${placeName} ${locName}`, latitude: pLat, longitude: pLon })
+          });
+          if (pPhotoRes.ok) {
+            const pPhotoJson = await pPhotoRes.json();
+            const resolvedPUrl = pPhotoJson?.fileUrl || pPhotoJson?.imageUrl || null;
+            if (resolvedPUrl) {
+              pPhoto = resolvedPUrl;
+              pPhotoStatus = 'completed';
+            }
+            if (pPhotoJson && pPhotoJson.description) {
+              pNotes = pPhotoJson.description;
+            }
+          }
+        } catch (_) {
+          // Leave photo & notes empty
+        }
+
+        const newPlaceRecord = {
+          id: newPlaceId,
+          location_id: targetLocId,
+          name: placeName,
+          category: placeSuggestion.category || 'Attraction',
+          address: placeSuggestion.address || '',
+          latitude: pLat,
+          longitude: pLon,
+          notes: pNotes || '',
+          visited: 0,
+          local_file_data: pPhoto || null,
+          photo_sync_status: pPhotoStatus
+        };
+
+        await queueSyncAction('places', 'insert', newPlaceRecord);
+        if (pPhoto) {
+          const placePhotoObj = {
+            id: generateUUID(),
+            entity_id: newPlaceId,
+            file_path: pPhoto,
+            is_featured: 1,
+            created_at: new Date().toISOString()
+          };
+          await queueSyncAction('entity_photos', 'insert', placePhotoObj);
+        }
+        placeNameToRecordMap[placeName.toLowerCase()] = newPlaceRecord;
+      }
+    }
+
+    // ==============================================================
+    // PHASE 2: BUILD TRIP ITINERARY ONLY AFTER PHASE 1 COMPLETES
+    // ==============================================================
+    if (setStatusFn) setStatusFn('Phase 2/2: Building day-by-day trip itinerary from newly added places...');
+
+    if (clearExistingItinerary) {
+      const existingItems = itineraries.filter(i => i.trip_id === targetTripObj.id);
+      for (const it of existingItems) {
+        await queueSyncAction('itinerary_items', 'delete', it);
+      }
+    }
+
+    const existingNotes = safeParseNotes(targetTripObj.notes);
+    const prevLocIds = safeParseArray(existingNotes.locationIds);
+    const uniqueLocationIds = [...new Set([...prevLocIds, ...createdLocationIds])];
+    const dayLocationsMap = {};
+    const itineraryDaysList = proposalObj.itinerary || [];
+
+    const resolveDateForDayNum = (dayNum) => {
+      const safeDayNum = Math.max(1, Number(dayNum) || 1);
+      if (targetTripObj.start_date && targetTripObj.start_date !== 'null') {
+        const d = new Date(targetTripObj.start_date);
+        if (!isNaN(d.getTime())) {
+          d.setDate(d.getDate() + (safeDayNum - 1));
+          return d.toISOString().split('T')[0];
+        }
+      }
+      if (itineraryDays[safeDayNum - 1]) {
+        return itineraryDays[safeDayNum - 1].date;
+      }
+      return `Day ${safeDayNum}`;
+    };
+
+    let totalInsertedItems = 0;
+
+    for (const dayObj of itineraryDaysList) {
+      const dayNum = Number(dayObj.day) || 1;
+      const dayDateStr = resolveDateForDayNum(dayNum);
+
+      if (dayObj.location_name) {
+        const cleanLocName = String(dayObj.location_name).trim().toLowerCase();
+        let matchedLocId = locationNameToIdMap[cleanLocName];
+        if (!matchedLocId) {
+          const partialKey = Object.keys(locationNameToIdMap).find(
+            k => k === cleanLocName || k.includes(cleanLocName) || cleanLocName.includes(k)
+          );
+          if (partialKey) matchedLocId = locationNameToIdMap[partialKey];
+        }
+        if (matchedLocId) {
+          dayLocationsMap[dayDateStr] = String(matchedLocId);
+        }
+      }
+      if (!dayLocationsMap[dayDateStr] && createdLocationIds.length > 0) {
+        dayLocationsMap[dayDateStr] = String(createdLocationIds[0]);
+      }
+
+      const dayPlaceNames = Array.isArray(dayObj.places) ? dayObj.places : (Array.isArray(dayObj.activities) ? dayObj.activities : []);
+      let seq = 1;
+      for (const rawPlaceEntry of dayPlaceNames) {
+        const rawStr = typeof rawPlaceEntry === 'object'
+          ? (rawPlaceEntry?.name || rawPlaceEntry?.place_name || '')
+          : String(rawPlaceEntry || '');
+        const cleanName = rawStr.trim().toLowerCase();
+        if (!cleanName) continue;
+
+        let resolvedPlace = placeNameToRecordMap[cleanName];
+        if (!resolvedPlace) {
+          const matchedKey = Object.keys(placeNameToRecordMap).find(
+            k => k === cleanName || k.includes(cleanName) || cleanName.includes(k)
+          );
+          if (matchedKey) resolvedPlace = placeNameToRecordMap[matchedKey];
+        }
+
+        if (resolvedPlace && resolvedPlace.id) {
+          const newItem = {
+            id: generateUUID(),
+            trip_id: targetTripObj.id,
+            date: dayDateStr,
+            place_id: resolvedPlace.id,
+            sequence_order: seq++,
+            distance_from_prev: null,
+            duration_from_prev: null
+          };
+          await queueSyncAction('itinerary_items', 'insert', newItem);
+          totalInsertedItems++;
+        }
+      }
+    }
+
+    // Fallback: if AI's itinerary array was empty or didn't match place names, schedule checked places by their suggested day
+    if (totalInsertedItems === 0) {
+      const totalDaysCount = Math.max(1, Number(targetTripObj.length) || 1);
+      const daySeqCounters = {};
+      let fallbackIdx = 0;
+
+      for (let lIdx = 0; lIdx < proposalLocs.length; lIdx++) {
+        const lKey = `loc_${lIdx}`;
+        if (!proposalObj.checkedLocs[lKey]) continue;
+        const locSuggestion = proposalLocs[lIdx];
+        const locName = (locSuggestion.name || '').trim().toLowerCase();
+        const locId = locationNameToIdMap[locName];
+        const locPlaces = Array.isArray(locSuggestion.places) ? locSuggestion.places : [];
+
+        for (let pIdx = 0; pIdx < locPlaces.length; pIdx++) {
+          const pKey = `${lKey}_place_${pIdx}`;
+          if (!proposalObj.checkedPlaces[pKey]) continue;
+          const placeSuggestion = locPlaces[pIdx];
+          const placeName = (placeSuggestion.name || '').trim().toLowerCase();
+          const resolvedPlace = placeNameToRecordMap[placeName];
+          if (!resolvedPlace || !resolvedPlace.id) continue;
+
+          const suggestedDayNum = Number(placeSuggestion.day || placeSuggestion.suggested_day) || ((fallbackIdx % totalDaysCount) + 1);
+          const boundedDayNum = Math.min(Math.max(1, suggestedDayNum), totalDaysCount);
+          const dayDateStr = resolveDateForDayNum(boundedDayNum);
+
+          if (locId && !dayLocationsMap[dayDateStr]) {
+            dayLocationsMap[dayDateStr] = String(locId);
+          }
+
+          daySeqCounters[dayDateStr] = (daySeqCounters[dayDateStr] || 0) + 1;
+          await queueSyncAction('itinerary_items', 'insert', {
+            id: generateUUID(),
+            trip_id: targetTripObj.id,
+            date: dayDateStr,
+            place_id: resolvedPlace.id,
+            sequence_order: daySeqCounters[dayDateStr],
+            distance_from_prev: null,
+            duration_from_prev: null
+          });
+          fallbackIdx++;
+        }
+      }
+    }
+
+    const normalizedExistingDayLocs = {};
+    if (existingNotes.dayLocations && typeof existingNotes.dayLocations === 'object') {
+      Object.keys(existingNotes.dayLocations).forEach(k => {
+        const scalarVal = getScalarDayLocationId(existingNotes.dayLocations, k);
+        if (scalarVal) normalizedExistingDayLocs[k] = scalarVal;
+      });
+    }
+
+    const updatedNotes = {
+      ...existingNotes,
+      locationIds: uniqueLocationIds,
+      dayLocations: { ...normalizedExistingDayLocs, ...dayLocationsMap }
+    };
+    const updatedTrip = {
+      ...targetTripObj,
+      notes: JSON.stringify(updatedNotes)
+    };
+    await queueSyncAction('trips', 'update', updatedTrip);
+    setStopFilterLocationIds(uniqueLocationIds);
+    setSelectedTrip(updatedTrip);
+    if (onSelectTrip) onSelectTrip(updatedTrip);
+    return updatedTrip;
+  };
+
+  const handleExecuteTwoPhaseAiTrip = async () => {
+    if (!wizardTrip || !aiDiscoveryProposal) return;
+
+    setIsExecutingTwoPhaseAi(true);
+    setWizardAiError('');
+    setTwoPhaseProgressMsg('Phase 1/2: Adding confirmed Locations & Places to your Locations library...');
+
+    try {
+      await executeTwoPhaseProposalForTrip(
+        wizardTrip,
+        aiDiscoveryProposal,
+        (msg) => setTwoPhaseProgressMsg(msg),
+        false
+      );
+
+      setAiDiscoveryProposal(null);
+      setAiDiscoveryPrompt('');
+      setTripName('');
+      setTripStartDate('');
+      setTripLength(1);
+      setTripNotes('');
+      setIsInternational(false);
+      setSelectedLocationsForAi([]);
+      setSelectedCollectionsForAi([]);
+      setAiMode(null);
+      setShowAddForm(false);
+      setWizardStep(1);
+      setTripBudget('');
+      setWizardTrip(null);
+      setShow3ColumnWorkspace(true);
+    } catch (err) {
+      console.error('Two-Phase AI Trip Creation Error:', err);
+      setWizardAiError(err.message || 'Failed to complete 2-phase AI trip creation.');
+    } finally {
+      setIsExecutingTwoPhaseAi(false);
+      setTwoPhaseProgressMsg('');
+    }
+  };
+
+  // ==============================================================
+  // LIVE COLLABORATIVE TRIP SHARING HANDLERS
+  // ==============================================================
+  const openShareModal = async (tripObj) => {
+    const targetTrip = tripObj || currentTrip;
+    if (!targetTrip) return;
+    setShowShareModal(true);
+    setShareMsg(null);
+    setShareLoading(true);
+    try {
+      const [dirRes, sharesRes] = await Promise.all([
+        fetch('/api/users/directory', { headers: { Authorization: `Bearer ${token}` } }),
+        (!targetTrip.shared_permission || targetTrip.shared_permission === 'owner')
+          ? fetch(`/api/trips/${targetTrip.id}/shares`, { headers: { Authorization: `Bearer ${token}` } })
+          : Promise.resolve(null)
+      ]);
+      if (dirRes && dirRes.ok) {
+        const usersData = await dirRes.json();
+        setLocalUsersDirectory(Array.isArray(usersData) ? usersData : []);
+      }
+      if (sharesRes && sharesRes.ok) {
+        const sharesData = await sharesRes.json();
+        const resolvedShares = Array.isArray(sharesData)
+          ? sharesData
+          : (Array.isArray(sharesData?.shares) ? sharesData.shares : []);
+        setTripSharesList(resolvedShares);
+      }
+    } catch (err) {
+      console.error('Failed to load sharing directory:', err);
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleShareTrip = async (e) => {
+    e.preventDefault();
+    if (!currentTrip || !shareSelectedUserId) return;
+    setShareLoading(true);
+    setShareMsg(null);
+    try {
+      const res = await fetch(`/api/trips/${currentTrip.id}/shares`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          shared_with_user_id: shareSelectedUserId,
+          sharedWithUserId: shareSelectedUserId,
+          permission: sharePermission,
+          send_email: shareSendEmail,
+          sendEmail: shareSendEmail
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to share trip');
+      if (Array.isArray(data.shares)) {
+        setTripSharesList(data.shares);
+      } else {
+        const sharesRes = await fetch(`/api/trips/${currentTrip.id}/shares`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (sharesRes.ok) {
+          const sharesData = await sharesRes.json();
+          setTripSharesList(Array.isArray(sharesData) ? sharesData : (sharesData.shares || []));
+        }
+      }
+      setShareSelectedUserId('');
+      setShareMsg({
+        type: 'success',
+        text: data.emailSent
+          ? 'Trip shared and invitation email sent!'
+          : 'Trip shared with local user!'
+      });
+      await populateLocalDb(token);
+    } catch (err) {
+      setShareMsg({ type: 'error', text: err.message });
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleUpdateSharePermission = async (targetUserId, newPerm) => {
+    if (!currentTrip || !targetUserId) return;
+    try {
+      const res = await fetch(`/api/trips/${currentTrip.id}/shares/${targetUserId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ permission: newPerm })
+      });
+      if (res.ok) {
+        setTripSharesList(prev => prev.map(s => (String(s.shared_with_user_id || s.user_id) === String(targetUserId) ? { ...s, permission: newPerm } : s)));
+        await populateLocalDb(token);
+      }
+    } catch (err) {
+      console.error('Failed to update share permission:', err);
+    }
+  };
+
+  const handleRevokeShare = async (targetUserId, isLeavingSelf = false) => {
+    if (!currentTrip || !targetUserId) return;
+    try {
+      const res = await fetch(`/api/trips/${currentTrip.id}/shares/${targetUserId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        if (isLeavingSelf) {
+          setShowShareModal(false);
+          handleBackToTripsList();
+          await populateLocalDb(token);
+        } else {
+          setTripSharesList(prev => prev.filter(s => String(s.shared_with_user_id || s.user_id) !== String(targetUserId)));
+          await populateLocalDb(token);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to revoke share:', err);
+    }
+  };
+
+  const handleCloneSharedTrip = async () => {
+    if (!currentTrip) return;
+    setShareLoading(true);
+    setShareMsg(null);
+    try {
+      const res = await fetch(`/api/trips/${currentTrip.id}/clone`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to copy trip');
+      await populateLocalDb(token);
+      setShowShareModal(false);
+      alert('Trip copied into your personal trips & Locations library!');
+    } catch (err) {
+      setShareMsg({ type: 'error', text: err.message });
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  // ==============================================================
+  // EMAIL TRIP SUMMARY & EXPENSE SETTLEMENT HANDLERS
+  // ==============================================================
+  const handleSendTripEmailSummary = async () => {
+    const activeTrip = selectedTrip || currentTrip;
+    if (!activeTrip) return;
+    const recipient = emailSummaryRecipient.trim();
+    if (!recipient) {
+      setEmailSummaryStatus({ type: 'error', text: 'Please enter at least one recipient email address.' });
+      return;
+    }
+
+    setSendingSummaryEmail(true);
+    setEmailSummaryStatus(null);
+    try {
+      const sectionsHtmlParts = [];
+
+      if (printOptBudget) {
+        sectionsHtmlParts.push(`
+          <div style="margin-bottom:20px;padding:14px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+            <h3 style="margin:0 0 8px 0;color:#1e293b;">💰 Budget Spend Tracker</h3>
+            <p style="margin:4px 0;font-size:14px;"><b>Planned Budget:</b> ${plannedBudget.toFixed(2)} ${baseCurrency}</p>
+            <p style="margin:4px 0;font-size:14px;"><b>Actual Spend:</b> ${actualBudget.toFixed(2)} ${baseCurrency} (Total Group: ${totalGroupBudget.toFixed(2)} ${baseCurrency})</p>
+          </div>
+        `);
+      }
+
+      if (printOptItinerary) {
+        const dayBlocks = itineraryDays.map(day => {
+          const dayItems = itineraries
+            .filter(i => i.trip_id === activeTrip.id && i.date === day.date)
+            .sort((a, b) => a.sequence_order - b.sequence_order);
+          const itemsLis = dayItems.length === 0
+            ? '<li style="color:#64748b;">No stops scheduled</li>'
+            : dayItems.map(item => {
+                const pl = combinedPlaces.find(p => p.id === item.place_id);
+                return `<li style="margin-bottom:4px;"><b>${pl ? pl.name : (item.custom_name || 'Stop')}</b> ${pl?.category ? `<span style="color:#64748b;">(${pl.category})</span>` : ''}</li>`;
+              }).join('');
+          return `
+            <div style="margin-bottom:12px;">
+              <h4 style="margin:0 0 6px 0;color:#334155;">${day.label}</h4>
+              <ol style="margin:0;padding-left:20px;font-size:14px;">${itemsLis}</ol>
+            </div>
+          `;
+        }).join('');
+        sectionsHtmlParts.push(`
+          <div style="margin-bottom:20px;padding:14px;border:1px solid #e2e8f0;border-radius:8px;">
+            <h3 style="margin:0 0 10px 0;color:#1e293b;">📅 Chronological Daily Itinerary</h3>
+            ${dayBlocks}
+          </div>
+        `);
+      }
+
+      if (printOptReservations) {
+        const tripRes = reservations.filter(r => r.trip_id === activeTrip.id);
+        const resRows = tripRes.length === 0
+          ? '<p style="color:#64748b;font-size:14px;">No reservations attached.</p>'
+          : `<ul style="margin:0;padding-left:20px;font-size:14px;">${tripRes.map(r => `<li><b>[${r.type}] ${r.title}</b> ${r.date ? `(${r.date})` : ''} ${r.details ? `— ${r.details}` : ''}</li>`).join('')}</ul>`;
+        sectionsHtmlParts.push(`
+          <div style="margin-bottom:20px;padding:14px;border:1px solid #e2e8f0;border-radius:8px;">
+            <h3 style="margin:0 0 8px 0;color:#1e293b;">🎟️ Trip Reservations</h3>
+            ${resRows}
+          </div>
+        `);
+      }
+
+      if (printOptExpenses) {
+        const expRows = tripExpensesList.length === 0
+          ? '<p style="color:#64748b;font-size:14px;">No expenses recorded.</p>'
+          : `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+              <thead><tr style="border-bottom:1px solid #cbd5e1;text-align:left;"><th style="padding:6px;">Date</th><th style="padding:6px;">Category</th><th style="padding:6px;">Notes</th><th style="padding:6px;">Amount</th><th style="padding:6px;">Paid By</th></tr></thead>
+              <tbody>${tripExpensesList.map(e => `<tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px;">${e.date || ''}</td><td style="padding:6px;">${e.category || ''}</td><td style="padding:6px;">${e.notes || ''}</td><td style="padding:6px;font-weight:bold;">${e.amount} ${e.currency}</td><td style="padding:6px;">${getMemberName(e.paid_by, true)}</td></tr>`).join('')}</tbody>
+            </table>`;
+        let splitHtml = '';
+        if (printOptExpenseSplit && expenseSplitSummary.settlements.length > 0) {
+          splitHtml = `<div style="margin-top:12px;padding:10px;background:#ecfdf5;border-radius:6px;"><b>💸 Who Owes Whom:</b><ul style="margin:6px 0 0 0;padding-left:18px;">${expenseSplitSummary.settlements.map(s => `<li><b>${s.fromFullName || s.fromName}</b> owes <b>${s.toFullName || s.toName}</b>: <b>${s.amount.toFixed(2)} ${baseCurrency}</b></li>`).join('')}</ul></div>`;
+        }
+        sectionsHtmlParts.push(`
+          <div style="margin-bottom:20px;padding:14px;border:1px solid #e2e8f0;border-radius:8px;">
+            <h3 style="margin:0 0 8px 0;color:#1e293b;">🧾 Trip Expenses</h3>
+            ${expRows}
+            ${splitHtml}
+          </div>
+        `);
+      }
+
+      if (printOptNotes) {
+        const tNotes = notesList.filter(n => n.trip_id === activeTrip.id);
+        if (tNotes.length > 0) {
+          sectionsHtmlParts.push(`
+            <div style="margin-bottom:20px;padding:14px;border:1px solid #e2e8f0;border-radius:8px;">
+              <h3 style="margin:0 0 8px 0;color:#1e293b;">📝 Trip Notes & Journal</h3>
+              ${tNotes.map(n => `<div style="margin-bottom:8px;"><b>${n.title}</b> (${n.category}): <div style="white-space:pre-wrap;font-size:13px;color:#334155;">${n.content}</div></div>`).join('')}
+            </div>
+          `);
+        }
+      }
+
+      const res = await fetch(`/api/trips/${activeTrip.id}/email-summary`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          toEmail: recipient,
+          tripName: activeTrip.name,
+          tripDates: `${formatStartDate(activeTrip.start_date)} (${activeTrip.length || 1} days)`,
+          sectionsHtml: sectionsHtmlParts.join('\n')
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send trip email');
+      setEmailSummaryStatus({ type: 'success', text: data.message || `Sent to ${recipient}!` });
+    } catch (err) {
+      setEmailSummaryStatus({ type: 'error', text: err.message });
+    } finally {
+      setSendingSummaryEmail(false);
+    }
+  };
+
+  const handleSendSettlementEmail = async () => {
+    const activeTrip = selectedTrip || currentTrip;
+    if (!activeTrip) return;
+    setSendingSettlementEmail(true);
+    setSettlementEmailStatus(null);
+    try {
+      const res = await fetch(`/api/trips/${activeTrip.id}/email-settlement`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          toEmails: settlementEmailRecipient.trim() ? settlementEmailRecipient.split(',').map(s => s.trim()).filter(Boolean) : [],
+          tripName: activeTrip.name,
+          baseCurrency,
+          totalSpend: expenseSplitSummary.totalAllExpenses.toFixed(2),
+          settlements: expenseSplitSummary.settlements.map(s => ({
+            fromName: s.fromFullName || s.fromName,
+            toName: s.toFullName || s.toName,
+            amount: s.amount.toFixed(2),
+            breakdownNote: s.breakdownNote
+          }))
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send settlement email');
+      setSettlementEmailStatus({ type: 'success', text: data.message || 'Settlement summary emailed!' });
+    } catch (err) {
+      setSettlementEmailStatus({ type: 'error', text: err.message });
+    } finally {
+      setSendingSettlementEmail(false);
     }
   };
 
@@ -3318,8 +4382,12 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
   const getMemberName = useCallback((memberId, isShort = false) => {
     if (!memberId || memberId === 'null' || memberId === 'undefined') return 'Traveler';
-    const ownerName = ownerProfile.displayName || ownerProfile.name || 'Me';
-    const ownerImmichId = ownerProfile.immichPersonId;
+    const activeTripObj = selectedTrip || currentTrip;
+    const isExternalShared = Boolean(activeTripObj?.shared_permission && activeTripObj.shared_permission !== 'owner');
+    const ownerName = isExternalShared
+      ? (activeTripObj.owner_display_name || activeTripObj.owner_username || 'Trip Owner')
+      : (ownerProfile.displayName || ownerProfile.name || 'Me');
+    const ownerImmichId = isExternalShared ? null : ownerProfile.immichPersonId;
 
     const isOwner = memberId === 'self' || 
       (ownerImmichId && String(memberId) === String(ownerImmichId)) ||
@@ -3327,12 +4395,13 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
     if (isOwner) {
       if (isShort) return ownerName;
+      if (isExternalShared) return `${ownerName} (Owner)`;
       return ownerName === 'Me' ? 'Me' : `${ownerName} (Me)`;
     }
 
     const matched = people.find(p => String(p.id) === String(memberId));
     return matched ? matched.name : 'Traveler';
-  }, [people, ownerProfile]);
+  }, [people, ownerProfile, selectedTrip, currentTrip]);
 
   // Trip Split & Main Member Configuration
   const tripSplitConfig = useMemo(() => {
@@ -3414,8 +4483,11 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
     const mainMemberObjects = effectiveMainIds.map(id => {
       if (id === 'self') {
-        const ownerName = ownerProfile.displayName || ownerProfile.name || 'Me';
-        return { id: 'self', name: ownerName, shortName: ownerName, relation: 'Trip Owner (You)', isMain: true };
+        const isExt = Boolean(activeTrip?.shared_permission && activeTrip.shared_permission !== 'owner');
+        const ownerName = isExt
+          ? (activeTrip.owner_display_name || activeTrip.owner_username || 'Trip Owner')
+          : (ownerProfile.displayName || ownerProfile.name || 'Me');
+        return { id: 'self', name: ownerName, shortName: ownerName, relation: isExt ? 'Trip Owner' : 'Trip Owner (You)', isMain: true };
       }
       const p = people.find(person => String(person.id) === String(id));
       return {
@@ -4000,11 +5072,13 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
     const container = el.closest('.trip-details-overlay') || document.querySelector('.trip-details-overlay');
     const appHeader = document.querySelector('.app-header');
     const stickyBar = document.querySelector('.trip-sticky-top-bar');
+    const isStickyActive = stickyBar && window.getComputedStyle(stickyBar).position === 'sticky';
+    const stickyBarHeight = isStickyActive ? stickyBar.offsetHeight : 0;
 
     if (container && container.scrollHeight > container.clientHeight + 20) {
       const style = window.getComputedStyle(container);
       if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
-        const stickyOffset = (stickyBar ? stickyBar.offsetHeight : 110) + 16;
+        const stickyOffset = stickyBarHeight + 16;
         const containerRect = container.getBoundingClientRect();
         const elRect = el.getBoundingClientRect();
         const targetScrollTop = container.scrollTop + (elRect.top - containerRect.top) - stickyOffset;
@@ -4013,7 +5087,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
       }
     }
 
-    const totalStickyHeight = (appHeader ? appHeader.offsetHeight : 60) + (stickyBar ? stickyBar.offsetHeight : 110) + 16;
+    const totalStickyHeight = (appHeader ? appHeader.offsetHeight : 60) + stickyBarHeight + 16;
     const elRect = el.getBoundingClientRect();
     const targetWindowY = window.scrollY + elRect.top - totalStickyHeight;
     window.scrollTo({ top: Math.max(0, targetWindowY), behavior: 'smooth' });
@@ -4457,14 +5531,290 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
               </form>
             ) : (
               <div>
-                {isGeneratingTrip ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', padding: '32px 0' }}>
-                    <Compass size={48} className="spin" style={{ color: 'var(--accent-primary)' }} />
-                    <p style={{ fontWeight: 'bold' }}>Generating daily itinerary with AI...</p>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center' }}>Connecting with your configured model to outline day-wise stops and routing activities.</p>
+                {/* Mode Switcher when AI Assisted is chosen */}
+                {isManualOrAi === 'ai' && (
+                  <div style={{ marginBottom: '18px' }}>
+                    <div style={{ display: 'flex', gap: '6px', background: 'var(--bg-app)', padding: '4px', borderRadius: '10px', border: '1px solid var(--border-glass)' }}>
+                      <button
+                        type="button"
+                        disabled={isGeneratingTrip || isExecutingTwoPhaseAi}
+                        onClick={() => {
+                          setAiStep2SourceMode('prompt');
+                          setWizardAiError('');
+                          if (!aiDiscoveryPrompt.trim()) {
+                            setAiDiscoveryPrompt(buildDefaultAiDiscoveryPrompt(wizardTrip));
+                          }
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: aiStep2SourceMode === 'prompt' ? '1.5px solid var(--accent-primary)' : '1px solid transparent',
+                          background: aiStep2SourceMode === 'prompt' ? 'rgba(139, 92, 246, 0.2)' : 'transparent',
+                          color: aiStep2SourceMode === 'prompt' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          fontWeight: 600,
+                          fontSize: '0.84rem',
+                          cursor: isGeneratingTrip || isExecutingTwoPhaseAi ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        ✨ Write a Prompt (AI Discovery)
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isGeneratingTrip || isExecutingTwoPhaseAi}
+                        onClick={() => { setAiStep2SourceMode('manual_select'); setWizardAiError(''); }}
+                        style={{
+                          flex: 1,
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: aiStep2SourceMode === 'manual_select' ? '1.5px solid var(--accent-primary)' : '1px solid transparent',
+                          background: aiStep2SourceMode === 'manual_select' ? 'rgba(139, 92, 246, 0.2)' : 'transparent',
+                          color: aiStep2SourceMode === 'manual_select' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          fontWeight: 600,
+                          fontSize: '0.84rem',
+                          cursor: isGeneratingTrip || isExecutingTwoPhaseAi ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        📍 Select Saved Locations Manually
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* BRANCH A: AI PROMPT DISCOVERY & 2-PHASE EXECUTION */}
+                {isManualOrAi === 'ai' && aiStep2SourceMode === 'prompt' ? (
+                  <div>
+                    {/* Context Pills from Step 1 */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
+                      <span style={{ fontSize: '0.74rem', padding: '4px 10px', borderRadius: '999px', background: 'rgba(139, 92, 246, 0.14)', border: '1px solid rgba(139, 92, 246, 0.3)', color: 'var(--text-primary)' }}>
+                        📅 {tripLength || 1} {Number(tripLength) === 1 ? 'Day' : 'Days'}
+                      </span>
+                      <span style={{ fontSize: '0.74rem', padding: '4px 10px', borderRadius: '999px', background: 'rgba(6, 182, 212, 0.14)', border: '1px solid rgba(6, 182, 212, 0.3)', color: 'var(--text-primary)' }}>
+                        🌅 Arrival: {arrivalTime || 'morning'}
+                      </span>
+                      <span style={{ fontSize: '0.74rem', padding: '4px 10px', borderRadius: '999px', background: 'rgba(16, 185, 129, 0.14)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--text-primary)' }}>
+                        🌍 {isInternational ? 'International' : 'Domestic'}
+                      </span>
+                      {tripBudget && (
+                        <span style={{ fontSize: '0.74rem', padding: '4px 10px', borderRadius: '999px', background: 'rgba(245, 158, 11, 0.14)', border: '1px solid rgba(245, 158, 11, 0.3)', color: 'var(--text-primary)' }}>
+                          💰 Budget: {tripBudget} {baseCurrency}
+                        </span>
+                      )}
+                      <span style={{ fontSize: '0.74rem', padding: '4px 10px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)' }}>
+                        👥 {(selectedCompanions?.length || 0) + 1} Traveler(s)
+                      </span>
+                    </div>
+
+                    {!aiDiscoveryProposal ? (
+                      <form onSubmit={handleGenerateAiPromptProposal}>
+                        <div className="form-group">
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', gap: '8px', flexWrap: 'wrap' }}>
+                            <label style={{ fontWeight: 600, margin: 0 }}>Describe Your Destination(s) & Trip Details</label>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => {
+                                setAiDiscoveryPrompt(buildDefaultAiDiscoveryPrompt(wizardTrip));
+                                setWizardAiError('');
+                              }}
+                              disabled={isGeneratingTrip}
+                              style={{ width: 'auto', padding: '3px 10px', fontSize: '0.74rem' }}
+                              title="Reset to default prompt template with Step 1 trip details and [Location] tag"
+                            >
+                              ↺ Reset Default Prompt
+                            </button>
+                          </div>
+                          <textarea
+                            className="form-control"
+                            rows="8"
+                            placeholder="Fill in the [Location: ...] tag with a single destination for all days or day-wise locations..."
+                            value={aiDiscoveryPrompt}
+                            onChange={(e) => setAiDiscoveryPrompt(e.target.value)}
+                            style={{ fontSize: '0.84rem', lineHeight: '1.45', fontFamily: 'monospace' }}
+                            disabled={isGeneratingTrip}
+                            required
+                          />
+                          <small style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
+                            Fill in the <code>[Location: ...]</code> tag (either a single location for all days or day-wise locations). AI will suggest locations & places of visit, let you confirm them, add them to your <b>Locations</b> app first, and then build your day-wise itinerary.
+                          </small>
+                        </div>
+
+                        {wizardAiError && (
+                          <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--danger)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.8rem', marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div>⚠️ {wizardAiError}</div>
+                            {!/\[Location:/i.test(aiDiscoveryPrompt) && (
+                              <div>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  onClick={() => {
+                                    const tagLine = '[Location: Enter a single destination for all days (e.g., Kyoto, Japan) OR day-wise locations (e.g., Day 1-2: Tokyo, Day 3-4: Kyoto)]';
+                                    setAiDiscoveryPrompt(prev => prev.trim() ? `${prev.trim()}\n\n${tagLine}` : tagLine);
+                                  }}
+                                  style={{ width: 'auto', padding: '3px 10px', fontSize: '0.74rem' }}
+                                >
+                                  + Insert [Location] Line
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {isGeneratingTrip && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.3)', marginTop: '12px' }}>
+                            <RefreshCw size={20} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                              <div style={{ fontWeight: '600', marginBottom: '2px' }}>Planning Trip with AI...</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{wizardAiStatusMsg || 'Analyzing prompt and trip parameters...'}</div>
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+                          <button type="button" className="btn btn-secondary" onClick={() => setWizardStep(1)} disabled={isGeneratingTrip}>
+                            Back
+                          </button>
+                          <button type="submit" className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }} disabled={isGeneratingTrip}>
+                            {isGeneratingTrip ? (
+                              <>
+                                <RefreshCw size={16} className="spin" /> Generating Proposal...
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles size={16} /> Generate Places & Trip Proposal
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div>
+                        <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px', padding: '12px', marginBottom: '14px', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                          <b>Review AI-Suggested Locations & Places:</b> Uncheck any items you don't want. Clicking confirm will <b>first</b> add these locations and places into your <b>Locations</b> library (leaving photo/coordinates empty if a place isn't found on Wiki), and <b>then</b> build your daily itinerary.
+                        </div>
+
+                        <div style={{ maxHeight: '280px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px', marginBottom: '14px' }}>
+                          {(aiDiscoveryProposal.locations || []).map((loc, lIdx) => {
+                            const lKey = `loc_${lIdx}`;
+                            const isLocChecked = !!aiDiscoveryProposal.checkedLocs[lKey];
+                            return (
+                              <div key={lKey} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px 12px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', margin: 0, color: 'var(--accent-secondary)' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isLocChecked}
+                                    disabled={isExecutingTwoPhaseAi}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked;
+                                      setAiDiscoveryProposal(prev => {
+                                        const nextLocs = { ...prev.checkedLocs, [lKey]: checked };
+                                        const nextPlaces = { ...prev.checkedPlaces };
+                                        (loc.places || []).forEach((_, pIdx) => {
+                                          nextPlaces[`${lKey}_place_${pIdx}`] = checked;
+                                        });
+                                        return { ...prev, checkedLocs: nextLocs, checkedPlaces: nextPlaces };
+                                      });
+                                    }}
+                                  />
+                                  📍 {loc.name} {[loc.state, loc.country].filter(Boolean).length > 0 ? `(${[loc.state, loc.country].filter(Boolean).join(', ')})` : ''}
+                                </label>
+
+                                <div style={{ marginLeft: '24px', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                  {(loc.places || []).map((pl, pIdx) => {
+                                    const pKey = `${lKey}_place_${pIdx}`;
+                                    const isPlaceChecked = !!aiDiscoveryProposal.checkedPlaces[pKey];
+                                    return (
+                                      <label key={pKey} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.82rem', cursor: 'pointer', margin: 0, opacity: isLocChecked ? 1 : 0.5 }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={isPlaceChecked}
+                                          disabled={!isLocChecked || isExecutingTwoPhaseAi}
+                                          onChange={(e) => {
+                                            const checked = e.target.checked;
+                                            setAiDiscoveryProposal(prev => ({
+                                              ...prev,
+                                              checkedPlaces: { ...prev.checkedPlaces, [pKey]: checked }
+                                            }));
+                                          }}
+                                          style={{ marginTop: '3px' }}
+                                        />
+                                        <div>
+                                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{pl.name}</span>
+                                          {pl.category && (
+                                            <span style={{ marginLeft: '6px', fontSize: '0.7rem', padding: '1px 6px', borderRadius: '4px', background: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent-primary-hover)' }}>
+                                              {pl.category}
+                                            </span>
+                                          )}
+                                          {(pl.suggested_day || pl.day) && (
+                                            <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                              • Day {pl.suggested_day || pl.day}
+                                            </span>
+                                          )}
+                                          {(pl.short_description || pl.description) && (
+                                            <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                              {pl.short_description || pl.description}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {wizardAiError && (
+                          <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--danger)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.8rem', marginBottom: '12px' }}>
+                            ⚠️ {wizardAiError}
+                          </div>
+                        )}
+
+                        {isExecutingTwoPhaseAi && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.3)', marginBottom: '12px' }}>
+                            <RefreshCw size={20} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                              <div style={{ fontWeight: '600', marginBottom: '2px' }}>Executing 2-Phase AI Trip Creation...</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{twoPhaseProgressMsg || 'Populating Locations library and building itinerary...'}</div>
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '14px' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => setAiDiscoveryProposal(null)}
+                            disabled={isExecutingTwoPhaseAi}
+                            style={{ width: 'auto', padding: '8px 14px', fontSize: '0.82rem' }}
+                          >
+                            ← Edit Prompt
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={handleExecuteTwoPhaseAiTrip}
+                            disabled={isExecutingTwoPhaseAi}
+                            style={{ width: 'auto', padding: '8px 18px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                          >
+                            {isExecutingTwoPhaseAi ? (
+                              <>
+                                <RefreshCw size={16} className="spin" /> Creating Locations & Itinerary...
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 size={16} /> Add Selected to Locations & Build Itinerary
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <>
+                      /* BRANCH B: SELECT SAVED LOCATIONS MANUALLY (Existing Process) */
+                      <>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '16px' }}>
                       Select locations and collections to populate the places bank for this trip:
                     </p>
@@ -4590,8 +5940,8 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                         </button>
                       </div>
                     )}
-                  </>
-                )}
+                      </>
+                    )}
               </div>
             )}
           </div>
@@ -4611,12 +5961,29 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
         {filteredTrips.map(trip => (
           <div key={trip.id} className="card" onClick={() => handleTripCardClick(trip)} style={{ minHeight: '180px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
             <div className="card-content" style={{ flexGrow: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
                 <h3 style={{ margin: 0 }}>{trip.name}</h3>
-                <span className={`tag-badge ${trip.visited === 1 ? 'visited' : ''}`} style={{ background: trip.visited === 1 ? 'var(--success-glow)' : 'rgba(255,255,255,0.05)', color: trip.visited === 1 ? 'var(--success)' : 'var(--text-secondary)' }}>
-                  {trip.visited === 1 ? 'Completed' : 'Planned'}
-                </span>
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {trip.shared_permission && trip.shared_permission !== 'owner' && (
+                    <span className="tag-badge" style={{ background: 'rgba(6, 182, 212, 0.16)', color: 'var(--accent-secondary)', border: '1px solid rgba(6, 182, 212, 0.35)' }}>
+                      🤝 {trip.shared_permission === 'edit' ? 'Co-Editor' : 'View-Only'}
+                    </span>
+                  )}
+                  {(!trip.shared_permission || trip.shared_permission === 'owner') && Array.isArray(trip.collaborators) && trip.collaborators.length > 0 && (
+                    <span className="tag-badge" style={{ background: 'rgba(139, 92, 246, 0.16)', color: 'var(--accent-primary-hover)', border: '1px solid rgba(139, 92, 246, 0.35)' }}>
+                      👥 Shared ({trip.collaborators.length})
+                    </span>
+                  )}
+                  <span className={`tag-badge ${trip.visited === 1 ? 'visited' : ''}`} style={{ background: trip.visited === 1 ? 'var(--success-glow)' : 'rgba(255,255,255,0.05)', color: trip.visited === 1 ? 'var(--success)' : 'var(--text-secondary)' }}>
+                    {trip.visited === 1 ? 'Completed' : 'Planned'}
+                  </span>
+                </div>
               </div>
+              {trip.shared_permission && trip.shared_permission !== 'owner' && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--accent-secondary)', marginTop: '4px' }}>
+                  Shared by @{trip.owner_display_name || trip.owner_username || 'user'}
+                </div>
+              )}
               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
                 📅 {formatStartDate(trip.start_date)} ({trip.length || 1} {trip.length === 1 ? 'day' : 'days'})
               </p>
@@ -5555,13 +6922,32 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <h2 style={{ margin: 0 }}>{currentTrip.name}</h2>
-                        <button 
-                          className="btn btn-secondary"
-                          style={{ width: 'auto', padding: '2px 8px', fontSize: '0.7rem', height: '24px', display: 'inline-flex', alignItems: 'center', gap: '4px', textTransform: 'none' }}
-                          onClick={startEditingTrip}
-                        >
-                          Edit Details
-                        </button>
+                        {isSharedTrip && (
+                          <span style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 600,
+                            padding: '3px 10px',
+                            borderRadius: '999px',
+                            background: isReadOnlyTrip ? 'rgba(245, 158, 11, 0.16)' : 'rgba(6, 182, 212, 0.16)',
+                            border: `1px solid ${isReadOnlyTrip ? 'rgba(245, 158, 11, 0.4)' : 'rgba(6, 182, 212, 0.4)'}`,
+                            color: isReadOnlyTrip ? 'var(--accent-amber-text)' : 'var(--accent-secondary)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            {isReadOnlyTrip ? <Lock size={12} /> : <Users size={12} />}
+                            Shared by {currentTrip.owner_display_name || currentTrip.owner_username || 'Owner'} • {isReadOnlyTrip ? 'View-Only' : 'Co-Editor'}
+                          </span>
+                        )}
+                        {!isReadOnlyTrip && (
+                          <button 
+                            className="btn btn-secondary"
+                            style={{ width: 'auto', padding: '2px 8px', fontSize: '0.7rem', height: '24px', display: 'inline-flex', alignItems: 'center', gap: '4px', textTransform: 'none' }}
+                            onClick={startEditingTrip}
+                          >
+                            Edit Details
+                          </button>
+                        )}
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
                         <span>📅 {formatStartDate(currentTrip.start_date)} ({currentTrip.length || 1} {currentTrip.length === 1 ? 'day' : 'days'})</span>
@@ -5625,17 +7011,19 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                   )}
                                 </div>
                               ))}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTravelerModalMode('travelers');
-                                  setShowTravelersModal(true);
-                                }}
-                                style={{ background: 'rgba(139, 92, 246, 0.15)', border: '1px solid var(--accent-primary)', borderRadius: '50%', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', color: 'var(--accent-primary)', cursor: 'pointer', fontWeight: 600 }}
-                                title="Add or Manage Trip Travelers"
-                              >
-                                +
-                              </button>
+                              {!isReadOnlyTrip && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTravelerModalMode('travelers');
+                                    setShowTravelersModal(true);
+                                  }}
+                                  style={{ background: 'rgba(139, 92, 246, 0.15)', border: '1px solid var(--accent-primary)', borderRadius: '50%', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', color: 'var(--accent-primary)', cursor: 'pointer', fontWeight: 600 }}
+                                  title="Add or Manage Trip Travelers"
+                                >
+                                  +
+                                </button>
+                              )}
                             </div>
                           );
                         })()}
@@ -5644,17 +7032,33 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {!isReadOnlyTrip && (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => setShow3ColumnWorkspace(true)}
+                      style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      title="Open Interactive 3-Column Map & Route Workspace"
+                    >
+                      <Map size={15} /> <span className="desktop-only-text">Map Workspace</span>
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className="btn btn-primary"
-                    onClick={() => setShow3ColumnWorkspace(true)}
+                    className="btn btn-secondary"
+                    onClick={() => openShareModal(currentTrip)}
                     style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                    title="Open Interactive 3-Column Map & Route Workspace"
+                    title="Share Trip with Local Users or Manage Collaborators"
                   >
-                    <Map size={15} /> <span className="desktop-only-text">Map Workspace</span>
+                    <Share2 size={15} style={{ color: 'var(--accent-secondary)' }} />
+                    <span className="desktop-only-text">
+                      {isTripOwner
+                        ? `Share${Array.isArray(currentTrip.collaborators) && currentTrip.collaborators.length > 0 ? ` (${currentTrip.collaborators.length})` : ''}`
+                        : 'Shared Info / Copy'}
+                    </span>
                   </button>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '4px 6px', borderRadius: '999px', border: '1px solid var(--border-glass)' }}>
-                    <button className="photo-action-btn" onClick={() => setShowPrintOptions(true)} title="Print Trip Plan">
+                    <button className="photo-action-btn" onClick={() => setShowPrintOptions(true)} title="Print or Email Trip Plan">
                       <Printer size={15} />
                     </button>
                     <button 
@@ -5675,17 +7079,21 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     >
                       <Star size={15} fill={activeTripId === currentTrip.id.toString() ? 'var(--accent-primary-hover)' : 'none'} />
                     </button>
-                    <button 
-                      className="photo-action-btn" 
-                      onClick={() => handleToggleTripVisited(currentTrip)}
-                      style={{ color: currentTrip.visited === 1 ? 'var(--success)' : 'var(--text-secondary)' }}
-                      title={currentTrip.visited === 1 ? "Completed Trip" : "Mark Trip as Completed"}
-                    >
-                      <CheckSquare size={15} />
-                    </button>
-                    <button className="photo-action-btn" onClick={() => handleDeleteTrip(currentTrip.id)} title="Delete Trip">
-                      <Trash2 size={15} />
-                    </button>
+                    {!isReadOnlyTrip && (
+                      <button 
+                        className="photo-action-btn" 
+                        onClick={() => handleToggleTripVisited(currentTrip)}
+                        style={{ color: currentTrip.visited === 1 ? 'var(--success)' : 'var(--text-secondary)' }}
+                        title={currentTrip.visited === 1 ? "Completed Trip" : "Mark Trip as Completed"}
+                      >
+                        <CheckSquare size={15} />
+                      </button>
+                    )}
+                    {isTripOwner && (
+                      <button className="photo-action-btn" onClick={() => handleDeleteTrip(currentTrip.id)} title="Delete Trip">
+                        <Trash2 size={15} />
+                      </button>
+                    )}
                     <button className="photo-action-btn" onClick={() => handleBackToTripsList()} title="Close Trip Plan">
                       <X size={15} />
                     </button>
@@ -5883,60 +7291,62 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   </div>
 
                   {/* Actions toolbar */}
-                  <div className="no-print" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button 
-                      onClick={() => {
-                        setTravelerModalMode('split');
-                        setShowTravelersModal(true);
-                      }}
-                      className="btn btn-secondary"
-                      style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                      title="Configure Expense Split"
-                    >
-                      👥 <span className="desktop-only">Split ({tripSplitConfig.splitCount})</span>
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setCollapsedSections(prev => ({ ...prev, budget: false }));
-                        setShowBudgetLimitForm(!showBudgetLimitForm);
-                        setShowAddExpenseForm(false);
-                        setShowRatesForm(false);
-                      }}
-                      className="btn btn-secondary"
-                      style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                      title="Update Planned Budget Limit"
-                    >
-                      <DollarSign size={14} /> <span className="desktop-only">Set Limit</span>
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setCollapsedSections(prev => ({ ...prev, budget: false }));
-                        setShowAddExpenseForm(!showAddExpenseForm);
-                        setShowBudgetLimitForm(false);
-                        setShowRatesForm(false);
-                      }}
-                      className="btn btn-primary"
-                      style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                      title="Add Expense"
-                    >
-                      <Plus size={14} /> <span className="desktop-only">{showAddExpenseForm ? 'Close Form' : 'Log Expense'}</span>
-                    </button>
-                    {getTripIsInternational(selectedTrip) && (
+                  {!isReadOnlyTrip && (
+                    <div className="no-print" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       <button 
                         onClick={() => {
-                          setCollapsedSections(prev => ({ ...prev, budget: false }));
-                          setShowRatesForm(!showRatesForm);
-                          setShowBudgetLimitForm(false);
-                          setShowAddExpenseForm(false);
+                          setTravelerModalMode('split');
+                          setShowTravelersModal(true);
                         }}
                         className="btn btn-secondary"
                         style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        title="Update Conversion Rates"
+                        title="Configure Expense Split"
                       >
-                        <RefreshCw size={14} /> <span className="desktop-only">Rates</span>
+                        👥 <span className="desktop-only">Split ({tripSplitConfig.splitCount})</span>
                       </button>
-                    )}
-                  </div>
+                      <button 
+                        onClick={() => {
+                          setCollapsedSections(prev => ({ ...prev, budget: false }));
+                          setShowBudgetLimitForm(!showBudgetLimitForm);
+                          setShowAddExpenseForm(false);
+                          setShowRatesForm(false);
+                        }}
+                        className="btn btn-secondary"
+                        style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        title="Update Planned Budget Limit"
+                      >
+                        <DollarSign size={14} /> <span className="desktop-only">Set Limit</span>
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setCollapsedSections(prev => ({ ...prev, budget: false }));
+                          setShowAddExpenseForm(!showAddExpenseForm);
+                          setShowBudgetLimitForm(false);
+                          setShowRatesForm(false);
+                        }}
+                        className="btn btn-primary"
+                        style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        title="Add Expense"
+                      >
+                        <Plus size={14} /> <span className="desktop-only">{showAddExpenseForm ? 'Close Form' : 'Log Expense'}</span>
+                      </button>
+                      {getTripIsInternational(selectedTrip) && (
+                        <button 
+                          onClick={() => {
+                            setCollapsedSections(prev => ({ ...prev, budget: false }));
+                            setShowRatesForm(!showRatesForm);
+                            setShowBudgetLimitForm(false);
+                            setShowAddExpenseForm(false);
+                          }}
+                          className="btn btn-secondary"
+                          style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          title="Update Conversion Rates"
+                        >
+                          <RefreshCw size={14} /> <span className="desktop-only">Rates</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className={collapsedSections.budget ? 'collapsed-on-screen' : ''}>
@@ -6250,7 +7660,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                 </div>
               </div>
 
-              {unmappedRecommendations.length > 0 && (
+              {!isReadOnlyTrip && unmappedRecommendations.length > 0 && (
                 <div className="no-print" style={{ background: 'var(--bg-surface-elevated)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', border: '1px solid var(--border-glass)' }}>
                   <h3 style={{ margin: '0 0 10px 0', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <AlertTriangle size={20} /> Unmapped AI Recommendations
@@ -6372,7 +7782,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                           distances={distances}
                           reservations={reservations}
                           selectedTrip={activeTrip}
-                          tripModeActive={tripModeActive}
+                          tripModeActive={tripModeActive || isReadOnlyTrip}
                           handleViewAttachment={handleViewAttachment}
                           handleDeleteReservation={handleDeleteReservation}
                           handleDeleteItineraryItem={handleDeleteItineraryItem}
@@ -6410,7 +7820,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     </button>
                     <h3 style={{ margin: 0 }}>Trip Reservations</h3>
                   </div>
-                  {!tripModeActive && (
+                  {!tripModeActive && !isReadOnlyTrip && (
                     <button 
                       onClick={() => {
                         setCollapsedSections(prev => ({ ...prev, reservations: false }));
@@ -6518,7 +7928,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                           <th style={{ padding: '8px' }}>Details</th>
                           <th style={{ padding: '8px' }}>Doc</th>
                           <th className="no-print" style={{ padding: '8px' }}>Done</th>
-                          {!tripModeActive && <th className="no-print" style={{ padding: '8px' }}>Action</th>}
+                          {!tripModeActive && !isReadOnlyTrip && <th className="no-print" style={{ padding: '8px' }}>Action</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -6543,15 +7953,17 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                             <td className="no-print" style={{ padding: '8px' }}>
                               <input 
                                 type="checkbox" 
-                                checked={res.completed === 1} 
+                                checked={res.completed === 1}
+                                disabled={isReadOnlyTrip}
                                 onChange={async (e) => {
+                                  if (isReadOnlyTrip) return;
                                   const updated = { ...res, completed: e.target.checked ? 1 : 0 };
                                   await queueSyncAction('reservations', 'update', updated);
                                 }}
-                                style={{ accentColor: 'var(--accent-primary)', width: '14px', height: '14px' }}
+                                style={{ accentColor: 'var(--accent-primary)', width: '14px', height: '14px', cursor: isReadOnlyTrip ? 'default' : 'pointer' }}
                               />
                             </td>
-                            {!tripModeActive && (
+                            {!tripModeActive && !isReadOnlyTrip && (
                               <td className="no-print" style={{ padding: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
                                 <button className="photo-action-btn" onClick={() => handleStartEditReservation(res)} title="Edit Reservation">
                                   <Edit size={12} />
@@ -6586,35 +7998,39 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     </div>
 
                     <div className="no-print" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() => {
-                          setShowAddExpenseForm(true);
-                          setCollapsedSections(prev => ({ ...prev, budget: false }));
-                          if (focusedSection) setFocusedSection('budget');
-                          setTimeout(() => {
-                            const el = document.getElementById('trip-section-budget');
-                            scrollElementInTripOverlay(el, 110);
-                          }, 80);
-                        }}
-                        style={{ width: 'auto', padding: '5px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                        title="Open the Log Expense form"
-                      >
-                        <Plus size={14} /> Log Expense
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => {
-                          setTravelerModalMode('split');
-                          setShowTravelersModal(true);
-                        }}
-                        style={{ width: 'auto', padding: '5px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                        title="Configure Main Split Members & Split Count"
-                      >
-                        👥 Configure Split ({tripSplitConfig.splitCount}-way)
-                      </button>
+                      {!isReadOnlyTrip && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => {
+                              setShowAddExpenseForm(true);
+                              setCollapsedSections(prev => ({ ...prev, budget: false }));
+                              if (focusedSection) setFocusedSection('budget');
+                              setTimeout(() => {
+                                const el = document.getElementById('trip-section-budget');
+                                scrollElementInTripOverlay(el, 110);
+                              }, 80);
+                            }}
+                            style={{ width: 'auto', padding: '5px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                            title="Open the Log Expense form"
+                          >
+                            <Plus size={14} /> Log Expense
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => {
+                              setTravelerModalMode('split');
+                              setShowTravelersModal(true);
+                            }}
+                            style={{ width: 'auto', padding: '5px 12px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                            title="Configure Main Split Members & Split Count"
+                          >
+                            👥 Configure Split ({tripSplitConfig.splitCount}-way)
+                          </button>
+                        </>
+                      )}
                       {tripExpensesList.length > 0 && (
                         <button
                           type="button"
@@ -6750,17 +8166,19 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                               Splitting shared expenses across <b>{tripSplitConfig.splitCount}</b> {tripSplitConfig.splitCount === 1 ? 'share' : 'shares'} • Main Members: <b>{tripSplitConfig.mainMemberIds.map(id => getMemberName(id)).join(', ')}</b>
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            className="btn btn-secondary no-print"
-                            onClick={() => {
-                              setTravelerModalMode('split');
-                              setShowTravelersModal(true);
-                            }}
-                            style={{ width: 'auto', padding: '4px 10px', fontSize: '0.74rem' }}
-                          >
-                            Edit Split Members
-                          </button>
+                          {!isReadOnlyTrip && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary no-print"
+                              onClick={() => {
+                                setTravelerModalMode('split');
+                                setShowTravelersModal(true);
+                              }}
+                              style={{ width: 'auto', padding: '4px 10px', fontSize: '0.74rem' }}
+                            >
+                              Edit Split Members
+                            </button>
+                          )}
                         </div>
 
                         {/* 4 Summary Metric Pills */}
@@ -6815,9 +8233,50 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                           padding: '12px 14px',
                           marginBottom: '14px'
                         }}>
-                          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent-emerald-text)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                            💸 Who Owes Whom (Final Settlement Summary)
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent-emerald-text)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                              💸 Who Owes Whom (Final Settlement Summary)
+                            </div>
+                            {!isReadOnlyTrip && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary no-print"
+                                onClick={() => setShowSettlementEmailInput(!showSettlementEmailInput)}
+                                style={{ width: 'auto', padding: '3px 10px', fontSize: '0.73rem', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                              >
+                                <Mail size={13} /> Email Settlement
+                              </button>
+                            )}
                           </div>
+
+                          {showSettlementEmailInput && (
+                            <div className="no-print" style={{ marginBottom: '10px', padding: '10px', background: 'var(--bg-app)', borderRadius: '6px', border: '1px solid var(--border-glass)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                  type="text"
+                                  className="form-control"
+                                  placeholder="Optional: recipient emails (comma-separated) or leave blank to email all trip collaborators..."
+                                  value={settlementEmailRecipient}
+                                  onChange={(e) => setSettlementEmailRecipient(e.target.value)}
+                                  style={{ flex: 1, minWidth: '220px', height: '32px', fontSize: '0.78rem' }}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  onClick={handleSendSettlementEmail}
+                                  disabled={sendingSettlementEmail}
+                                  style={{ width: 'auto', height: '32px', padding: '4px 14px', fontSize: '0.78rem' }}
+                                >
+                                  {sendingSettlementEmail ? 'Sending...' : 'Send Settlement Email'}
+                                </button>
+                              </div>
+                              {settlementEmailStatus && (
+                                <div style={{ fontSize: '0.75rem', color: settlementEmailStatus.type === 'success' ? '#4ade80' : 'var(--error)' }}>
+                                  {settlementEmailStatus.text}
+                                </div>
+                              )}
+                            </div>
+                          )}
                           {expenseSplitSummary.settlements.length > 0 ? (
                             <>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
@@ -6945,7 +8404,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                             <th style={{ padding: '8px' }}>Paid By</th>
                             <th style={{ padding: '8px' }}>Split / For Whom</th>
                             <th style={{ padding: '8px' }}>Date</th>
-                            <th className="no-print" style={{ padding: '8px' }}>Action</th>
+                            {!isReadOnlyTrip && <th className="no-print" style={{ padding: '8px' }}>Action</th>}
                           </tr>
                         </thead>
                         <tbody>
@@ -7101,7 +8560,11 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
                                       <button
                                         type="button"
-                                        onClick={() => handleToggleExpenseSplit(exp)}
+                                        disabled={isReadOnlyTrip}
+                                        onClick={() => {
+                                          if (isReadOnlyTrip) return;
+                                          handleToggleExpenseSplit(exp);
+                                        }}
                                         style={{
                                           background: isExpSplit
                                             ? 'rgba(139, 92, 246, 0.16)'
@@ -7116,10 +8579,10 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                           padding: '2px 9px',
                                           fontSize: '0.72rem',
                                           fontWeight: 600,
-                                          cursor: 'pointer',
+                                          cursor: isReadOnlyTrip ? 'default' : 'pointer',
                                           whiteSpace: 'nowrap'
                                         }}
-                                        title="Click to toggle whether this expense is split across main members"
+                                        title={isReadOnlyTrip ? 'Split status' : 'Click to toggle whether this expense is split across main members'}
                                       >
                                         {isExpSplit
                                           ? `🤝 Split (${perShareAmt.toFixed(2)}/ea)`
@@ -7148,27 +8611,29 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                     exp.date
                                   )}
                                 </td>
-                                <td className="no-print" style={{ padding: '8px' }}>
-                                  {isEditing ? (
-                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                      <button className="photo-action-btn" onClick={() => handleSaveEditedExpense(exp.id)} title="Save changes">
-                                        <CheckSquare size={12} style={{ color: 'var(--success)' }} />
-                                      </button>
-                                      <button className="photo-action-btn" onClick={() => setEditingExpenseId(null)} title="Cancel">
-                                        <X size={12} style={{ color: 'var(--error)' }} />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                      <button className="photo-action-btn" onClick={() => handleStartEditExpense(exp)} title="Edit expense">
-                                        <Edit size={12} />
-                                      </button>
-                                      <button className="photo-action-btn" onClick={() => handleDeleteExpense(exp)} title="Delete expense">
-                                        <Trash2 size={12} />
-                                      </button>
-                                    </div>
-                                  )}
-                                </td>
+                                {!isReadOnlyTrip && (
+                                  <td className="no-print" style={{ padding: '8px' }}>
+                                    {isEditing ? (
+                                      <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button className="photo-action-btn" onClick={() => handleSaveEditedExpense(exp.id)} title="Save changes">
+                                          <CheckSquare size={12} style={{ color: 'var(--success)' }} />
+                                        </button>
+                                        <button className="photo-action-btn" onClick={() => setEditingExpenseId(null)} title="Cancel">
+                                          <X size={12} style={{ color: 'var(--error)' }} />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button className="photo-action-btn" onClick={() => handleStartEditExpense(exp)} title="Edit expense">
+                                          <Edit size={12} />
+                                        </button>
+                                        <button className="photo-action-btn" onClick={() => handleDeleteExpense(exp)} title="Delete expense">
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}
@@ -7195,16 +8660,18 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                       <FileText size={20} style={{ color: 'var(--accent-primary)' }} /> Trip Notes & Travel Journal
                     </h3>
                   </div>
-                  <button 
-                    className="btn btn-primary no-print"
-                    style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                    onClick={() => {
-                      setCollapsedSections(prev => ({ ...prev, notes: false }));
-                      setShowTripNoteModal(true);
-                    }}
-                  >
-                    <Plus size={14} /> Add Note
-                  </button>
+                  {!isReadOnlyTrip && (
+                    <button 
+                      className="btn btn-primary no-print"
+                      style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      onClick={() => {
+                        setCollapsedSections(prev => ({ ...prev, notes: false }));
+                        setShowTripNoteModal(true);
+                      }}
+                    >
+                      <Plus size={14} /> Add Note
+                    </button>
+                  )}
                 </div>
 
                 <div className={collapsedSections.notes ? 'collapsed-on-screen' : ''}>
@@ -7213,7 +8680,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     if (currentNotes.length === 0) {
                       return (
                         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontStyle: 'italic', margin: 0 }}>
-                          No notes added yet. Click "+ Add Note" to jot down flight details, hotel instructions, packing reminders, or daily reflections!
+                          {isReadOnlyTrip ? 'No notes added to this trip.' : 'No notes added yet. Click "+ Add Note" to jot down flight details, hotel instructions, packing reminders, or daily reflections!'}
                         </p>
                       );
                     }
@@ -7224,9 +8691,11 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                           <div key={note.id} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '14px', position: 'relative' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
                               <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--text-primary)' }}>{note.title || 'Trip Note'}</span>
-                              <button className="photo-action-btn no-print" onClick={() => handleDeleteTripNote(note.id)} title="Delete Note">
-                                <Trash2 size={13} />
-                              </button>
+                              {!isReadOnlyTrip && (
+                                <button className="photo-action-btn no-print" onClick={() => handleDeleteTripNote(note.id)} title="Delete Note">
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
                             </div>
                             <span style={{ fontSize: '0.68rem', backgroundColor: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent-primary-hover)', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 600, display: 'inline-block', marginBottom: '8px' }}>
                               {note.category || 'General'}
@@ -7321,9 +8790,9 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
           background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
           padding: '20px'
         }}>
-          <div className="login-card" style={{ maxWidth: '400px', width: '100%', padding: '24px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)' }}>
-            <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Select Sections to Print</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+          <div className="login-card" style={{ maxWidth: '440px', width: '100%', padding: '24px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)' }}>
+            <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Print or Email Trip Details</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '18px' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input 
                   type="checkbox" 
@@ -7396,10 +8865,42 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                 <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>Trip Notes & Travel Journal</span>
               </label>
             </div>
+
+            {/* Send Selected Sections by Email */}
+            <div style={{ padding: '12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-glass)', marginBottom: '18px' }}>
+              <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                <Mail size={14} /> Send Selected Sections by Email
+              </label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="you@example.com (comma-separated)"
+                  value={emailSummaryRecipient}
+                  onChange={(e) => setEmailSummaryRecipient(e.target.value)}
+                  style={{ height: '34px', fontSize: '0.8rem', flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleSendTripEmailSummary}
+                  disabled={sendingSummaryEmail}
+                  style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem', height: '34px', whiteSpace: 'nowrap' }}
+                >
+                  {sendingSummaryEmail ? 'Sending...' : '✉️ Email'}
+                </button>
+              </div>
+              {emailSummaryStatus && (
+                <div style={{ marginTop: '6px', fontSize: '0.75rem', color: emailSummaryStatus.type === 'success' ? '#4ade80' : 'var(--error)' }}>
+                  {emailSummaryStatus.text}
+                </div>
+              )}
+            </div>
+
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button 
                 className="btn btn-secondary" 
-                onClick={() => setShowPrintOptions(false)} 
+                onClick={() => { setShowPrintOptions(false); setEmailSummaryStatus(null); }} 
                 style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
               >
                 Cancel
@@ -7420,9 +8921,189 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                 }} 
                 style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
               >
-                Print Selected
+                🖨️ Print Selected
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* LIVE COLLABORATIVE TRIP SHARING MODAL */}
+      {showShareModal && currentTrip && (
+        <div className="no-print" style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.82)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000,
+          padding: '20px'
+        }}>
+          <div className="login-card" style={{ maxWidth: '500px', width: '100%', padding: '24px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', maxHeight: '88vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Share2 size={18} style={{ color: 'var(--accent-secondary)' }} />
+                {isTripOwner ? `Share "${currentTrip.name}"` : `Shared Trip Info`}
+              </h3>
+              <button type="button" onClick={() => setShowShareModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {shareMsg && (
+              <div style={{
+                padding: '10px 12px',
+                borderRadius: '8px',
+                fontSize: '0.8rem',
+                marginBottom: '12px',
+                background: shareMsg.type === 'success' ? 'rgba(74, 222, 128, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                border: `1px solid ${shareMsg.type === 'success' ? 'rgba(74, 222, 128, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
+                color: shareMsg.type === 'success' ? '#4ade80' : '#f87171'
+              }}>
+                {shareMsg.text}
+              </div>
+            )}
+
+            {isTripOwner ? (
+              <>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 14px 0', lineHeight: 1.5 }}>
+                  Share this trip live with other users on this TravelBuff instance. Referenced locations and places remain scoped to your library without polluting their personal Locations tab.
+                </p>
+
+                <form onSubmit={handleShareTrip} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '18px', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '8px' }}>
+                    <div>
+                      <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Select Local User</label>
+                      <select
+                        className="form-control"
+                        value={shareSelectedUserId}
+                        onChange={(e) => setShareSelectedUserId(e.target.value)}
+                        required
+                        style={{ height: '36px', fontSize: '0.82rem' }}
+                      >
+                        <option value="">-- Choose user --</option>
+                        {localUsersDirectory
+                          .filter(u => !tripSharesList.some(s => String(s.shared_with_user_id || s.user_id) === String(u.id)))
+                          .map(u => {
+                            const dName = u.displayName || u.display_name;
+                            const hasMail = u.hasEmail || u.has_email;
+                            return (
+                              <option key={u.id} value={u.id}>
+                                {dName ? `${dName} (@${u.username})` : `@${u.username}`} {hasMail ? '✉️' : ''}
+                              </option>
+                            );
+                          })}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Access Level</label>
+                      <select
+                        className="form-control"
+                        value={sharePermission}
+                        onChange={(e) => setSharePermission(e.target.value)}
+                        style={{ height: '36px', fontSize: '0.82rem' }}
+                      >
+                        <option value="view">🔒 View-Only</option>
+                        <option value="edit">✏️ Co-Editor</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer', margin: 0 }}>
+                      <input
+                        type="checkbox"
+                        checked={shareSendEmail}
+                        onChange={(e) => setShareSendEmail(e.target.checked)}
+                      />
+                      Send email notification (if SMTP & user email configured)
+                    </label>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={shareLoading || !shareSelectedUserId}
+                      style={{ width: 'auto', padding: '6px 14px', fontSize: '0.8rem', height: '34px' }}
+                    >
+                      {shareLoading ? 'Sharing...' : 'Share Trip'}
+                    </button>
+                  </div>
+                </form>
+
+                <div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>
+                    Current Collaborators ({tripSharesList.length})
+                  </div>
+                  {tripSharesList.length === 0 ? (
+                    <div style={{ padding: '14px', textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)', background: 'var(--bg-app)', borderRadius: '8px', border: '1px dashed var(--border-glass)' }}>
+                      This trip is private to you.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {tripSharesList.map(s => {
+                        const sUserId = s.shared_with_user_id || s.user_id;
+                        return (
+                          <div key={s.id || sUserId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                {s.display_name || s.displayName || s.username} <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>(@{s.username})</span>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <select
+                                className="form-control"
+                                value={s.permission}
+                                onChange={(e) => handleUpdateSharePermission(sUserId, e.target.value)}
+                                style={{ width: 'auto', height: '28px', padding: '2px 8px', fontSize: '0.76rem' }}
+                              >
+                                <option value="view">🔒 View-Only</option>
+                                <option value="edit">✏️ Co-Editor</option>
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => handleRevokeShare(sUserId, false)}
+                                style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer', padding: '4px' }}
+                                title="Revoke access"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ padding: '12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-glass)', fontSize: '0.84rem' }}>
+                  <div><b>Trip Owner:</b> {currentTrip.owner_display_name || currentTrip.owner_username} (@{currentTrip.owner_username})</div>
+                  <div style={{ marginTop: '6px' }}>
+                    <b>Your Access Level:</b> {isReadOnlyTrip ? '🔒 View-Only (Read-only access)' : '✏️ Co-Editor (Can edit itinerary, reservations, notes & expenses)'}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleCloneSharedTrip}
+                    disabled={shareLoading}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                  >
+                    <Copy size={15} /> {shareLoading ? 'Copying...' : 'Copy as My Own Independent Trip'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      if (window.confirm('Leave this shared trip? You will no longer see it in your Trips list unless the owner shares it again.')) {
+                        handleRevokeShare(accountOwner?.userId || localStorage.getItem('tb_userId'), true);
+                      }
+                    }}
+                    style={{ color: 'var(--error)' }}
+                  >
+                    Leave Shared Trip
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -7861,8 +9542,8 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   const prevDay = dIdx > 0 ? itineraryDays[dIdx - 1] : null;
                   const prevHotelId = prevDay ? (hotelsObj[prevDay.date] || null) : null;
                   const prevHotelPlace = prevHotelId ? combinedPlaces.find(p => String(p.id) === String(prevHotelId)) : null;
-                  const prevLocId = prevDay ? (notesObj.dayLocations ? notesObj.dayLocations[prevDay.date] : null) : null;
-                  const curLocId = notesObj.dayLocations ? notesObj.dayLocations[day.date] : null;
+                  const prevLocId = prevDay ? (getScalarDayLocationId(notesObj.dayLocations, prevDay.date) || null) : null;
+                  const curLocId = getScalarDayLocationId(notesObj.dayLocations, day.date) || null;
 
                   const isLocationOrStayChanged = dIdx > 0 && (
                     (curLocId && prevLocId && String(curLocId) !== String(prevLocId)) ||
@@ -7940,7 +9621,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                     if (nextDay) {
                       const nextHotelId = hotelsObj[nextDay.date];
                       const nextHotelPlace = nextHotelId ? combinedPlaces.find(p => String(p.id) === String(nextHotelId)) : null;
-                      const nextLocId = notesObj.dayLocations ? notesObj.dayLocations[nextDay.date] : null;
+                      const nextLocId = getScalarDayLocationId(notesObj.dayLocations, nextDay.date) || null;
                       const nextLocObj = nextLocId ? (locations || []).find(l => String(l.id) === String(nextLocId)) : null;
 
                       if (nextHotelPlace) {
@@ -8190,7 +9871,7 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                 className="form-control"
                                 value={(() => {
                                   const notesObj = safeParseNotes(selectedTrip?.notes);
-                                  return notesObj.dayLocations ? notesObj.dayLocations[day.date] || '' : '';
+                                  return getScalarDayLocationId(notesObj.dayLocations, day.date);
                                 })()}
                                 onChange={async (e) => {
                                   const locVal = e.target.value;
@@ -8226,10 +9907,11 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                 className="form-control"
                                 value={(() => {
                                   const notesObj = safeParseNotes(selectedTrip?.notes);
-                                  const savedHotelId = notesObj.hotels ? notesObj.hotels[day.date] : '';
+                                  const rawHotelId = notesObj.hotels ? notesObj.hotels[day.date] : '';
+                                  const savedHotelId = Array.isArray(rawHotelId) ? (rawHotelId[0] || '') : rawHotelId;
                                   if (!savedHotelId) return '';
                                   const matched = places.find(p => String(p.id) === String(savedHotelId));
-                                  return matched ? matched.id : savedHotelId;
+                                  return String(matched ? matched.id : savedHotelId);
                                 })()}
                                 onChange={(e) => handleSelectHotel(day.date, e.target.value)}
                                 style={{ width: '100%', height: '24px', fontSize: '0.75rem', padding: '0', background: 'transparent', border: 'none', color: 'var(--text-primary)', margin: 0, outline: 'none' }}
@@ -8237,11 +9919,12 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                                 <option value="" style={{ background: 'var(--bg-surface)' }}>-- Unassigned Stay --</option>
                                 {(() => {
                                   const notesObj = safeParseNotes(selectedTrip?.notes);
-                                  const assignedDayLocId = notesObj.dayLocations ? notesObj.dayLocations[day.date] : null;
+                                  const assignedDayLocId = getScalarDayLocationId(notesObj.dayLocations, day.date) || null;
                                   const targetLocIds = assignedDayLocId 
                                     ? [assignedDayLocId] 
                                     : (stopFilterLocationIds.length > 0 ? stopFilterLocationIds : []);
-                                  const currentHotelId = notesObj.hotels ? notesObj.hotels[day.date] : null;
+                                  const rawHotelId = notesObj.hotels ? notesObj.hotels[day.date] : null;
+                                  const currentHotelId = Array.isArray(rawHotelId) ? (rawHotelId[0] || null) : rawHotelId;
 
                                   return places.filter(p => {
                                     const isHotel = isStayPlace(p);
@@ -9062,7 +10745,9 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
 
             <div style={{ padding: '16px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Generate an optimal daily itinerary schedule across your {itineraryDays.length || selectedTrip?.length || 1} trip days using all places from the Places Bank. You can review and edit the prompt below before generating.
+                {getTripSelectedPlacesAndLocations(selectedTrip || currentTrip).bankPlaces.length > 0
+                  ? `Generate an optimal daily itinerary schedule across your ${itineraryDays.length || selectedTrip?.length || 1} trip days using the places selected for this trip. You can review and edit the prompt below before generating.`
+                  : `No locations or places of visit are currently selected for this trip. Describe your destination(s) or edit the prompt below — AI will suggest and add the locations/places to your Locations library and populate your ${itineraryDays.length || selectedTrip?.length || 1}-day itinerary.`}
               </p>
 
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -9132,24 +10817,45 @@ ${JSON.stringify(formattedPlaces, null, 2)}`;
                   <strong style={{ color: 'var(--text-primary)' }}>Privacy Notice:</strong> No personal information, home addresses, or private geocodes are sent to the AI in the prompt.
                 </span>
               </div>
-
-              {bankAiError && (
-                <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--danger)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.8rem', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                  <span>⚠️</span>
-                  <div style={{ flex: 1 }}>{bankAiError}</div>
-                </div>
-              )}
-
-              {isGeneratingBankAi && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
-                  <RefreshCw size={20} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
-                  <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
-                    <div style={{ fontWeight: '600', marginBottom: '2px' }}>Generating Itinerary with AI...</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{bankAiStatusMsg || 'Analyzing places, coordinates, and constraints...'}</div>
-                  </div>
-                </div>
-              )}
             </div>
+
+            {(bankAiError || isGeneratingBankAi) && (
+              <div style={{ padding: '0 20px 12px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {bankAiError && (
+                  <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--danger)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                      <span>⚠️</span>
+                      <div style={{ flex: 1 }}>{bankAiError}</div>
+                    </div>
+                    {!/\[Location:/i.test(bankAiPrompt) && (
+                      <div>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => {
+                            const tagLine = '[Location: Enter a single destination for all days (e.g., Kyoto, Japan) OR day-wise locations (e.g., Day 1-2: Tokyo, Day 3-4: Kyoto)]';
+                            setBankAiPrompt(prev => prev.trim() ? `${tagLine}\n\n${prev.trim()}` : tagLine);
+                          }}
+                          style={{ width: 'auto', padding: '3px 10px', fontSize: '0.74rem' }}
+                        >
+                          + Insert [Location] Line
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isGeneratingBankAi && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                    <RefreshCw size={20} className="spin" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                      <div style={{ fontWeight: '600', marginBottom: '2px' }}>Planning Trip with AI...</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{bankAiStatusMsg || 'Analyzing places, coordinates, and constraints...'}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border-glass)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
               <button
@@ -9942,27 +11648,27 @@ function ImportTripModal({ isOpen, onClose, token, onSelectTrip }) {
 
               {/* Stats badges */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
-                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
                   📍 {importResult.stats?.stops || 0} Itinerary Stops
                 </span>
-                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
                   🗺️ {importResult.stats?.locations_total || 0} Locations ({importResult.stats?.locations_created || 0} new)
                 </span>
-                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
                   🏛️ {importResult.stats?.places_total || 0} Places ({importResult.stats?.places_created || 0} new)
                 </span>
                 {importResult.stats?.notes > 0 && (
-                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
                     📝 {importResult.stats.notes} Notes
                   </span>
                 )}
                 {importResult.stats?.reservations > 0 && (
-                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
                     🎟️ {importResult.stats.reservations} Bookings
                   </span>
                 )}
                 {importResult.stats?.files > 0 && (
-                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'var(--bg-app)', border: '1px solid var(--border-glass)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
                     📁 {importResult.stats.files} Media Files
                   </span>
                 )}
@@ -10003,7 +11709,7 @@ function ImportTripModal({ isOpen, onClose, token, onSelectTrip }) {
                 padding: '28px 16px',
                 textAlign: 'center',
                 cursor: 'pointer',
-                background: file ? 'rgba(59, 130, 246, 0.05)' : 'rgba(255, 255, 255, 0.02)',
+                background: file ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-app)',
                 transition: 'all 0.2s',
                 display: 'flex',
                 flexDirection: 'column',
@@ -10040,7 +11746,7 @@ function ImportTripModal({ isOpen, onClose, token, onSelectTrip }) {
                 background: 'rgba(239, 68, 68, 0.1)',
                 border: '1px solid rgba(239, 68, 68, 0.3)',
                 borderRadius: 'var(--radius-sm)',
-                color: '#f87171',
+                color: 'var(--error, #ef4444)',
                 fontSize: '0.85rem',
                 display: 'flex',
                 alignItems: 'flex-start',
@@ -10063,7 +11769,7 @@ function ImportTripModal({ isOpen, onClose, token, onSelectTrip }) {
                 background: 'rgba(239, 68, 68, 0.1)',
                 border: '1px solid rgba(239, 68, 68, 0.3)',
                 borderRadius: 'var(--radius-sm)',
-                color: '#f87171',
+                color: 'var(--error, #ef4444)',
                 fontSize: '0.85rem',
                 display: 'flex',
                 alignItems: 'flex-start',
@@ -10083,7 +11789,7 @@ function ImportTripModal({ isOpen, onClose, token, onSelectTrip }) {
             {parsedBundle && !validationError && (
               <div style={{
                 padding: '16px',
-                background: 'rgba(255, 255, 255, 0.03)',
+                background: 'var(--bg-app)',
                 border: '1px solid var(--border-glass)',
                 borderRadius: 'var(--radius-md)',
                 display: 'flex',
@@ -10106,17 +11812,17 @@ function ImportTripModal({ isOpen, onClose, token, onSelectTrip }) {
                 )}
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
-                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
                     📍 {(parsedBundle.data?.itinerary_items || []).length} Itinerary Stops
                   </span>
-                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
                     🗺️ {(parsedBundle.data?.locations || []).length} Locations
                   </span>
-                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
                     🏛️ {(parsedBundle.data?.places || []).length} Places
                   </span>
                   {(parsedBundle.files || []).length > 0 && (
-                    <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                    <span style={{ fontSize: '0.78rem', padding: '3px 8px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
                       🖼️ {parsedBundle.files.length} Media Files
                     </span>
                   )}
@@ -10239,8 +11945,8 @@ const ItineraryDay = ({
   // Inter-day location & stay transition detection
   const prevHotelId = prevDay ? (hotelsObj[prevDay.date] || null) : null;
   const prevHotelPlace = prevHotelId ? combinedPlaces.find(p => String(p.id) === String(prevHotelId)) : null;
-  const prevLocId = prevDay ? (notesObj.dayLocations ? notesObj.dayLocations[prevDay.date] : null) : null;
-  const curLocId = notesObj.dayLocations ? notesObj.dayLocations[date] : null;
+  const prevLocId = prevDay ? (getScalarDayLocationId(notesObj.dayLocations, prevDay.date) || null) : null;
+  const curLocId = getScalarDayLocationId(notesObj.dayLocations, date) || null;
 
   const isLocationOrStayChanged = Boolean(prevDay) && (
     (curLocId && prevLocId && String(curLocId) !== String(prevLocId)) ||
@@ -10317,7 +12023,7 @@ const ItineraryDay = ({
     } else if (stayBehavior === 'checkout' && !isLastDay && nextDay) {
       const nextHotelId = hotelsObj[nextDay.date];
       const nextHotelPlace = nextHotelId ? combinedPlaces.find(p => String(p.id) === String(nextHotelId)) : null;
-      const nextLocId = notesObj.dayLocations ? notesObj.dayLocations[nextDay.date] : null;
+      const nextLocId = getScalarDayLocationId(notesObj.dayLocations, nextDay.date) || null;
       const nextLocObj = nextLocId ? (locations || []).find(l => String(l.id) === String(nextLocId)) : null;
 
       if (nextHotelPlace) {
@@ -10422,7 +12128,7 @@ const ItineraryDay = ({
 
   const assignedDayLocId = (() => {
     const notesObj = safeParseNotes(selectedTrip?.notes);
-    return notesObj.dayLocations ? notesObj.dayLocations[date] || '' : '';
+    return getScalarDayLocationId(notesObj.dayLocations, date);
   })();
   const assignedDayLocName = (locations || []).find(l => l.id === assignedDayLocId)?.name || '';
 
@@ -10583,6 +12289,7 @@ const ItineraryDay = ({
               firstDayDate={date}
               firstDayStayName={stayLocation}
               onUpdateTrip={onUpdateTrip}
+              readOnly={tripModeActive}
             />
           </div>
         )}
@@ -10741,6 +12448,7 @@ const ItineraryDay = ({
               lastDayDate={date}
               lastDayStayName={stayLocation}
               onUpdateTrip={onUpdateTrip}
+              readOnly={tripModeActive}
             />
           </div>
         )}

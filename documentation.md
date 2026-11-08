@@ -450,7 +450,22 @@ You can choose between two creation methods:
 
 2. **AI Assisted Mode**:
    - **Day 1 Arrival Time**: Specify your arrival time on Day 1 (**Morning**, **Afternoon**, or **Evening**).
-   - **AI Route Optimization**: Select target locations or collections, and Gemini AI will automatically group spots geographically into an optimal day-by-day itinerary tailored to your arrival time!
+   - **✨ Write a Prompt (AI Discovery & 2-Phase Creation)**:
+     - Pre-fills a structured text prompt containing all trip details you already entered in Step 1 (Trip Name, Duration, Start Date, Arrival Time, Domestic/International scope, Travelers, Budget, and Notes) along with a `[Location: Enter a single destination for all days ... OR day-wise locations ...]` tag.
+     - Fill in the `[Location: ...]` tag with either a single destination for all days or day-wise locations. TravelBuff validates that a destination is provided before contacting the AI, and if the prompt is still too vague to identify a destination, displays an inline clarification prompt with a **+ Insert [Location] Line** helper button.
+     - Review and toggle the AI-suggested Locations and Places of Visit in an interactive confirmation checklist. Confirming runs **Phase 1** (adding the locations and places to your **Locations** library first, leaving coordinates/photos empty if not found on Wikipedia/geocoder) followed by **Phase 2** (building your day-by-day trip itinerary).
+   - **📍 Select Saved Locations Manually (AI Route Optimization)**:
+     - Select target locations or collections from your library, and the AI will automatically group spots geographically into an optimal day-by-day itinerary tailored to your arrival time!
+   - **Specific Trip `✨ AI Plan` Button**:
+     - Inside the 3-column workspace for any trip, clicking **✨ AI Plan** uses only the locations and places explicitly selected for that specific trip. If no locations or places are selected yet, it prompts you to fill in the `[Location: ...]` tag and uses the 2-phase AI discovery flow with live step-by-step status updates.
+
+---
+
+### Live Collaborative Trip Sharing (`View-Only` vs. `Co-Editor`)
+Share any trip with other users on your TravelBuff server via the **🔗 Share** button in the trip header:
+* **👁️ View-Only Permission**: Collaborators can view the itinerary, map, reservations, expense split summary, and trip notes, and can export CSVs, print, or **Make a Copy to My Trips**, while all edit/add controls (such as adding expenses, reservations, notes, travelers, or configuring splits) are cleanly hidden across both Trip Planning and Trip Mode.
+* **✏️ Co-Editor Permission**: Collaborators can add and edit itinerary stops, reservations, expenses, splits, and notes in real time with instant WebSocket synchronization.
+* **Leaving a Shared Trip**: Collaborators can leave a shared trip at any time from the Share modal. When a collaborator leaves (or is removed), email notifications are sent to both the collaborator and the main trip owner (when SMTP is enabled).
 
 ---
 
@@ -708,10 +723,11 @@ Monitor your third-party API consumption over the past 6 months to avoid unexpec
 ---
 
 ### User Management & Administration (Admin Only)
-Visible exclusively to server administrators (the first account created on your server):
-* **User Registry Table**: View all registered accounts, user roles (Admin vs Standard User), and registration dates.
-* **Reset Passwords**: Click the key icon on any user row to open an admin password reset modal.
-* **Permanent User Deletion**: Click the trash icon to safely remove a user account. Automatically wipes all associated trips, places, expenses, travel guides, and uploaded files from both database and disk.
+Visible exclusively to server administrators (the first account created on your server) under **Settings -> Account -> User Administration**:
+* **Create New User Accounts**: Click **+ Create Account** to register a new local user directly from the Account page (with username, display name, email address, password, optional Admin role, and 1-click email delivery of login credentials when SMTP is configured).
+* **User Registry Table**: View all registered accounts, display names, email addresses, user roles (Admin vs Standard User), and registration dates.
+* **Inline Email & Password Management**: Click the edit icon next to a user's email address or the key icon on any user row to open an inline panel directly below that user to update their email or reset their password (with optional email notification).
+* **Permanent User Deletion**: Click the trash icon to open an inline confirmation directly below the user row and safely remove the account, automatically wiping all associated trips, places, expenses, travel guides, and uploaded files from both database and disk.
 
 ---
 
@@ -818,7 +834,35 @@ TravelBuff is built as an installable Progressive Web App (PWA) with complete of
 
 ## 12. Release Notes & Version History
 
-### Version 7.8.0 (Current Release)
+### Version 7.9.0 (Current Release)
+* **AI Prompt-Based Trip Discovery & 2-Phase Itinerary Builder (`Plan New Trip -> AI Assisted` & `✨ AI Plan`)**:
+  - Choose between **✨ Write a Prompt (AI Discovery)** and **📍 Select Saved Locations Manually** on Step 2 of the AI Assisted trip wizard.
+  - **Pre-Filled Default Prompt & `[Location: ...]` Tag**: Step 2 pre-fills a structured text prompt with all Step 1 trip parameters (duration, dates, arrival time, domestic/international scope, travelers, budget, notes) and an explicit `[Location: ...]` tag for entering either a single destination for all days or day-wise locations.
+  - **2-Layer Missing Destination Safeguard**: Pre-validates prompt text before calling the AI and handles non-conversational AI clarification requests (`needs_more_info`) with an inline warning and a 1-click **+ Insert [Location] Line** helper button.
+  - **Specific Trip `✨ AI Plan` Scoping & Live Progress**: Clicking **✨ AI Plan** inside a trip now includes only the locations/places selected for that trip (never dumping your entire database when none are selected) and displays live step-by-step status updates.
+  - **2-Phase Execution**: Phase 1 populates confirmed destinations and places into your **Locations** library first (gracefully adding the place with empty coordinates/photo/notes if Wikipedia or geocoding cannot find it), and Phase 2 builds your trip itinerary linked to those saved places.
+* **Live Collaborative Trip Sharing with Local Users**:
+  - Share any trip with other users on the same TravelBuff instance with **👁️ View-Only** or **✏️ Co-Editor** permissions via the **🔗 Share** button in the trip header.
+  - **Clean View-Only Experience**: Opening a shared trip with **👁️ View-Only** permission cleanly hides all edit/add buttons across Trip Planning and Trip Mode (expenses, split configuration, budget limits, currency rates, reservations, notes, travelers, and transit editors) while keeping read, print, CSV export, and 1-click **Make a Copy to My Trips** available.
+  - Collaborators receive real-time WebSocket updates and automatic read-through access to the trip's locations, places, photos, and companions without polluting their personal **Locations** or **Collections** libraries (`is_shared_external: 1`).
+  - Expense splits and traveler lists accurately attribute `'self'` to the Trip Owner's Display Name for collaborators.
+* **Native SMTP Email Notifications & Self-Service Password Recovery**:
+  - Administrators can configure SMTP settings (Host, Port, TLS mode, Auth credentials, From address) and send test emails in **Settings -> Email & SMTP Settings** using a zero-dependency native Node.js SMTP client.
+  - Supports 7 email workflows: (1) Trip Share invitation emails, (2) **Trip Left / Access Removed** notification emails sent to both the collaborator who left and the main trip owner, (3) **📧 Email Trip Summary** alongside Print in the Print/Export modal, (4) **📧 Email Settlement** in the "Who Owes Whom" expense split section, (5) Admin account creation & password reset emails, (6) Self-service **"Forgot password?"** 6-digit verification code recovery on the login screen, and (7) Automated upcoming trip countdown reminders (`Off`, `1`, `3`, or `7` days before departure).
+* **Direct In-App Feedback (`admin.travelbuff.app`)**:
+  - Submit Bug Reports, Feature Requests, and General Feedback directly from the User Profile dropdown menu (with a temporary 3-day `NEW` highlight upon installing v7.9.0) or **Settings -> Help & Guided Onboarding**, secured with Ed25519 signatures, Proof-of-Work verification, and local rate limiting.
+* **Light Theme Modal Contrast & UI Polishing**:
+  - Added global `.modal-content` styling in `App.css` ensuring high-contrast surface backgrounds and clear text legibility in both light and dark themes.
+  - Resolved low-contrast badge backgrounds and unpadded layouts in the **Import Trip** and **Import Document** modals.
+* **Mobile Specific Trip Scroll Fix**:
+  - On mobile viewports (`<= 768px`), the trip header and section jump-bar now scroll naturally with the page so your itinerary, map, and expenses have full vertical screen space.
+* **Security Hardening & Docker Runtime Fix**:
+  - Remediated 6 dependency security advisories via npm overrides (`body-parser`, `follow-redirects`, `minimatch`, `multer`, `qs`, `undici`), verifying 0 vulnerabilities on scanner audits.
+  - Updated production Dockerfile runtime packaging to bundle all root service modules (`COPY core/*.js ./`), resolving module resolution issues in containerized deployments.
+
+---
+
+### Version 7.8.0
 * **Personal Account Profiles & Immich Face Profile Linking**:
   - Self-service Display Name / Full Name configuration in both the User Profile modal and Settings (`#section-profile`).
   - One-click association with recognized face profiles on self-hosted Immich servers, syncing avatar face thumbnails across the application.

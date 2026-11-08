@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Cloud, CloudLightning, RefreshCw, LogOut, MapPin, ClipboardList, Settings, Compass, Moon, Edit, Map, Sparkles, User, X, Archive } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Cloud, CloudLightning, RefreshCw, LogOut, MapPin, ClipboardList, Settings, Compass, Moon, Edit, Map, Sparkles, User, X, Archive, MessageSquarePlus } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './clientDb.js';
 import AiImportModal from './components/AiImportModal.jsx';
 import AiReviewQueue from './components/AiReviewQueue.jsx';
 import AccountModal from './components/AccountModal.jsx';
 import ReauthModal from './components/ReauthModal.jsx';
+import FeedbackModal from './components/FeedbackModal.jsx';
 import Login from './components/Login.jsx';
 import Locations from './components/Locations.jsx';
 import Collections from './components/Collections.jsx';
@@ -65,6 +66,7 @@ export default function App() {
   const [showAiReview, setShowAiReview] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showReauthModal, setShowReauthModal] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [resumeMarkdown, setResumeMarkdown] = useState(null);
@@ -96,6 +98,7 @@ export default function App() {
   // App Update Notification & What's New state
   const [showWhatsNewModal, setShowWhatsNewModal] = useState(false);
   const [hasUpdateNotification, setHasUpdateNotification] = useState(false);
+  const [isFeedbackHighlighted, setIsFeedbackHighlighted] = useState(false);
 
   useEffect(() => {
     try {
@@ -106,6 +109,24 @@ export default function App() {
     } catch (e) {
       console.warn('Could not check update version', e);
     }
+
+    try {
+      const installKey = 'tb_v790_installed_at';
+      let installedAt = localStorage.getItem(installKey);
+      if (!installedAt) {
+        installedAt = Date.now().toString();
+        localStorage.setItem(installKey, installedAt);
+      }
+      const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+      const isWithinThreeDays = (Date.now() - Number(installedAt)) < threeDaysMs;
+      setIsFeedbackHighlighted(isWithinThreeDays);
+    } catch (e) {
+      console.warn('Could not check feedback highlight duration:', e);
+    }
+  }, []);
+
+  const handleCloseWhatsNew = useCallback(() => {
+    setShowWhatsNewModal(false);
   }, []);
 
   const handleOpenWhatsNew = async () => {
@@ -283,7 +304,7 @@ export default function App() {
     };
   }, []);
 
-  const handleTabSelect = (tab) => {
+  const handleTabSelect = useCallback((tab) => {
     setActiveTab(tab);
     if (tab === 'locations') {
       setSelectedLocation(null);
@@ -295,7 +316,7 @@ export default function App() {
     } else {
       navigateToHash(buildHash(tab));
     }
-  };
+  }, []);
 
   const handleFolderSelect = async (folderId) => {
     setCurrentFolderId(folderId);
@@ -465,6 +486,7 @@ export default function App() {
     const savedDisplayName = localStorage.getItem('tb_displayName') || '';
     const savedImmichPersonId = localStorage.getItem('tb_immichPersonId') || '';
     const savedImmichPersonName = localStorage.getItem('tb_immichPersonName') || '';
+    const savedEmail = localStorage.getItem('tb_email') || '';
     const savedIsAdmin = localStorage.getItem('tb_isAdmin') === '1' ? 1 : 0;
 
     if (savedToken && savedUsername && savedUserId) {
@@ -477,6 +499,10 @@ export default function App() {
         displayName: savedDisplayName || null,
         immichPersonId: savedImmichPersonId || null,
         immichPersonName: savedImmichPersonName || null,
+        email: savedEmail || '',
+        emailNotificationsEnabled: 1,
+        tripReminderDays: 3,
+        smtpEnabled: false,
         owntracksKey: savedOwnTracksKey
       };
       setUser(userData);
@@ -540,7 +566,11 @@ export default function App() {
                 profilePicture: data.profilePicture !== undefined ? data.profilePicture : prev.profilePicture,
                 displayName: data.displayName !== undefined ? data.displayName : prev.displayName,
                 immichPersonId: data.immichPersonId !== undefined ? data.immichPersonId : prev.immichPersonId,
-                immichPersonName: data.immichPersonName !== undefined ? data.immichPersonName : prev.immichPersonName
+                immichPersonName: data.immichPersonName !== undefined ? data.immichPersonName : prev.immichPersonName,
+                email: data.email !== undefined ? data.email : prev.email,
+                emailNotificationsEnabled: data.emailNotificationsEnabled !== undefined ? data.emailNotificationsEnabled : prev.emailNotificationsEnabled,
+                tripReminderDays: data.tripReminderDays !== undefined ? data.tripReminderDays : prev.tripReminderDays,
+                smtpEnabled: data.smtpEnabled !== undefined ? data.smtpEnabled : prev.smtpEnabled
               };
             });
             localStorage.setItem('tb_isAdmin', data.isAdmin ? '1' : '0');
@@ -548,6 +578,7 @@ export default function App() {
             if (data.displayName) localStorage.setItem('tb_displayName', data.displayName);
             if (data.immichPersonId) localStorage.setItem('tb_immichPersonId', data.immichPersonId);
             if (data.immichPersonName) localStorage.setItem('tb_immichPersonName', data.immichPersonName);
+            if (data.email !== undefined) localStorage.setItem('tb_email', data.email || '');
           }
           if (data.config) {
             if (data.config.last_seen_version !== undefined && data.config.last_seen_version !== null) {
@@ -743,6 +774,7 @@ export default function App() {
     localStorage.removeItem('tb_displayName');
     localStorage.removeItem('tb_immichPersonId');
     localStorage.removeItem('tb_immichPersonName');
+    localStorage.removeItem('tb_email');
     sessionStorage.removeItem('tb_session_token');
     
     await clearLocalDb();
@@ -763,12 +795,16 @@ export default function App() {
         if (updated.displayName !== undefined) localStorage.setItem('tb_displayName', updated.displayName || '');
         if (updated.immichPersonId !== undefined) localStorage.setItem('tb_immichPersonId', updated.immichPersonId || '');
         if (updated.immichPersonName !== undefined) localStorage.setItem('tb_immichPersonName', updated.immichPersonName || '');
+        if (updated.email !== undefined) localStorage.setItem('tb_email', updated.email || '');
         return {
           ...prev,
           profilePicture: updated.profilePicture !== undefined ? updated.profilePicture : prev.profilePicture,
           displayName: updated.displayName !== undefined ? updated.displayName : prev.displayName,
           immichPersonId: updated.immichPersonId !== undefined ? updated.immichPersonId : prev.immichPersonId,
-          immichPersonName: updated.immichPersonName !== undefined ? updated.immichPersonName : prev.immichPersonName
+          immichPersonName: updated.immichPersonName !== undefined ? updated.immichPersonName : prev.immichPersonName,
+          email: updated.email !== undefined ? updated.email : prev.email,
+          emailNotificationsEnabled: updated.emailNotificationsEnabled !== undefined ? updated.emailNotificationsEnabled : prev.emailNotificationsEnabled,
+          tripReminderDays: updated.tripReminderDays !== undefined ? updated.tripReminderDays : prev.tripReminderDays
         };
       }
       return prev;
@@ -777,6 +813,18 @@ export default function App() {
 
   // Pull-to-refresh event handlers
   const handleTouchStart = (e) => {
+    if (
+      showWhatsNewModal ||
+      showFeedbackModal ||
+      showAccountModal ||
+      showReauthModal ||
+      showAiImport ||
+      showAiReview ||
+      showImmichProgressModal ||
+      e.target?.closest?.('.login-card, .modal-overlay, .modal-backdrop, dialog, [role="dialog"]')
+    ) {
+      return;
+    }
     if (document.documentElement.scrollTop === 0) {
       setStartY(e.touches[0].clientY);
       setPulling(true);
@@ -1098,9 +1146,11 @@ export default function App() {
               ) : (
                 <User size={16} />
               )}
-              {pendingCount > 0 && (
+              {pendingCount > 0 ? (
                 <div style={{ position: 'absolute', top: '-4px', right: '-4px', width: '12px', height: '12px', background: 'red', borderRadius: '50%', border: '2px solid var(--bg-app)' }} />
-              )}
+              ) : isFeedbackHighlighted ? (
+                <div style={{ position: 'absolute', top: '-2px', right: '-2px', width: '9px', height: '9px', background: 'var(--accent-primary)', borderRadius: '50%', border: '2px solid var(--bg-app)' }} title="New feature available in account menu" />
+              ) : null}
             </button>
 
             {userMenuOpen && (
@@ -1115,6 +1165,38 @@ export default function App() {
                 </button>
                 <button onClick={() => { handleOpenWhatsNew(); setUserMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Sparkles size={16} style={{ color: 'var(--accent-primary-hover)' }} /> What's New ({APP_VERSION})
+                </button>
+                <button
+                  onClick={() => { setShowFeedbackModal(true); setUserMenuOpen(false); }}
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    background: isFeedbackHighlighted ? 'linear-gradient(90deg, rgba(139, 92, 246, 0.12), transparent)' : 'transparent',
+                    border: 'none',
+                    color: 'var(--text-primary)',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  <MessageSquarePlus size={16} style={{ color: 'var(--accent-primary)' }} />
+                  <span>Send Feedback</span>
+                  {isFeedbackHighlighted && (
+                    <span style={{
+                      marginLeft: 'auto',
+                      fontSize: '0.62rem',
+                      padding: '2px 6px',
+                      borderRadius: '10px',
+                      background: 'var(--accent-primary)',
+                      color: '#ffffff',
+                      fontWeight: 700,
+                      letterSpacing: '0.5px'
+                    }}>
+                      NEW
+                    </span>
+                  )}
                 </button>
                 <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
                 <div style={{ padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1253,13 +1335,35 @@ export default function App() {
           {showWhatsNewModal && (
             <WhatsNewModal
               isOpen={showWhatsNewModal}
-              onClose={() => setShowWhatsNewModal(false)}
+              onClose={handleCloseWhatsNew}
               onNavigateTab={handleTabSelect}
             />
           )}
           {showAiImport && <AiImportModal token={user.token} initialMode={importMode} resumeMarkdown={resumeMarkdown} onClose={() => { setShowAiImport(false); setResumeMarkdown(null); }} />}
           {showAiReview && <AiReviewQueue items={pendingImports || []} onClose={() => setShowAiReview(false)} />}
-          {showAccountModal && <AccountModal token={user.token} profilePicture={user.profilePicture} username={user.username} onClose={() => setShowAccountModal(false)} onProfileUpdated={handleProfileUpdated} />}
+          {showAccountModal && (
+            <AccountModal
+              token={user.token}
+              profilePicture={user.profilePicture}
+              username={user.username}
+              email={user.email}
+              emailNotificationsEnabled={user.emailNotificationsEnabled}
+              tripReminderDays={user.tripReminderDays}
+              smtpEnabled={user.smtpEnabled}
+              onClose={() => setShowAccountModal(false)}
+              onProfileUpdated={handleProfileUpdated}
+            />
+          )}
+          {showFeedbackModal && (
+            <FeedbackModal
+              isOpen={showFeedbackModal}
+              onClose={() => setShowFeedbackModal(false)}
+              token={user.token}
+              userEmail={user.email}
+              activeTab={activeTab}
+              syncStatus={syncStatus}
+            />
+          )}
           {showReauthModal && user && (
             <ReauthModal
               username={user.username}
@@ -1322,7 +1426,10 @@ export default function App() {
                     token={user.token} 
                     selectedTripId={selectedTripId}
                     onSelectTrip={handleTripSelect}
+                    smtpEnabled={user.smtpEnabled}
+                    userEmail={user.email}
                     accountOwner={{
+                      userId: user.userId,
                       name: user.displayName || user.username || 'Me',
                       displayName: user.displayName || '',
                       username: user.username,
@@ -1347,11 +1454,16 @@ export default function App() {
                     immichPersonId={user.immichPersonId}
                     immichPersonName={user.immichPersonName}
                     profilePicture={user.profilePicture}
+                    email={user.email}
+                    emailNotificationsEnabled={user.emailNotificationsEnabled}
+                    tripReminderDays={user.tripReminderDays}
+                    smtpEnabled={user.smtpEnabled}
                     onProfileUpdated={handleProfileUpdated}
                     onLogout={handleLogout} 
                     onResumeMarkdown={(md) => { setResumeMarkdown(md); setShowAiImport(true); }} 
                     onRestartTour={() => setShowOnboardingTour(true)}
                     onOpenWhatsNew={handleOpenWhatsNew}
+                    onOpenFeedback={() => setShowFeedbackModal(true)}
                     onShowChecklist={() => {
                       setShowOnboardingChecklist(true);
                       if (user?.userId) {
@@ -1392,27 +1504,71 @@ export default function App() {
             <ClipboardList size={20} />
             <span>Trips</span>
           </button>
-          <button
-            className={`mobile-nav-link mobile-profile-container ${mobileMenuOpen ? 'active' : ''}`}
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            style={{ position: 'relative' }}
+          <div
+            className="mobile-profile-container"
+            style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           >
-            {user.profilePicture ? (
-              <img src={user.profilePicture} alt="Avatar" style={{ width: '20px', height: '20px', borderRadius: '50%', objectFit: 'cover' }} />
-            ) : (
-              <User size={20} />
-            )}
-            <span>Profile</span>
+            <button
+              type="button"
+              className={`mobile-nav-link ${mobileMenuOpen ? 'active' : ''}`}
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              style={{ position: 'relative' }}
+            >
+              {user.profilePicture ? (
+                <img src={user.profilePicture} alt="Avatar" style={{ width: '20px', height: '20px', borderRadius: '50%', objectFit: 'cover' }} />
+              ) : (
+                <User size={20} />
+              )}
+              <span>Profile</span>
+              {pendingCount > 0 ? (
+                <div style={{ position: 'absolute', top: '4px', right: '16px', width: '8px', height: '8px', background: 'red', borderRadius: '50%' }} />
+              ) : isFeedbackHighlighted ? (
+                <div style={{ position: 'absolute', top: '4px', right: '16px', width: '7px', height: '7px', background: 'var(--accent-primary)', borderRadius: '50%' }} />
+              ) : null}
+            </button>
 
             {mobileMenuOpen && (
               <div className="mobile-user-dropdown" style={{
                 position: 'absolute', bottom: '60px', right: '10px', background: 'var(--bg-surface)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '8px 0', minWidth: '180px', zIndex: 9999, boxShadow: '0 -10px 30px rgba(0,0,0,0.5)'
               }} onClick={(e) => e.stopPropagation()}>
-                <button onClick={() => { handleTabSelect('settings'); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button type="button" onClick={() => { handleTabSelect('settings'); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Settings size={16} /> Settings
                 </button>
-                <button onClick={() => { handleOpenWhatsNew(); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button type="button" onClick={() => { handleOpenWhatsNew(); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Sparkles size={16} style={{ color: 'var(--accent-primary-hover)' }} /> What's New ({APP_VERSION})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowFeedbackModal(true); setMobileMenuOpen(false); }}
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    background: isFeedbackHighlighted ? 'linear-gradient(90deg, rgba(139, 92, 246, 0.12), transparent)' : 'transparent',
+                    border: 'none',
+                    color: 'var(--text-primary)',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  <MessageSquarePlus size={16} style={{ color: 'var(--accent-primary)' }} />
+                  <span>Send Feedback</span>
+                  {isFeedbackHighlighted && (
+                    <span style={{
+                      marginLeft: 'auto',
+                      fontSize: '0.62rem',
+                      padding: '2px 6px',
+                      borderRadius: '10px',
+                      background: 'var(--accent-primary)',
+                      color: '#ffffff',
+                      fontWeight: 700,
+                      letterSpacing: '0.5px'
+                    }}>
+                      NEW
+                    </span>
+                  )}
                 </button>
                 <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
                 <div style={{ padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1420,6 +1576,7 @@ export default function App() {
                   <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.04)', padding: '2px', borderRadius: '4px' }}>
                     {['system', 'light', 'dark'].map(t => (
                       <button
+                        type="button"
                         key={t}
                         onClick={() => setTheme(t)}
                         style={{
@@ -1440,7 +1597,7 @@ export default function App() {
                   </div>
                 </div>
                 <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
-                <button onClick={() => { handleLogout(); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--error)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button type="button" onClick={() => { handleLogout(); setMobileMenuOpen(false); }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--error)', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <LogOut size={16} /> Logout
                 </button>
                 <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
@@ -1453,7 +1610,7 @@ export default function App() {
                 </div>
               </div>
             )}
-          </button>
+          </div>
         </nav>
       )}
 

@@ -2,6 +2,62 @@
 
 All notable changes to TravelBuff will be documented in this file.
 
+## [v7.9.0] - 2026-11-06
+
+### 🚀 Major Features & Enhancements
+- **AI Prompt-Based Trip Discovery & 2-Phase Itinerary Builder (`Plan New Trip -> AI Assisted`)**:
+  - **Step 2 Mode Switcher**: Added a dedicated choice in `Plan New Trip -> AI Assisted -> Next` between **✨ Write a Prompt (AI Discovery)** and **📍 Select Saved Locations Manually**.
+  - **Context-Aware AI Discovery (`/api/ai/plan-from-prompt`)**: Sends the user's natural-language prompt together with Step 1 trip parameters (Trip Name, Length in Days, Start/End Dates, Travel Mode, Max Daily Drive Hours, Companion Count, and Home Start/Stop Addresses) to the configured AI provider.
+  - **Interactive Confirmation Checklist**: Displays proposed Locations and Places of Visit with day assignments, categories, and editable checkboxes before touching the database.
+  - **Strict 2-Phase Execution & Graceful Enrichment Fallback**:
+    1. **Phase 1 (Populate Locations App First)**: Resolves or creates all confirmed Locations (`db.locations`) and Places (`db.places`) first. If a place or location does not exist or cannot be enriched from Wikipedia/geocoder, TravelBuff still creates the Location/Place record with its name and category while leaving unverifiable enrichment fields empty (`latitude: null, longitude: null, local_file_data: null, notes: '', photo_sync_status: 'failed', geocode_status: 'failed'`).
+    2. **Phase 2 (Build Trip & Itinerary)**: Only after Phase 1 completes, creates the trip record and populates `itinerary_items` referencing the newly created `place_id`s and `location_id`s.
+- **Live Collaborative Trip Sharing with Local Users**:
+  - **Role-Based Trip Sharing (`trip_shares`)**: Share any trip with other local users on the same TravelBuff instance with **👁️ View-Only (`'view'`)** or **✏️ Co-Editor (`'edit'`)** permissions (`GET/POST/PUT/DELETE /api/trips/:id/shares`).
+  - **Scoped Library Read-Through (`is_shared_external`)**: Automatically grants collaborators read-through access to the trip's referenced `locations`, `places`, `entity_photos`, and `people` while flagging non-owned records with `is_shared_external: 1` so they never pollute the collaborator's personal `Locations`, `Collections`, or `ArchivedItems` views.
+  - **Accurate Trip Owner Attribution (`'self'`)**: Resolves `'self'` in expense split ledgers and traveler lists to `owner_display_name || owner_username` when viewed by collaborators, while preserving `Me (You)` for the owner.
+  - **Real-Time WebSocket Broadcasts & Clone to Own Trips**: Broadcasts live updates across all collaborators (`notifyTripCollaborators`) and allows collaborators to clone a shared trip (`POST /api/trips/:id/clone`) into their own independent library.
+- **Native SMTP Settings & 6 Email Notification Integrations (`emailService.js`)**:
+  - **Zero-Dependency Native SMTP Client**: Built a native Node.js `net` + `tls` SMTP client supporting STARTTLS (587), Implicit TLS (465), Plain (25), and `AUTH LOGIN` / `AUTH PLAIN` without external npm dependencies.
+  - **Admin SMTP Configuration & Test Email**: Added **📧 Email & SMTP Settings** in Admin Settings (`Settings.jsx`) with a 1-click **📨 Send Test Email** button (`POST /api/admin/smtp/test`).
+  - **6 Integrated Email Workflows**:
+    1. **Trip Share Invitation Email**: Optional instant email notification when sharing a trip with a local user.
+    2. **Send Trip Details by Email (Alongside Print)**: Added **📧 Email Trip Summary** inside the `Print / Export Trip Summary` modal (`POST /api/trips/:id/email-summary`) respecting the user's selected print checkboxes.
+    3. **Expense Split & Settlement Summary Email**: Added **📧 Email Settlement** inside the `Who Owes Whom` section (`POST /api/trips/:id/email-settlement`).
+    4. **Admin Password Reset Notification**: Added a *"Send new password to user via email"* checkbox when an Admin resets a user's password.
+    5. **Self-Service "Forgot Password" (6-Digit Recovery Code)**: Added a `"Forgot password?"` flow on `Login.jsx` (`POST /api/auth/forgot-password` & `POST /api/auth/reset-password`) when SMTP is enabled.
+    6. **Automated Upcoming Trip Countdown Reminders**: Added a background scheduler (`initTripReminderScheduler`) that sends an upcoming trip digest `N` days (`1`, `3`, or `7` days, configurable per user) before `start_date`.
+- **Direct In-App Feedback (`admin.travelbuff.app`)**:
+  - **Feedback Modal (`FeedbackModal.jsx`)**: Submit Bug Reports (`bug`), Feature Requests (`feature`), or General Feedback (`other`) with category-specific fields, optional diagnostic metadata, optional contact email, and live quota status.
+  - **Accessible Entry Points**: Located in the User Profile dropdown menu (with a temporary 3-day `NEW` highlight badge upon installing v7.9.0) and in `Settings -> Help & Guided Onboarding`.
+  - **Multi-Layer Anti-Abuse Protection (`feedbackService.js`)**: Protected by Ed25519 cryptographic instance signing, automatic telemetry public-key registration handshake, per-submission SHA-256 Proof-of-Work (`0000` prefix), local SQLite rate limits (2-minute cooldown, 5/hour, 15/24h), 24-hour SHA-256 content deduplication, and an 8 KB payload cap.
+- **AI Prompt-Based Trip Discovery Enhancements**:
+  - **Pre-filled Default Prompt**: Automatically carries Step 1 trip context into Step 2 with an explicit `[Location: ...]` placeholder tag.
+  - **2-Layer Safeguards**: Client pre-flight destination validation and structured AI `needs_more_info` clarification handling with inline prompt insertion helpers.
+  - **Robust Schema & Data Handling**: Sanitized place creation queries to ignore unsupported columns (`rating`, `geocode_status`), preserved local `/uploads/...` covers, and scoped Specific Trip `✨ AI Plan` strictly to trip-selected items.
+- **View-Only Collaboration Lockdown**:
+  - Completely hides edit, add, and configuration controls (expenses, split configs, reservations, notes, places, transit editing, trip deletion) when viewing shared trips in View-Only (`view`) mode.
+- **Trip Leave & Collaborator Removal Email Alerts**:
+  - Automatically dispatches email notifications to both the departing collaborator and the trip owner when a collaborator leaves a trip or has their access removed.
+- **User Administration Enhancements**:
+  - Added inline action dialogs (Reset Password, Edit Email, Delete User) beneath user rows and introduced an inline `+ Create Account` form in Admin Settings.
+
+### 🐛 Bug Fixes & Cleanup
+- **Light Theme Modal Contrast & Readability**:
+  - Added base and light-theme rules for `.modal-content` in `src/App.css` ensuring high-contrast surfaces and clear text legibility across all dialogs.
+  - Enhanced **Import Trip** and **Import Document** modals with padded body wrappers, theme-safe badges, and high-contrast alert colors.
+- **Docker Multi-Platform Container Runtime Packaging**:
+  - Updated `TravelBuff-Docker/Dockerfile` Stage 2 to `COPY core/*.js ./`, resolving `ERR_MODULE_NOT_FOUND` errors for newly modularized backend services (`feedbackService.js`, `emailService.js`).
+- **Dependency Security Vulnerability Remediation**:
+  - Added overrides and dependency bumps in `package.json` for `body-parser` (1.20.9), `follow-redirects` (1.16.2), `minimatch` (11.0.5), `multer` (2.5.0), `qs` (6.17.1), and `undici` (6.29.1), achieving 0 vulnerabilities on `npm audit` / `osv-scanner`.
+- **Form Component Warnings**:
+  - Fixed React `<select>` non-scalar value warning in `TripPlanning.jsx` by ensuring `dayLocations` values are normalized as scalar strings.
+- **Mobile Specific Trip Full-Page Scroll Fix**:
+  - Updated `.trip-sticky-top-bar` in `src/App.css` under `@media (max-width: 768px)` to `position: static !important; top: auto !important; box-shadow: none !important;` so the top trip summary and jump bar scroll naturally with the page on mobile screens instead of occupying fixed vertical space.
+  - Updated `scrollElementInTripOverlay` in `src/components/TripPlanning.jsx` to only subtract `stickyBar.offsetHeight` when `getComputedStyle(stickyBar).position === 'sticky'`.
+- **Documentation Consolidation**:
+  - Removed duplicate `Docs.md` file and standardized project guidelines on `documentation.md`.
+
 ## [v7.8.3] - 2026-10-22
 
 ### 🛡️ Security Hardening & Dependency Updates

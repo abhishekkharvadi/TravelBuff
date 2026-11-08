@@ -12,7 +12,64 @@ import MapView from './MapView.jsx';
 import MoveToFolderModal from './MoveToFolderModal.jsx';
 import ImmichLocationImportModal from './ImmichLocationImportModal.jsx';
 
+const FALLBACK_LOCATION_IMG = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600';
+const FALLBACK_PLACE_IMG = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=150';
+const brokenImageUrls = new Set();
+
+function normalizeImgKey(url) {
+  if (!url || typeof url !== 'string') return '';
+  let clean = url.trim();
+  try {
+    if (clean.startsWith('http://') || clean.startsWith('https://')) {
+      const parsed = new URL(clean);
+      if (parsed.pathname.startsWith('/uploads/')) {
+        return parsed.pathname;
+      }
+    }
+  } catch (_) {}
+  if (clean.startsWith('uploads/')) return '/' + clean;
+  return clean;
+}
+
+function isBrokenImgUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  return brokenImageUrls.has(url) || brokenImageUrls.has(normalizeImgKey(url));
+}
+
+async function markBrokenImageUrl(url) {
+  if (!url || typeof url !== 'string' || url.includes('unsplash.com')) return;
+  const norm = normalizeImgKey(url);
+  brokenImageUrls.add(url);
+  if (norm) brokenImageUrls.add(norm);
+
+  if (norm && norm.startsWith('/uploads/')) {
+    const rawRel = norm.slice(1); // 'uploads/...'
+    try {
+      const matchingLocs = await db.locations
+        .filter(l => l.local_file_data === norm || l.local_file_data === rawRel || l.local_file_data === url)
+        .toArray();
+      for (const loc of matchingLocs) {
+        await db.locations.update(loc.id, { local_file_data: null });
+      }
+      const matchingPlaces = await db.places
+        .filter(p => p.local_file_data === norm || p.local_file_data === rawRel || p.local_file_data === url)
+        .toArray();
+      for (const pl of matchingPlaces) {
+        await db.places.update(pl.id, { local_file_data: null });
+      }
+      const matchingPhotos = await db.entity_photos
+        .filter(ep => ep.file_path === norm || ep.file_path === rawRel || ep.file_path === url)
+        .toArray();
+      if (matchingPhotos.length > 0) {
+        await db.entity_photos.bulkDelete(matchingPhotos.map(ep => ep.id));
+      }
+    } catch (_) {}
+  }
+}
+
 function FolderCover({ folderId, locations, getFeaturedPhoto }) {
+  const [brokenTick, setBrokenTick] = React.useState(0);
+
   const getAllChildLocationIds = (fId) => {
     let ids = [];
     const children = locations.filter(l => {
@@ -29,18 +86,34 @@ function FolderCover({ folderId, locations, getFeaturedPhoto }) {
   };
 
   const selfImg = getFeaturedPhoto(folderId);
-  const isRealSelfImg = selfImg && selfImg !== 'null' && selfImg !== 'undefined' && !selfImg.includes('placeholder') && !selfImg.includes('unsplash.com');
+  const isRealSelfImg =
+    selfImg &&
+    selfImg !== 'null' &&
+    selfImg !== 'undefined' &&
+    !selfImg.includes('placeholder') &&
+    !selfImg.includes('unsplash.com') &&
+    !isBrokenImgUrl(selfImg);
 
   const allLocIds = getAllChildLocationIds(folderId);
   const childImages = allLocIds
     .map(id => getFeaturedPhoto(id))
-    .filter(img => img && img !== 'null' && img !== 'undefined' && !img.includes('placeholder') && !img.includes('unsplash.com'));
+    .filter(
+      img =>
+        img &&
+        img !== 'null' &&
+        img !== 'undefined' &&
+        !img.includes('placeholder') &&
+        !img.includes('unsplash.com') &&
+        !isBrokenImgUrl(img)
+    );
 
-  // Combine the folder's own cover image and all sub-location images
-  const images = [
-    ...(isRealSelfImg ? [selfImg] : []),
-    ...childImages
-  ];
+  // Deduplicate and combine the folder's own cover image and all valid sub-location images
+  const images = Array.from(
+    new Set([
+      ...(isRealSelfImg ? [selfImg] : []),
+      ...childImages
+    ])
+  );
 
   const [index, setIndex] = React.useState(0);
 
@@ -50,14 +123,22 @@ function FolderCover({ folderId, locations, getFeaturedPhoto }) {
       setIndex(prev => (prev + 1) % images.length);
     }, 3000);
     return () => clearInterval(interval);
-  }, [images.length]);
+  }, [images.length, brokenTick]);
 
-  const activeImg = images[index] || (isRealSelfImg ? selfImg : (childImages[0] || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'));
+  const safeIndex = images.length > 0 ? index % images.length : 0;
+  const activeImg = images[safeIndex] || FALLBACK_LOCATION_IMG;
 
   return (
     <img 
       src={activeImg} 
-      onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }} 
+      onError={(e) => {
+        e.target.onerror = null;
+        if (activeImg && activeImg !== FALLBACK_LOCATION_IMG) {
+          markBrokenImageUrl(activeImg);
+          setBrokenTick(t => t + 1);
+        }
+        e.target.src = FALLBACK_LOCATION_IMG;
+      }} 
       alt="Folder Cover" 
     />
   );
@@ -66,15 +147,17 @@ function FolderCover({ folderId, locations, getFeaturedPhoto }) {
 export default function Locations({ token, selectedLocation: selectedLocationProp, setSelectedLocation, currentFolderId, setCurrentFolderId, returnToCollectionId, onReturnToCollection, onNavigate }) {
   // Dexie Queries (Reactive Live Updates)
   const allLocationsRaw = useLiveQuery(() => db.locations.toArray()) || [];
-  const locations = useMemo(() => allLocationsRaw.filter(l => Number(l.is_archived) !== 1), [allLocationsRaw]);
-  const archivedLocationsCount = useMemo(() => allLocationsRaw.filter(l => Number(l.is_archived) === 1).length, [allLocationsRaw]);
+  const personalLocationsRaw = useMemo(() => allLocationsRaw.filter(l => Number(l.is_shared_external) !== 1), [allLocationsRaw]);
+  const locations = useMemo(() => personalLocationsRaw.filter(l => Number(l.is_archived) !== 1), [personalLocationsRaw]);
+  const archivedLocationsCount = useMemo(() => personalLocationsRaw.filter(l => Number(l.is_archived) === 1).length, [personalLocationsRaw]);
   
   const selectedLocation = typeof selectedLocationProp === 'object' && selectedLocationProp !== null 
     ? selectedLocationProp 
     : locations.find(l => String(l.id) === String(selectedLocationProp)) || null;
   const allPlacesRaw = useLiveQuery(() => db.places.toArray()) || [];
-  const places = useMemo(() => allPlacesRaw.filter(p => Number(p.is_archived) !== 1), [allPlacesRaw]);
-  const archivedPlacesCount = useMemo(() => allPlacesRaw.filter(p => Number(p.is_archived) === 1).length, [allPlacesRaw]);
+  const personalPlacesRaw = useMemo(() => allPlacesRaw.filter(p => Number(p.is_shared_external) !== 1), [allPlacesRaw]);
+  const places = useMemo(() => personalPlacesRaw.filter(p => Number(p.is_archived) !== 1), [personalPlacesRaw]);
+  const archivedPlacesCount = useMemo(() => personalPlacesRaw.filter(p => Number(p.is_archived) === 1).length, [personalPlacesRaw]);
   const totalArchivedCount = archivedLocationsCount + archivedPlacesCount;
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const entityTags = useLiveQuery(() => db.entity_tags.toArray()) || [];
@@ -689,9 +772,10 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
   const featuredPhotoMap = React.useMemo(() => {
     const map = {};
     
-    // Group photos by entity
+    // Group photos by entity (excluding known broken local URLs)
     const photoGroups = {};
     photos.forEach(p => {
+      if (p.file_path && isBrokenImgUrl(p.file_path)) return;
       if (!photoGroups[p.entity_id]) photoGroups[p.entity_id] = [];
       photoGroups[p.entity_id].push(p);
     });
@@ -700,32 +784,37 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
     Object.keys(photoGroups).forEach(entId => {
       const pList = photoGroups[entId];
       const featured = pList.find(p => p.is_featured === 1);
-      if (featured && featured.file_path) {
+      if (featured && featured.file_path && !isBrokenImgUrl(featured.file_path)) {
         map[entId] = featured.file_path;
       }
     });
 
     // 2. Pre-populate with locations local_file_data if not set by starred photo
     locations.forEach(loc => {
-      if (!map[loc.id] && loc.local_file_data) map[loc.id] = loc.local_file_data;
+      if (!map[loc.id] && loc.local_file_data && !isBrokenImgUrl(loc.local_file_data)) {
+        map[loc.id] = loc.local_file_data;
+      }
     });
 
     // 3. Pre-populate with places local_file_data if not set by starred photo
     places.forEach(place => {
-      if (!map[place.id] && place.local_file_data) map[place.id] = place.local_file_data;
+      if (!map[place.id] && place.local_file_data && !isBrokenImgUrl(place.local_file_data)) {
+        map[place.id] = place.local_file_data;
+      }
     });
 
     // 4. First photo in entity_photos if entity still has no cover
     Object.keys(photoGroups).forEach(entId => {
       if (map[entId]) return;
       const pList = photoGroups[entId];
-      if (pList[0] && pList[0].file_path) map[entId] = pList[0].file_path;
+      const validPhoto = pList.find(p => p && p.file_path && !isBrokenImgUrl(p.file_path));
+      if (validPhoto) map[entId] = validPhoto.file_path;
     });
 
     // 5. Fallback: If a location has no photo, check if any of its sub-places has a photo!
     locations.forEach(loc => {
       if (!map[loc.id]) {
-        const childPlace = places.find(p => p.location_id === loc.id && map[p.id]);
+        const childPlace = places.find(p => p.location_id === loc.id && map[p.id] && !isBrokenImgUrl(map[p.id]));
         if (childPlace) {
           map[loc.id] = map[childPlace.id];
         }
@@ -738,10 +827,11 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
   // Helper: Get featured image or fallback placeholder
   const getFeaturedPhoto = React.useCallback((entityId) => {
     let url = featuredPhotoMap[entityId];
-    if (!url) return 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600';
+    if (!url || isBrokenImgUrl(url)) return FALLBACK_LOCATION_IMG;
     if (typeof url === 'string' && !url.startsWith('http') && !url.startsWith('data:') && !url.startsWith('/')) {
       url = '/' + url;
     }
+    if (isBrokenImgUrl(url)) return FALLBACK_LOCATION_IMG;
     return url;
   }, [featuredPhotoMap]);
 
@@ -3283,7 +3373,11 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
                     >
                       <img 
                         src={featuredPlaceImg} 
-                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=150'; }}
+                        onError={(e) => {
+                          e.target.onerror = null;
+                          markBrokenImageUrl(featuredPlaceImg);
+                          e.target.src = FALLBACK_PLACE_IMG;
+                        }}
                         style={{ width: '80px', height: '80px', borderRadius: 'var(--radius-sm)', objectFit: 'cover' }}
                         alt={place.name}
                       />
@@ -3566,7 +3660,11 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
             ) : (
               <img 
                 src={featuredImg} 
-                onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=600'; }} 
+                onError={(e) => {
+                  e.target.onerror = null;
+                  markBrokenImageUrl(featuredImg);
+                  e.target.src = FALLBACK_LOCATION_IMG;
+                }} 
                 alt={loc.name} 
               />
             )}
@@ -4158,7 +4256,11 @@ export default function Locations({ token, selectedLocation: selectedLocationPro
               >
                 <img 
                   src={featuredPlaceImg} 
-                  onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=150'; }} 
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    markBrokenImageUrl(featuredPlaceImg);
+                    e.target.src = FALLBACK_PLACE_IMG;
+                  }} 
                   style={{ width: '80px', height: '80px', borderRadius: 'var(--radius-sm)', objectFit: 'cover' }} 
                   alt={place.name} 
                 />

@@ -46,8 +46,10 @@ export default function ArchivedItems({ token, showToast = () => {}, onNavigate 
   const [restorePlaceModal, setRestorePlaceModal] = useState(null); // { place, targetLocId }
 
   // Dexie live queries
-  const allLocations = useLiveQuery(() => db.locations.toArray(), []) || [];
-  const allPlaces = useLiveQuery(() => db.places.toArray(), []) || [];
+  const allLocationsRaw = useLiveQuery(() => db.locations.toArray(), []) || [];
+  const allLocations = allLocationsRaw.filter(l => Number(l.is_shared_external) !== 1);
+  const allPlacesRaw = useLiveQuery(() => db.places.toArray(), []) || [];
+  const allPlaces = allPlacesRaw.filter(p => Number(p.is_shared_external) !== 1);
   const allPhotos = useLiveQuery(() => db.entity_photos.toArray(), []) || [];
   const allTrips = useLiveQuery(() => db.trips.toArray(), []) || [];
   // Helper to check if item has a valid parent

@@ -18,6 +18,20 @@ import {
   setTelemetryEnabled, 
   triggerManualPing 
 } from './telemetryService.js';
+import { getFeedbackQuotaStatus, submitFeedback } from './feedbackService.js';
+import {
+  getSmtpSettings,
+  saveSmtpSettings,
+  isSmtpEnabled,
+  sendTestEmail,
+  sendTripSharedEmail,
+  sendTripLeftEmails,
+  sendAdminCredentialsEmail,
+  sendPasswordResetCodeEmail,
+  sendExpenseSettlementEmail,
+  sendTripDetailsEmail,
+  initTripReminderScheduler
+} from './emailService.js';
 import { processMarkdownImport, geocode } from './importService.js';
 import axios from 'axios';
 
@@ -124,6 +138,148 @@ function notifyOwnTracksPing(userId, pingData) {
       }));
     }
   });
+}
+
+// Helper: Check trip ownership & shared permission for a user
+async function getTripAccess(tripId, userId) {
+  if (!tripId || !userId) {
+    return { hasAccess: false, canEdit: false, isOwner: false, ownerId: null, permission: null, trip: null };
+  }
+  const strTripId = String(tripId);
+  const trip = await db.get(
+    'SELECT * FROM trips WHERE CAST(id AS TEXT) = ? OR id = ?',
+    [strTripId, tripId]
+  );
+  if (!trip) {
+    return { hasAccess: false, canEdit: false, isOwner: false, ownerId: null, permission: null, trip: null };
+  }
+  if (String(trip.user_id) === String(userId)) {
+    return { hasAccess: true, canEdit: true, isOwner: true, ownerId: trip.user_id, permission: 'owner', trip };
+  }
+  const share = await db.get(
+    'SELECT permission FROM trip_shares WHERE (CAST(trip_id AS TEXT) = ? OR trip_id = ?) AND shared_with_user_id = ?',
+    [strTripId, tripId, userId]
+  );
+  if (share) {
+    return {
+      hasAccess: true,
+      canEdit: share.permission === 'edit',
+      isOwner: false,
+      ownerId: trip.user_id,
+      permission: share.permission,
+      trip
+    };
+  }
+  return { hasAccess: false, canEdit: false, isOwner: false, ownerId: trip.user_id, permission: null, trip: null };
+}
+
+// Helper: Notify owner and all shared collaborators of a trip
+async function notifyTripCollaborators(tripId) {
+  if (!tripId) return;
+  try {
+    const strTripId = String(tripId);
+    const trip = await db.get('SELECT user_id FROM trips WHERE CAST(id AS TEXT) = ? OR id = ?', [strTripId, tripId]);
+    const shares = await db.all('SELECT shared_with_user_id FROM trip_shares WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?', [strTripId, tripId]);
+    const userIds = new Set();
+    if (trip && trip.user_id) userIds.add(trip.user_id);
+    for (const s of shares) {
+      if (s.shared_with_user_id) userIds.add(s.shared_with_user_id);
+    }
+    userIds.forEach(uid => notifyUserClients(uid));
+  } catch (err) {
+    console.warn('[TripShare] Failed to notify trip collaborators:', err.message);
+  }
+}
+
+// Helper: Collect location, place, and people IDs referenced by trips shared with a user
+async function getSharedTripReferencedIds(userId) {
+  const sharedTrips = await db.all(
+    `SELECT t.* FROM trips t
+     JOIN trip_shares ts ON CAST(ts.trip_id AS TEXT) = CAST(t.id AS TEXT)
+     WHERE ts.shared_with_user_id = ?`,
+    [userId]
+  );
+  if (!sharedTrips || sharedTrips.length === 0) {
+    return { locationIds: [], placeIds: [], peopleIds: [] };
+  }
+
+  const tripIds = sharedTrips.map(t => String(t.id));
+  const locationIdSet = new Set();
+  const placeIdSet = new Set();
+  const peopleIdSet = new Set();
+
+  // 1. Parse trip notes (locationIds, dayLocations, splitMainMembers) and companions
+  for (const t of sharedTrips) {
+    try {
+      const notesObj = typeof t.notes === 'string' && t.notes ? JSON.parse(t.notes) : (t.notes || {});
+      if (Array.isArray(notesObj.locationIds)) {
+        notesObj.locationIds.forEach(lid => { if (lid) locationIdSet.add(String(lid)); });
+      }
+      if (notesObj.dayLocations && typeof notesObj.dayLocations === 'object') {
+        Object.values(notesObj.dayLocations).forEach(lid => { if (lid) locationIdSet.add(String(lid)); });
+      }
+      if (Array.isArray(notesObj.splitMainMembers)) {
+        notesObj.splitMainMembers.forEach(pid => { if (pid && pid !== 'self') peopleIdSet.add(String(pid)); });
+      }
+    } catch (_) {}
+
+    try {
+      const compArr = typeof t.companions === 'string' && t.companions ? JSON.parse(t.companions) : (Array.isArray(t.companions) ? t.companions : []);
+      if (Array.isArray(compArr)) {
+        compArr.forEach(pid => { if (pid && pid !== 'self') peopleIdSet.add(String(pid)); });
+      }
+    } catch (_) {}
+  }
+
+  // 2. Collect from itinerary_items and expenses
+  if (tripIds.length > 0) {
+    const tPlaceholders = tripIds.map(() => '?').join(',');
+    const items = await db.all(
+      `SELECT place_id, location_id FROM itinerary_items WHERE CAST(trip_id AS TEXT) IN (${tPlaceholders})`,
+      tripIds
+    );
+    for (const item of items) {
+      if (item.place_id) placeIdSet.add(String(item.place_id));
+      if (item.location_id) locationIdSet.add(String(item.location_id));
+    }
+
+    const expenses = await db.all(
+      `SELECT paid_by, for_member FROM expenses WHERE CAST(trip_id AS TEXT) IN (${tPlaceholders})`,
+      tripIds
+    );
+    for (const exp of expenses) {
+      if (exp.paid_by && exp.paid_by !== 'self') peopleIdSet.add(String(exp.paid_by));
+      if (exp.for_member && exp.for_member !== 'self' && exp.for_member !== 'split') peopleIdSet.add(String(exp.for_member));
+    }
+  }
+
+  // 3. Also include all places belonging to the shared trip's locations (so Places Bank works for Co-Editors)
+  if (locationIdSet.size > 0) {
+    const locArr = Array.from(locationIdSet);
+    const lPlaceholders = locArr.map(() => '?').join(',');
+    const locPlaces = await db.all(
+      `SELECT id FROM places WHERE CAST(location_id AS TEXT) IN (${lPlaceholders}) AND COALESCE(is_archived, 0) = 0`,
+      locArr
+    );
+    locPlaces.forEach(p => { if (p.id) placeIdSet.add(String(p.id)); });
+  }
+
+  // 4. Also include parent locations of any referenced places
+  if (placeIdSet.size > 0) {
+    const plArr = Array.from(placeIdSet);
+    const pPlaceholders = plArr.map(() => '?').join(',');
+    const plLocs = await db.all(
+      `SELECT DISTINCT location_id FROM places WHERE CAST(id AS TEXT) IN (${pPlaceholders}) AND location_id IS NOT NULL`,
+      plArr
+    );
+    plLocs.forEach(r => { if (r.location_id) locationIdSet.add(String(r.location_id)); });
+  }
+
+  return {
+    locationIds: Array.from(locationIdSet),
+    placeIds: Array.from(placeIdSet),
+    peopleIds: Array.from(peopleIdSet)
+  };
 }
 
 wss.on('connection', (ws) => {
@@ -304,10 +460,122 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.get('/api/auth/smtp-status', async (req, res) => {
+  try {
+    const smtpEnabled = await isSmtpEnabled();
+    res.json({ smtpEnabled });
+  } catch (err) {
+    res.json({ smtpEnabled: false });
+  }
+});
+
+// Rate limit map for password reset requests (IP/identifier -> timestamps)
+const forgotPasswordRateMap = new Map();
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { identifier } = req.body;
+  if (!identifier || !String(identifier).trim()) {
+    return res.status(400).json({ error: 'Please enter your username or email address.' });
+  }
+
+  try {
+    if (!(await isSmtpEnabled())) {
+      return res.status(400).json({ error: 'Password recovery via email is not enabled on this server. Please contact an administrator.' });
+    }
+
+    const cleanId = String(identifier).trim();
+    const rateKey = `${req.ip || 'local'}:${cleanId.toLowerCase()}`;
+    const now = Date.now();
+    const recent = (forgotPasswordRateMap.get(rateKey) || []).filter(ts => now - ts < 15 * 60 * 1000);
+    if (recent.length >= 3) {
+      return res.status(429).json({ error: 'Too many reset attempts. Please wait 15 minutes before trying again.' });
+    }
+    recent.push(now);
+    forgotPasswordRateMap.set(rateKey, recent);
+
+    const user = await db.get(
+      'SELECT id, username, email FROM users WHERE LOWER(username) = LOWER(?) OR (email IS NOT NULL AND LOWER(email) = LOWER(?))',
+      [cleanId, cleanId]
+    );
+
+    if (!user || !user.email || !String(user.email).trim()) {
+      return res.status(400).json({
+        error: 'No account with a configured email address matched that username or email. Please ask an administrator to reset your password.'
+      });
+    }
+
+    const resetCode = String(crypto.randomInt(100000, 999999));
+    const tokenHash = crypto.createHash('sha256').update(`${user.id}:${resetCode}`).digest('hex');
+    const expiresAt = now + 15 * 60 * 1000; // 15 minutes
+
+    await db.run('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ?', [user.id]);
+    await db.run(
+      'INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, used, created_at) VALUES (?, ?, ?, ?, 0, ?)',
+      [crypto.randomUUID(), user.id, tokenHash, expiresAt, now]
+    );
+
+    await sendPasswordResetCodeEmail({
+      toEmail: user.email,
+      username: user.username,
+      resetCode
+    });
+
+    res.json({
+      success: true,
+      message: 'A 6-digit verification code has been sent to the email address on file.'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { identifier, code, newPassword } = req.body;
+  if (!identifier || !code || !newPassword) {
+    return res.status(400).json({ error: 'Username/email, verification code, and new password are required.' });
+  }
+  if (String(newPassword).length < 4) {
+    return res.status(400).json({ error: 'New password must be at least 4 characters long.' });
+  }
+
+  try {
+    const cleanId = String(identifier).trim();
+    const cleanCode = String(code).trim();
+    const user = await db.get(
+      'SELECT id, username FROM users WHERE LOWER(username) = LOWER(?) OR (email IS NOT NULL AND LOWER(email) = LOWER(?))',
+      [cleanId, cleanId]
+    );
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired verification code.' });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(`${user.id}:${cleanCode}`).digest('hex');
+    const tokenRow = await db.get(
+      'SELECT id FROM password_reset_tokens WHERE user_id = ? AND token_hash = ? AND used = 0 AND expires_at >= ? ORDER BY created_at DESC LIMIT 1',
+      [user.id, tokenHash, Date.now()]
+    );
+    if (!tokenRow) {
+      return res.status(400).json({ error: 'Invalid or expired verification code.' });
+    }
+
+    const hash = await bcrypt.hash(String(newPassword), 10);
+    await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
+    await db.run('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ?', [user.id]);
+
+    res.json({ success: true, message: 'Password reset successfully! You can now sign in.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const config = await db.get('SELECT * FROM user_configs WHERE user_id = ?', [req.user.id]);
-    const user = await db.get('SELECT profile_picture, is_admin, display_name, immich_person_id, immich_person_name FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get(
+      'SELECT profile_picture, is_admin, display_name, immich_person_id, immich_person_name, email, email_notifications_enabled, trip_reminder_days FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    const smtpEnabled = await isSmtpEnabled();
     res.json({ 
       id: req.user.id, 
       username: req.user.username, 
@@ -316,7 +584,11 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
       profilePicture: user ? user.profile_picture : null,
       displayName: user ? (user.display_name || null) : null,
       immichPersonId: user ? (user.immich_person_id || null) : null,
-      immichPersonName: user ? (user.immich_person_name || null) : null
+      immichPersonName: user ? (user.immich_person_name || null) : null,
+      email: user ? (user.email || null) : null,
+      emailNotificationsEnabled: user ? (user.email_notifications_enabled ?? 1) : 1,
+      tripReminderDays: user ? (user.trip_reminder_days ?? 3) : 3,
+      smtpEnabled
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -325,7 +597,10 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 
 app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
   try {
-    const user = await db.get('SELECT id, username, is_admin, profile_picture, display_name, immich_person_id, immich_person_name FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get(
+      'SELECT id, username, is_admin, profile_picture, display_name, immich_person_id, immich_person_name, email, email_notifications_enabled, trip_reminder_days FROM users WHERE id = ?',
+      [req.user.id]
+    );
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -342,7 +617,10 @@ app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
       profilePicture: user.profile_picture,
       displayName: user.display_name || null,
       immichPersonId: user.immich_person_id || null,
-      immichPersonName: user.immich_person_name || null
+      immichPersonName: user.immich_person_name || null,
+      email: user.email || null,
+      emailNotificationsEnabled: user.email_notifications_enabled ?? 1,
+      tripReminderDays: user.trip_reminder_days ?? 3
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -350,12 +628,162 @@ app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// Admin User Management API
+// Local Users Directory (for Trip Sharing)
+// ==========================================
+app.get('/api/users/directory', authenticateToken, async (req, res) => {
+  try {
+    const rows = await db.all(
+      'SELECT id, username, display_name, profile_picture, email FROM users WHERE id != ? ORDER BY COALESCE(display_name, username) ASC',
+      [req.user.id]
+    );
+    res.json(
+      rows.map(u => {
+        const hasEmail = Boolean(u.email && String(u.email).trim());
+        return {
+          id: u.id,
+          username: u.username,
+          display_name: u.display_name || null,
+          displayName: u.display_name || null,
+          profile_picture: u.profile_picture || null,
+          profilePicture: u.profile_picture || null,
+          has_email: hasEmail,
+          hasEmail
+        };
+      })
+    );
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// Direct In-App Feedback API
+// ==========================================
+app.get('/api/feedback/status', authenticateToken, async (req, res) => {
+  try {
+    const quota = await getFeedbackQuotaStatus(req.user.id);
+    res.json(quota);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/feedback', authenticateToken, async (req, res) => {
+  try {
+    const { category, title, message, contact_email, diagnostics } = req.body || {};
+    const result = await submitFeedback({
+      userId: req.user.id,
+      category,
+      title,
+      message,
+      contactEmail: contact_email,
+      diagnostics
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// Admin User Management & SMTP API
 // ==========================================
 app.get('/api/admin/users', authenticateAdminToken, async (req, res) => {
   try {
-    const users = await db.all('SELECT id, username, is_admin, profile_picture, created_at FROM users ORDER BY created_at ASC');
+    const users = await db.all(
+      'SELECT id, username, display_name, email, is_admin, profile_picture, created_at FROM users ORDER BY created_at ASC'
+    );
     res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users', authenticateAdminToken, async (req, res) => {
+  const { username, displayName, display_name, email, password, isAdmin, is_admin, sendEmail: shouldSendEmail } = req.body || {};
+  const cleanUsername = String(username || '').trim();
+  const cleanDisplayName = String(displayName ?? display_name ?? '').trim() || null;
+  const cleanEmail = String(email || '').trim() || null;
+  const rawPassword = String(password || '');
+  const roleIsAdmin = isAdmin || is_admin ? 1 : 0;
+
+  if (!cleanUsername) {
+    return res.status(400).json({ error: 'Username is required.' });
+  }
+  if (rawPassword.length < 4) {
+    return res.status(400).json({ error: 'Password must be at least 4 characters long.' });
+  }
+  if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+
+  try {
+    const existing = await db.get('SELECT id FROM users WHERE LOWER(username) = LOWER(?)', [cleanUsername]);
+    if (existing) {
+      return res.status(400).json({ error: 'Username already taken.' });
+    }
+
+    const userId = crypto.randomUUID();
+    const hash = await bcrypt.hash(rawPassword, 10);
+    const owntracksKey = crypto.randomBytes(16).toString('hex');
+
+    await db.run(
+      'INSERT INTO users (id, username, display_name, email, password_hash, is_admin) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, cleanUsername, cleanDisplayName, cleanEmail, hash, roleIsAdmin]
+    );
+
+    await db.run(
+      'INSERT INTO user_configs (user_id, owntracks_key) VALUES (?, ?)',
+      [userId, owntracksKey]
+    );
+
+    await seedDefaultTags(userId);
+    await seedDefaultCategories(userId);
+
+    let emailSent = false;
+    let emailError = null;
+    if (shouldSendEmail && cleanEmail) {
+      try {
+        const resEmail = await sendAdminCredentialsEmail({
+          toEmail: cleanEmail,
+          username: cleanUsername,
+          displayName: cleanDisplayName,
+          tempPassword: rawPassword,
+          isNewUser: true
+        });
+        emailSent = !resEmail?.skipped;
+      } catch (eErr) {
+        emailError = eErr.message;
+      }
+    }
+
+    const createdUser = await db.get(
+      'SELECT id, username, display_name, email, is_admin, profile_picture, created_at FROM users WHERE id = ?',
+      [userId]
+    );
+
+    res.status(201).json({
+      success: true,
+      user: createdUser,
+      emailSent,
+      emailError,
+      message: `User "${cleanUsername}" created successfully.${emailSent ? ' Login credentials sent via email.' : ''}`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/users/:userId/email', authenticateAdminToken, async (req, res) => {
+  const { userId } = req.params;
+  const { email } = req.body;
+  try {
+    const cleanEmail = email ? String(email).trim() : null;
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+    await db.run('UPDATE users SET email = ? WHERE id = ?', [cleanEmail, userId]);
+    res.json({ success: true, email: cleanEmail });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -363,18 +791,78 @@ app.get('/api/admin/users', authenticateAdminToken, async (req, res) => {
 
 app.post('/api/admin/users/:userId/reset-password', authenticateAdminToken, async (req, res) => {
   const { userId } = req.params;
-  const { newPassword } = req.body;
+  const { newPassword, sendEmail: shouldSendEmail, email: overrideEmail } = req.body;
   if (!newPassword || newPassword.length < 4) {
     return res.status(400).json({ error: 'Password must be at least 4 characters long' });
   }
   try {
-    const targetUser = await db.get('SELECT id, username FROM users WHERE id = ?', [userId]);
+    const targetUser = await db.get('SELECT id, username, display_name, email FROM users WHERE id = ?', [userId]);
     if (!targetUser) {
       return res.status(404).json({ error: 'User not found' });
     }
     const hash = await bcrypt.hash(newPassword, 10);
-    await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, userId]);
-    res.json({ success: true, message: `Password for "${targetUser.username}" updated successfully.` });
+    const targetEmail = overrideEmail !== undefined ? (overrideEmail ? String(overrideEmail).trim() : null) : targetUser.email;
+    if (overrideEmail !== undefined) {
+      await db.run('UPDATE users SET password_hash = ?, email = ? WHERE id = ?', [hash, targetEmail, userId]);
+    } else {
+      await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, userId]);
+    }
+
+    let emailSent = false;
+    let emailError = null;
+    if (shouldSendEmail && targetEmail) {
+      try {
+        await sendAdminCredentialsEmail({
+          toEmail: targetEmail,
+          username: targetUser.username,
+          displayName: targetUser.display_name,
+          tempPassword: newPassword,
+          isNewUser: false
+        });
+        emailSent = true;
+      } catch (eErr) {
+        emailError = eErr.message;
+      }
+    }
+
+    res.json({
+      success: true,
+      emailSent,
+      emailError,
+      message: `Password for "${targetUser.username}" updated successfully.${emailSent ? ' Notification email sent.' : ''}`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/smtp', authenticateAdminToken, async (req, res) => {
+  try {
+    const settings = await getSmtpSettings(false);
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/smtp', authenticateAdminToken, async (req, res) => {
+  try {
+    const saved = await saveSmtpSettings(req.body || {});
+    res.json({ success: true, settings: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/smtp/test', authenticateAdminToken, async (req, res) => {
+  try {
+    const { to_email, toEmail, settings } = req.body || {};
+    const recipient = String(to_email ?? toEmail ?? '').trim();
+    if (!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+      return res.status(400).json({ error: 'Please provide a valid recipient email address for the test.' });
+    }
+    await sendTestEmail(recipient, settings && typeof settings === 'object' ? settings : null);
+    res.json({ success: true, message: `Test email sent to ${recipient}!` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -576,10 +1064,11 @@ app.post('/api/log-error', async (req, res) => {
 app.get('/api/user/profile', authenticateToken, async (req, res) => {
   try {
     const user = await db.get(
-      'SELECT id, username, profile_picture, display_name, immich_person_id, immich_person_name, is_admin FROM users WHERE id = ?',
+      'SELECT id, username, profile_picture, display_name, immich_person_id, immich_person_name, email, email_notifications_enabled, trip_reminder_days, is_admin FROM users WHERE id = ?',
       [req.user.id]
     );
     if (!user) return res.status(404).json({ error: 'User not found' });
+    const smtpEnabled = await isSmtpEnabled();
     res.json({
       id: user.id,
       username: user.username,
@@ -587,6 +1076,10 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
       displayName: user.display_name || null,
       immichPersonId: user.immich_person_id || null,
       immichPersonName: user.immich_person_name || null,
+      email: user.email || null,
+      emailNotificationsEnabled: user.email_notifications_enabled ?? 1,
+      tripReminderDays: user.trip_reminder_days ?? 3,
+      smtpEnabled,
       isAdmin: user.is_admin || 0
     });
   } catch (err) {
@@ -595,14 +1088,30 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
 });
 
 app.put('/api/user/profile', authenticateToken, async (req, res) => {
-  const { displayName, immichPersonId, immichPersonName } = req.body;
+  const { displayName, immichPersonId, immichPersonName, email, emailNotificationsEnabled, tripReminderDays } = req.body;
   try {
+    const cleanEmail = email !== undefined ? (email && String(email).trim() ? String(email).trim() : null) : undefined;
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+    const existingUser = await db.get('SELECT email, email_notifications_enabled, trip_reminder_days FROM users WHERE id = ?', [req.user.id]);
+    const finalEmail = cleanEmail !== undefined ? cleanEmail : (existingUser?.email || null);
+    const finalEmailNotifs = emailNotificationsEnabled !== undefined
+      ? (emailNotificationsEnabled ? 1 : 0)
+      : (existingUser?.email_notifications_enabled ?? 1);
+    const finalReminderDays = tripReminderDays !== undefined
+      ? Math.max(0, parseInt(tripReminderDays, 10) || 0)
+      : (existingUser?.trip_reminder_days ?? 3);
+
     await db.run(
-      'UPDATE users SET display_name = ?, immich_person_id = ?, immich_person_name = ? WHERE id = ?',
+      'UPDATE users SET display_name = ?, immich_person_id = ?, immich_person_name = ?, email = ?, email_notifications_enabled = ?, trip_reminder_days = ? WHERE id = ?',
       [
         displayName !== undefined ? (displayName ? displayName.trim() : null) : null,
         immichPersonId !== undefined ? (immichPersonId ? immichPersonId.trim() : null) : null,
         immichPersonName !== undefined ? (immichPersonName ? immichPersonName.trim() : null) : null,
+        finalEmail,
+        finalEmailNotifs,
+        finalReminderDays,
         req.user.id
       ]
     );
@@ -611,7 +1120,10 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
       success: true,
       displayName: displayName ? displayName.trim() : null,
       immichPersonId: immichPersonId ? immichPersonId.trim() : null,
-      immichPersonName: immichPersonName ? immichPersonName.trim() : null
+      immichPersonName: immichPersonName ? immichPersonName.trim() : null,
+      email: finalEmail,
+      emailNotificationsEnabled: finalEmailNotifs,
+      tripReminderDays: finalReminderDays
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2019,19 +2531,76 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
         'user_addresses'
       ];
 
+      const virtualClientFields = [
+        'shared_permission',
+        'owner_user_id',
+        'owner_username',
+        'owner_display_name',
+        'owner_profile_picture',
+        'collaborators',
+        'is_shared_external'
+      ];
+
+      const touchedTripIds = new Set();
+      const tableColumnsCache = new Map();
+      const getValidTableColumns = async (tbl) => {
+        if (!/^[a-zA-Z0-9_]+$/.test(tbl)) return new Set();
+        if (tableColumnsCache.has(tbl)) return tableColumnsCache.get(tbl);
+        const info = await db.all(`PRAGMA table_info(${tbl})`);
+        const colSet = new Set((info || []).map(c => c.name));
+        tableColumnsCache.set(tbl, colSet);
+        return colSet;
+      };
+
       for (const op of actions) {
         try {
           await db.exec('SAVEPOINT sync_item');
-          const { table, action, data } = op;
-          console.log("[Sync Debug]", table, action, JSON.stringify(data));
-          if (!data || typeof data !== 'object') {
+          const { table, action: rawAction, data: rawData } = op;
+          const action = rawAction === 'create' ? 'insert' : rawAction;
+          console.log("[Sync Debug]", table, action, JSON.stringify(rawData));
+          if (!rawData || typeof rawData !== 'object') {
             await db.exec('RELEASE SAVEPOINT sync_item');
             continue;
           }
+          const data = { ...rawData };
+          for (const vf of virtualClientFields) {
+            delete data[vf];
+          }
+
           const hasUserId = tablesWithUserId.includes(table);
           
           if (hasUserId) {
             data.user_id = userId; 
+          }
+
+          let isSharedTripCoEdit = false;
+          let effectiveAction = action;
+
+          if (table === 'trips') {
+            if (action === 'update' && data.id) {
+              const access = await getTripAccess(data.id, userId);
+              if (!access.trip) {
+                // Trip was created locally and updated before insert synced; upsert for current user
+                effectiveAction = 'insert';
+                data.user_id = userId;
+                touchedTripIds.add(String(data.id));
+              } else {
+                if (!access.canEdit) {
+                  await db.exec('RELEASE SAVEPOINT sync_item');
+                  continue;
+                }
+                data.user_id = access.ownerId;
+                isSharedTripCoEdit = !access.isOwner;
+                touchedTripIds.add(String(data.id));
+              }
+            } else if (action === 'delete' && data.id) {
+              const access = await getTripAccess(data.id, userId);
+              if (!access.isOwner) {
+                await db.exec('RELEASE SAVEPOINT sync_item');
+                continue;
+              }
+              touchedTripIds.add(String(data.id));
+            }
           }
 
           if (table === 'itinerary_items') {
@@ -2051,12 +2620,18 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
               data.place_id = null;
             }
 
-            if (data.trip_id) {
-              const tripExists = await db.get('SELECT id FROM trips WHERE id = ?', [data.trip_id]);
-              if (!tripExists) {
+            let targetTripId = data.trip_id;
+            if (!targetTripId && data.id) {
+              const existingItem = await db.get('SELECT trip_id FROM itinerary_items WHERE id = ?', [data.id]);
+              targetTripId = existingItem?.trip_id || null;
+            }
+            if (targetTripId) {
+              const access = await getTripAccess(targetTripId, userId);
+              if (!access.canEdit) {
                 await db.exec('RELEASE SAVEPOINT sync_item');
                 continue;
               }
+              touchedTripIds.add(String(targetTripId));
             }
           }
 
@@ -2092,12 +2667,18 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
           }
 
           if (['trip_currency_rates', 'trip_notes', 'reservations', 'expenses'].includes(table)) {
-            if (data.trip_id) {
-              const tripExists = await db.get('SELECT id FROM trips WHERE id = ?', [data.trip_id]);
-              if (!tripExists) {
+            let targetTripId = data.trip_id;
+            if (!targetTripId && data.id) {
+              const existingRow = await db.get(`SELECT trip_id FROM ${table} WHERE id = ?`, [data.id]);
+              targetTripId = existingRow?.trip_id || null;
+            }
+            if (targetTripId) {
+              const access = await getTripAccess(targetTripId, userId);
+              if (!access.canEdit) {
                 await db.exec('RELEASE SAVEPOINT sync_item');
                 continue;
               }
+              touchedTripIds.add(String(targetTripId));
             }
           }
 
@@ -2111,8 +2692,9 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
             }
           }
 
-          if (action === 'insert') {
-            const columns = Object.keys(data).filter(col => data[col] !== undefined);
+          if (effectiveAction === 'insert') {
+            const validCols = await getValidTableColumns(table);
+            const columns = Object.keys(data).filter(col => data[col] !== undefined && (validCols.size === 0 || validCols.has(col)));
             if (columns.length === 0) {
               await db.exec('RELEASE SAVEPOINT sync_item');
               continue;
@@ -2125,14 +2707,15 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
               values
             );
           } 
-          else if (action === 'update') {
+          else if (effectiveAction === 'update') {
             const id = data.id;
             if (!id) {
               await db.exec('RELEASE SAVEPOINT sync_item');
               continue;
             }
 
-            const columns = Object.keys(data).filter(col => col !== 'id' && data[col] !== undefined);
+            const validCols = await getValidTableColumns(table);
+            const columns = Object.keys(data).filter(col => col !== 'id' && data[col] !== undefined && (validCols.size === 0 || validCols.has(col)));
             if (columns.length === 0) {
               await db.exec('RELEASE SAVEPOINT sync_item');
               continue;
@@ -2140,7 +2723,7 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
             const assignments = columns.map(col => `${col} = ?`).join(', ');
             const values = columns.map(col => (data[col] !== null && typeof data[col] === 'object') ? JSON.stringify(data[col]) : data[col]);
             
-            if (hasUserId) {
+            if (hasUserId && !isSharedTripCoEdit) {
               values.push(id, userId);
               await db.run(
                 `UPDATE ${table} SET ${assignments} WHERE id = ? AND user_id = ?`,
@@ -2312,6 +2895,9 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
       await db.exec('COMMIT');
       res.json({ success: true });
       notifyUserClients(userId);
+      for (const tid of touchedTripIds) {
+        notifyTripCollaborators(tid);
+      }
     } catch (err) {
       try {
         await db.exec('ROLLBACK');
@@ -2338,8 +2924,22 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
 // Locations
 app.get('/api/locations', authenticateToken, async (req, res) => {
   try {
-    const locations = await db.all('SELECT * FROM locations WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
-    res.json(locations);
+    const ownLocations = await db.all('SELECT * FROM locations WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
+    const ownIds = new Set(ownLocations.map(l => String(l.id)));
+    const { locationIds: sharedLocIds } = await getSharedTripReferencedIds(req.user.id);
+    const externalLocIds = sharedLocIds.filter(id => !ownIds.has(String(id)));
+
+    let externalLocations = [];
+    if (externalLocIds.length > 0) {
+      const placeholders = externalLocIds.map(() => '?').join(',');
+      const rows = await db.all(`SELECT * FROM locations WHERE CAST(id AS TEXT) IN (${placeholders})`, externalLocIds);
+      externalLocations = rows.map(r => ({ ...r, is_shared_external: 1 }));
+    }
+
+    res.json([
+      ...ownLocations.map(r => ({ ...r, is_shared_external: 0 })),
+      ...externalLocations
+    ]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3151,6 +3751,230 @@ ${collections && collections.length > 0 ? `\nCollections: ${JSON.stringify(colle
   }
 });
 
+app.post('/api/ai/plan-from-prompt', authenticateToken, async (req, res) => {
+  const body = req.body || {};
+  const { prompt, tripDetails } = body;
+  if (!prompt || !String(prompt).trim()) {
+    return res.status(400).json({ error: 'Please enter a prompt describing your destination and trip preferences.' });
+  }
+
+  try {
+    const config = await db.get('SELECT ai_settings FROM user_configs WHERE user_id = ?', [req.user.id]);
+    if (!config || !config.ai_settings) {
+      return res.status(400).json({ error: 'AI settings not configured. Please go to Settings -> AI Settings to configure.' });
+    }
+
+    const aiSettings = JSON.parse(config.ai_settings);
+    const provider = aiSettings.provider || 'Gemini';
+    const apiKey = aiSettings.apiKey || '';
+    const model = aiSettings.model || 'gemini-1.5-pro';
+    const endpoint = aiSettings.endpointUrl || '';
+
+    const lengthDays = Math.max(1, parseInt(tripDetails?.length ?? body.lengthDays ?? body.length, 10) || 3);
+    const startDate = tripDetails?.start_date || body.startDate || 'Flexible';
+    const arrivalTime = tripDetails?.arrivalTime || body.arrivalTime || '09:00';
+    const rawBudget = tripDetails?.budget ?? body.plannedBudget ?? body.budget;
+    const rawCurrency = tripDetails?.currency || body.baseCurrency || 'USD';
+    const budget = rawBudget ? `${rawCurrency} ${rawBudget}` : 'Flexible';
+    const isInternational = Boolean(tripDetails?.isInternational ?? body.isInternational);
+    const companionsCount = Number(tripDetails?.companionsCount ?? body.companionsCount) || 1;
+    const startAddress = tripDetails?.startAddress || body.startAddress || '';
+    const stopAddress = tripDetails?.stopAddress || body.stopAddress || '';
+    const resolvedTripName = tripDetails?.name || body.tripName || 'Planned Trip';
+
+    const systemPrompt = `You are an expert travel planner and destination curator.
+The user wants to plan a ${lengthDays}-day trip based on their natural language prompt and configured trip parameters.
+
+CRITICAL VALIDATION RULE (NON-CONVERSATIONAL PROMPT FLOW):
+- Do NOT invent or guess a random destination (such as "Kyoto" from the example below) if the User Prompt does not specify any real destination (city, town, state, region, country, island, or national park) AND does not explicitly ask you to pick/surprise them with a destination.
+- If the User Prompt still contains an unedited placeholder like "[Location: Enter a single destination...]" or lacks any destination/location or necessary details to build a trip plan, you MUST return:
+{
+  "needs_more_info": true,
+  "missing_info_message": "Please fill in the [Location: ...] tag in your prompt (either a single destination for all days or day-wise locations) so I can suggest places and build your itinerary.",
+  "missing_fields": ["location"],
+  "locations": [],
+  "places": [],
+  "day_locations": {}
+}
+
+Otherwise, when a destination (or an explicit request to recommend a destination) IS present, your job is to propose:
+1. "locations": The top-level cities, towns, or regions to be added to the user's Locations library.
+2. "places": Specific real-world places of visit (attractions, landmarks, nature spots, restaurants/cafes, museums, neighborhoods, activities) to be added under those Locations and scheduled across Days 1 to ${lengthDays}.
+3. "day_locations": A mapping of each day number ("1" through "${lengthDays}") to the primary Location name for that day.
+
+Rules:
+- Every "place" MUST reference a "location_name" that matches one of the "name" entries in "locations".
+- Use real, well-known, verifiable place names (so Wikipedia/OpenStreetMap can resolve them where possible).
+- "category" for each place MUST be one of: "Attraction", "Cafe", "Restaurant", "Museum", "Park", "Beach", "Trek", "Shopping", "Temple", "Viewpoint", "Historical", "Other".
+- Assign each place a "day" (integer 1 to ${lengthDays}) and "sequence_order" (1, 2, 3... within that day), ordered by geographical proximity.
+- Respect the Day 1 arrival time (${arrivalTime}): if the traveler arrives late on Day 1, schedule fewer/lighter stops on Day 1.
+- Provide accurate or best-known "latitude" and "longitude" (numbers or null if unknown) and a concise 1-sentence "description".
+
+Respond ONLY with valid raw JSON matching this exact schema:
+{
+  "needs_more_info": false,
+  "missing_info_message": "",
+  "locations": [
+    {
+      "name": "Kyoto",
+      "state": "Kyoto Prefecture",
+      "country": "Japan",
+      "latitude": 35.0116,
+      "longitude": 135.7681,
+      "description": "Japan's cultural heart known for classical Buddhist temples, gardens, and imperial palaces."
+    }
+  ],
+  "places": [
+    {
+      "name": "Fushimi Inari Taisha",
+      "location_name": "Kyoto",
+      "category": "Temple",
+      "address": "68 Fukakusa Yabunouchicho, Fushimi Ward, Kyoto, Japan",
+      "latitude": 34.9671,
+      "longitude": 135.7727,
+      "description": "Iconic Shinto shrine famous for its thousands of vermilion torii gates.",
+      "day": 1,
+      "sequence_order": 1
+    }
+  ],
+  "day_locations": {
+    "1": "Kyoto"
+  }
+}`;
+
+    const userMessage = `User Prompt:
+${String(prompt).trim()}
+
+Configured Trip Parameters (from Step 1):
+- Trip Name: ${resolvedTripName}
+- Duration: ${lengthDays} day(s)
+- Start Date: ${startDate}
+- Day 1 Arrival Time at Destination: ${arrivalTime}
+- Total Budget: ${budget}
+- Trip Type: ${isInternational ? 'International' : 'Domestic'}
+- Travelers Count: ${companionsCount}
+${startAddress ? `- Origin / Departure Address: ${startAddress}` : ''}
+${stopAddress ? `- Return / Final Destination Address: ${stopAddress}` : ''}`;
+
+    let parsedJson;
+    try {
+      parsedJson = await callAiProvider({
+        provider,
+        apiKey,
+        model,
+        endpoint,
+        systemPrompt,
+        userMessage
+      });
+    } catch (aiErr) {
+      const msg = String(aiErr?.message || '');
+      if (msg.startsWith('AI returned invalid JSON:')) {
+        const plainReply = msg.replace(/^AI returned invalid JSON:\s*/i, '').trim();
+        return res.json({
+          needs_more_info: true,
+          missing_info_message: plainReply || 'AI needs more details (such as your destination city/region or day-wise locations) in your prompt to build an itinerary.',
+          missing_fields: ['location'],
+          locations: [],
+          places: [],
+          day_locations: {},
+          itinerary: []
+        });
+      }
+      throw aiErr;
+    }
+
+    const rawLocations = Array.isArray(parsedJson?.locations) ? parsedJson.locations : [];
+    const rawPlaces = Array.isArray(parsedJson?.places) ? parsedJson.places : [];
+    const dayLocations = parsedJson?.day_locations && typeof parsedJson.day_locations === 'object' ? parsedJson.day_locations : {};
+
+    if (parsedJson?.needs_more_info || (rawLocations.length === 0 && parsedJson?.missing_info_message)) {
+      return res.json({
+        needs_more_info: true,
+        missing_info_message:
+          parsedJson.missing_info_message ||
+          'Please specify your destination(s) (either a single location for all days or day-wise locations) in the prompt so AI can suggest places and build your itinerary.',
+        missing_fields: Array.isArray(parsedJson?.missing_fields) ? parsedJson.missing_fields : ['location'],
+        locations: [],
+        places: [],
+        day_locations: {},
+        itinerary: []
+      });
+    }
+
+    // Ensure each location includes its nested places array (supports both flat `places` and nested `l.places` from LLM)
+    const enrichedLocations = rawLocations.map(loc => {
+      const locNameLower = String(loc.name || '').trim().toLowerCase();
+      const nestedFromLoc = Array.isArray(loc.places) ? loc.places : [];
+      const matchingFromFlat = rawPlaces.filter(
+        p => String(p.location_name || p.location || '').trim().toLowerCase() === locNameLower
+      );
+      const combined = [...nestedFromLoc];
+      for (const mp of matchingFromFlat) {
+        if (!combined.some(cp => String(cp.name || '').trim().toLowerCase() === String(mp.name || '').trim().toLowerCase())) {
+          combined.push(mp);
+        }
+      }
+      return {
+        ...loc,
+        places: combined
+      };
+    });
+
+    // If any flat places didn't match a location name, attach them to the first location
+    if (enrichedLocations.length > 0 && rawPlaces.length > 0) {
+      const assignedNames = new Set(
+        enrichedLocations.flatMap(l => (l.places || []).map(p => String(p.name || '').trim().toLowerCase()))
+      );
+      for (const p of rawPlaces) {
+        const pKey = String(p.name || '').trim().toLowerCase();
+        if (pKey && !assignedNames.has(pKey)) {
+          enrichedLocations[0].places.push(p);
+          assignedNames.add(pKey);
+        }
+      }
+    }
+
+    // Build day-by-day `itinerary` array if not directly returned by LLM
+    let itinerary = Array.isArray(parsedJson?.itinerary) ? parsedJson.itinerary : [];
+    if (itinerary.length === 0) {
+      const allResolvedPlaces = enrichedLocations.flatMap(l =>
+        (l.places || []).map(p => ({ ...p, location_name: p.location_name || l.name }))
+      );
+      const byDay = {};
+      for (let d = 1; d <= lengthDays; d++) {
+        byDay[d] = [];
+      }
+      allResolvedPlaces.forEach((p, idx) => {
+        const dNum = Math.min(lengthDays, Math.max(1, parseInt(p.day, 10) || ((idx % lengthDays) + 1)));
+        if (!byDay[dNum]) byDay[dNum] = [];
+        byDay[dNum].push(p);
+      });
+      itinerary = Object.keys(byDay)
+        .map(Number)
+        .sort((a, b) => a - b)
+        .map(dNum => {
+          const dayItems = byDay[dNum].sort((a, b) => (Number(a.sequence_order) || 999) - (Number(b.sequence_order) || 999));
+          const locForDay = dayLocations[String(dNum)] || dayItems[0]?.location_name || enrichedLocations[0]?.name || '';
+          return {
+            day: dNum,
+            location_name: locForDay,
+            places: dayItems.map(p => p.name).filter(Boolean)
+          };
+        });
+    }
+
+    res.json({
+      locations: enrichedLocations,
+      places: rawPlaces,
+      day_locations: dayLocations,
+      itinerary
+    });
+  } catch (err) {
+    console.error('AI plan-from-prompt error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Saved Markdowns Endpoints
 app.get('/api/import/saved-markdowns', authenticateToken, async (req, res) => {
   try {
@@ -3210,8 +4034,22 @@ app.delete('/api/import/saved-markdowns/:id', authenticateToken, async (req, res
 // Places
 app.get('/api/places', authenticateToken, async (req, res) => {
   try {
-    const places = await db.all('SELECT * FROM places WHERE user_id = ?', [req.user.id]);
-    res.json(places);
+    const ownPlaces = await db.all('SELECT * FROM places WHERE user_id = ?', [req.user.id]);
+    const ownIds = new Set(ownPlaces.map(p => String(p.id)));
+    const { placeIds: sharedPlaceIds } = await getSharedTripReferencedIds(req.user.id);
+    const externalPlaceIds = sharedPlaceIds.filter(id => !ownIds.has(String(id)));
+
+    let externalPlaces = [];
+    if (externalPlaceIds.length > 0) {
+      const placeholders = externalPlaceIds.map(() => '?').join(',');
+      const rows = await db.all(`SELECT * FROM places WHERE CAST(id AS TEXT) IN (${placeholders})`, externalPlaceIds);
+      externalPlaces = rows.map(r => ({ ...r, is_shared_external: 1 }));
+    }
+
+    res.json([
+      ...ownPlaces.map(r => ({ ...r, is_shared_external: 0 })),
+      ...externalPlaces
+    ]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3266,8 +4104,22 @@ app.delete('/api/places/:id', authenticateToken, async (req, res) => {
 // People Management Endpoints
 app.get('/api/people', authenticateToken, async (req, res) => {
   try {
-    const rows = await db.all('SELECT * FROM people WHERE user_id = ? ORDER BY name ASC', [req.user.id]);
-    res.json(rows);
+    const ownPeople = await db.all('SELECT * FROM people WHERE user_id = ? ORDER BY name ASC', [req.user.id]);
+    const ownIds = new Set(ownPeople.map(p => String(p.id)));
+    const { peopleIds: sharedPeopleIds } = await getSharedTripReferencedIds(req.user.id);
+    const externalPeopleIds = sharedPeopleIds.filter(id => !ownIds.has(String(id)));
+
+    let externalPeople = [];
+    if (externalPeopleIds.length > 0) {
+      const placeholders = externalPeopleIds.map(() => '?').join(',');
+      const rows = await db.all(`SELECT * FROM people WHERE CAST(id AS TEXT) IN (${placeholders})`, externalPeopleIds);
+      externalPeople = rows.map(r => ({ ...r, is_shared_external: 1 }));
+    }
+
+    res.json([
+      ...ownPeople.map(r => ({ ...r, is_shared_external: 0 })),
+      ...externalPeople
+    ]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3378,14 +4230,24 @@ app.delete('/api/user-addresses/:id', authenticateToken, async (req, res) => {
 // Photos
 app.get('/api/photos', authenticateToken, async (req, res) => {
   try {
+    const { locationIds: sharedLocIds, placeIds: sharedPlaceIds } = await getSharedTripReferencedIds(req.user.id);
+    const sharedEntityIds = [...new Set([...sharedLocIds, ...sharedPlaceIds])];
+    let sharedClause = '';
+    const params = [req.user.id, req.user.id];
+    if (sharedEntityIds.length > 0) {
+      const placeholders = sharedEntityIds.map(() => '?').join(',');
+      sharedClause = ` OR CAST(ep.entity_id AS TEXT) IN (${placeholders})`;
+      params.push(...sharedEntityIds);
+    }
+
     const photos = await db.all(`
       SELECT ep.* FROM entity_photos ep
       WHERE ep.entity_id IN (
         SELECT id FROM locations WHERE user_id = ?
         UNION
         SELECT id FROM places WHERE location_id IN (SELECT id FROM locations WHERE user_id = ?)
-      )
-    `, [req.user.id, req.user.id]);
+      )${sharedClause}
+    `, params);
     res.json(photos);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3602,11 +4464,74 @@ app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Helper: Enrich trip rows with owner info, shared permission, and collaborators list
+async function enrichTripRowsForUser(tripRows, currentUserId) {
+  if (!tripRows || tripRows.length === 0) return [];
+  const tripIds = tripRows.map(t => String(t.id));
+  const tPlaceholders = tripIds.map(() => '?').join(',');
+
+  const allShares = await db.all(
+    `SELECT ts.trip_id, ts.shared_with_user_id, ts.permission, u.username, u.display_name, u.profile_picture
+     FROM trip_shares ts
+     JOIN users u ON u.id = ts.shared_with_user_id
+     WHERE CAST(ts.trip_id AS TEXT) IN (${tPlaceholders})
+     ORDER BY ts.created_at ASC`,
+    tripIds
+  );
+
+  const ownerIds = [...new Set(tripRows.map(t => String(t.user_id)).filter(Boolean))];
+  const oPlaceholders = ownerIds.map(() => '?').join(',');
+  const ownerUsers = ownerIds.length > 0
+    ? await db.all(
+        `SELECT id, username, display_name, profile_picture FROM users WHERE CAST(id AS TEXT) IN (${oPlaceholders})`,
+        ownerIds
+      )
+    : [];
+  const ownerMap = new Map(ownerUsers.map(u => [String(u.id), u]));
+
+  const sharesByTrip = new Map();
+  for (const s of allShares) {
+    const tid = String(s.trip_id);
+    if (!sharesByTrip.has(tid)) sharesByTrip.set(tid, []);
+    sharesByTrip.get(tid).push({
+      user_id: s.shared_with_user_id,
+      username: s.username,
+      display_name: s.display_name || null,
+      profile_picture: s.profile_picture || null,
+      permission: s.permission || 'view'
+    });
+  }
+
+  return tripRows.map(t => {
+    const tid = String(t.id);
+    const owner = ownerMap.get(String(t.user_id));
+    const isOwner = String(t.user_id) === String(currentUserId);
+    const collaborators = sharesByTrip.get(tid) || [];
+    const myShare = collaborators.find(c => String(c.user_id) === String(currentUserId));
+    return {
+      ...t,
+      owner_user_id: t.user_id,
+      owner_username: owner?.username || null,
+      owner_display_name: owner?.display_name || null,
+      owner_profile_picture: owner?.profile_picture || null,
+      shared_permission: isOwner ? 'owner' : (myShare?.permission || 'view'),
+      collaborators
+    };
+  });
+}
+
 // Trips
 app.get('/api/trips', authenticateToken, async (req, res) => {
   try {
-    const trips = await db.all('SELECT * FROM trips WHERE user_id = ? ORDER BY start_date DESC', [req.user.id]);
-    res.json(trips);
+    const trips = await db.all(
+      `SELECT DISTINCT t.* FROM trips t
+       LEFT JOIN trip_shares ts ON CAST(ts.trip_id AS TEXT) = CAST(t.id AS TEXT)
+       WHERE t.user_id = ? OR ts.shared_with_user_id = ?
+       ORDER BY t.start_date DESC`,
+      [req.user.id, req.user.id]
+    );
+    const enriched = await enrichTripRowsForUser(trips, req.user.id);
+    res.json(enriched);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3643,7 +4568,8 @@ app.post('/api/trips', authenticateToken, async (req, res) => {
 
       await db.exec('COMMIT');
       const result = await db.get('SELECT * FROM trips WHERE id = ?', [tId]);
-      res.json(result);
+      const [enriched] = await enrichTripRowsForUser(result ? [result] : [], req.user.id);
+      res.json(enriched || result);
     } catch (err) {
       try {
         await db.exec('ROLLBACK');
@@ -3660,14 +4586,19 @@ app.put('/api/trips/:id', authenticateToken, async (req, res) => {
   const { name, start_date, end_date, length, visited, notes, rates, companions, start_address_id, stop_address_id } = req.body;
   await dbMutex.run(async () => {
     try {
+      const access = await getTripAccess(id, req.user.id);
+      if (!access.canEdit) {
+        return res.status(403).json({ error: 'You do not have edit permission for this trip.' });
+      }
+
       await db.exec('BEGIN TRANSACTION');
 
       const companionsStr = typeof companions === 'string' ? companions : (Array.isArray(companions) ? JSON.stringify(companions) : null);
 
       await db.run(
         `UPDATE trips SET name = ?, start_date = ?, end_date = ?, length = ?, visited = ?, notes = ?, companions = ?, start_address_id = ?, stop_address_id = ? 
-         WHERE id = ? AND user_id = ?`,
-        [name, start_date, end_date, length || 1, visited, notes, companionsStr, start_address_id || null, stop_address_id || null, id, req.user.id]
+         WHERE id = ?`,
+        [name, start_date, end_date, length || 1, visited, notes, companionsStr, start_address_id || null, stop_address_id || null, id]
       );
 
       // Update rates
@@ -3683,12 +4614,14 @@ app.put('/api/trips/:id', authenticateToken, async (req, res) => {
 
       // Auto-propagate visited tag if changed to visited
       if (visited) {
-        await autoPropagateVisited(id, req.user.id);
+        await autoPropagateVisited(id, access.ownerId);
       }
 
       await db.exec('COMMIT');
       const result = await db.get('SELECT * FROM trips WHERE id = ?', [id]);
-      res.json(result);
+      const [enriched] = await enrichTripRowsForUser(result ? [result] : [], req.user.id);
+      notifyTripCollaborators(id);
+      res.json(enriched || result);
     } catch (err) {
       try {
         await db.exec('ROLLBACK');
@@ -3703,8 +4636,437 @@ app.put('/api/trips/:id', authenticateToken, async (req, res) => {
 app.delete('/api/trips/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
+    const access = await getTripAccess(id, req.user.id);
+    if (!access.isOwner) {
+      return res.status(403).json({ error: 'Only the trip owner can delete this trip.' });
+    }
+    const shares = await db.all('SELECT shared_with_user_id FROM trip_shares WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?', [String(id), id]);
     await db.run('DELETE FROM trips WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    shares.forEach(s => { if (s.shared_with_user_id) notifyUserClients(s.shared_with_user_id); });
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// Trip Sharing & Collaboration API
+// ==========================================
+app.get('/api/trips/:id/shares', authenticateToken, async (req, res) => {
+  try {
+    const access = await getTripAccess(req.params.id, req.user.id);
+    if (!access.hasAccess) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    const owner = await db.get(
+      'SELECT id, username, display_name, profile_picture FROM users WHERE id = ?',
+      [access.ownerId]
+    );
+    const shares = await db.all(
+      `SELECT ts.id, ts.trip_id, ts.shared_with_user_id as user_id, ts.permission, ts.created_at,
+              u.username, u.display_name, u.profile_picture, u.email
+       FROM trip_shares ts
+       JOIN users u ON u.id = ts.shared_with_user_id
+       WHERE CAST(ts.trip_id AS TEXT) = ? OR ts.trip_id = ?
+       ORDER BY ts.created_at ASC`,
+      [String(req.params.id), req.params.id]
+    );
+    res.json({
+      owner: owner || null,
+      shared_permission: access.permission,
+      shares: shares.map(s => ({
+        id: s.id,
+        user_id: s.user_id,
+        shared_with_user_id: s.user_id,
+        username: s.username,
+        display_name: s.display_name || null,
+        displayName: s.display_name || null,
+        profile_picture: s.profile_picture || null,
+        profilePicture: s.profile_picture || null,
+        has_email: Boolean(s.email && String(s.email).trim()),
+        hasEmail: Boolean(s.email && String(s.email).trim()),
+        permission: s.permission
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/trips/:id/shares', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { shared_with_user_id, sharedWithUserId, permission = 'view', send_email, sendEmail: sendEmailCamel } = req.body || {};
+  const targetUserId = shared_with_user_id ?? sharedWithUserId;
+  const shouldSendEmail = send_email !== undefined ? Boolean(send_email) : (sendEmailCamel !== undefined ? Boolean(sendEmailCamel) : true);
+  try {
+    const access = await getTripAccess(id, req.user.id);
+    if (!access.isOwner) {
+      return res.status(403).json({ error: 'Only the trip owner can share this trip.' });
+    }
+    if (!targetUserId || String(targetUserId) === String(req.user.id)) {
+      return res.status(400).json({ error: 'Please select a valid local user to share with.' });
+    }
+    const targetUser = await db.get(
+      'SELECT id, username, display_name, email, email_notifications_enabled FROM users WHERE id = ?',
+      [targetUserId]
+    );
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Selected user not found.' });
+    }
+
+    const cleanPerm = permission === 'edit' ? 'edit' : 'view';
+    const shareId = crypto.randomUUID();
+    await db.run(
+      `INSERT INTO trip_shares (id, trip_id, owner_user_id, shared_with_user_id, permission)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(trip_id, shared_with_user_id) DO UPDATE SET permission = excluded.permission`,
+      [shareId, access.trip.id, req.user.id, targetUser.id, cleanPerm]
+    );
+
+    const ownerUser = await db.get('SELECT username, display_name FROM users WHERE id = ?', [req.user.id]);
+    let emailSent = false;
+    let emailError = null;
+    if (
+      shouldSendEmail &&
+      targetUser.email &&
+      String(targetUser.email).trim() &&
+      (targetUser.email_notifications_enabled === undefined || Number(targetUser.email_notifications_enabled) !== 0)
+    ) {
+      try {
+        const resEmail = await sendTripSharedEmail({
+          toEmail: targetUser.email,
+          recipientName: targetUser.display_name || targetUser.username,
+          ownerName: ownerUser?.display_name || ownerUser?.username || req.user.username,
+          tripName: access.trip.name,
+          startDate: access.trip.start_date,
+          endDate: access.trip.end_date,
+          permission: cleanPerm
+        });
+        emailSent = !resEmail?.skipped;
+      } catch (eErr) {
+        emailError = eErr.message;
+      }
+    }
+
+    const updatedShares = await db.all(
+      `SELECT ts.id, ts.trip_id, ts.shared_with_user_id as user_id, ts.permission, ts.created_at,
+              u.username, u.display_name, u.profile_picture, u.email
+       FROM trip_shares ts
+       JOIN users u ON u.id = ts.shared_with_user_id
+       WHERE CAST(ts.trip_id AS TEXT) = ? OR ts.trip_id = ?
+       ORDER BY ts.created_at ASC`,
+      [String(access.trip.id), access.trip.id]
+    );
+
+    notifyTripCollaborators(access.trip.id);
+    res.json({
+      success: true,
+      emailSent,
+      emailError,
+      shares: updatedShares.map(s => ({
+        id: s.id,
+        user_id: s.user_id,
+        shared_with_user_id: s.user_id,
+        username: s.username,
+        display_name: s.display_name || null,
+        displayName: s.display_name || null,
+        profile_picture: s.profile_picture || null,
+        profilePicture: s.profile_picture || null,
+        has_email: Boolean(s.email && String(s.email).trim()),
+        hasEmail: Boolean(s.email && String(s.email).trim()),
+        permission: s.permission
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/trips/:id/shares/:shareUserId', authenticateToken, async (req, res) => {
+  const { id, shareUserId } = req.params;
+  const { permission } = req.body || {};
+  try {
+    const access = await getTripAccess(id, req.user.id);
+    if (!access.isOwner) {
+      return res.status(403).json({ error: 'Only the trip owner can change collaborator permissions.' });
+    }
+    const cleanPerm = permission === 'edit' ? 'edit' : 'view';
+    await db.run(
+      'UPDATE trip_shares SET permission = ? WHERE (CAST(trip_id AS TEXT) = ? OR trip_id = ?) AND shared_with_user_id = ?',
+      [cleanPerm, String(id), id, shareUserId]
+    );
+    notifyTripCollaborators(id);
+    res.json({ success: true, permission: cleanPerm });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/trips/:id/shares/:shareUserId', authenticateToken, async (req, res) => {
+  const { id, shareUserId } = req.params;
+  try {
+    const access = await getTripAccess(id, req.user.id);
+    const isSelfLeaving = String(shareUserId) === String(req.user.id);
+    if (!access.isOwner && !isSelfLeaving) {
+      return res.status(403).json({ error: 'Only the trip owner or the collaborator themselves can remove this share.' });
+    }
+
+    const [ownerUser, leaverUser] = await Promise.all([
+      access.ownerId
+        ? db.get('SELECT id, username, display_name, email, email_notifications_enabled FROM users WHERE id = ?', [access.ownerId])
+        : Promise.resolve(null),
+      db.get('SELECT id, username, display_name, email, email_notifications_enabled FROM users WHERE id = ?', [shareUserId])
+    ]);
+
+    await db.run(
+      'DELETE FROM trip_shares WHERE (CAST(trip_id AS TEXT) = ? OR trip_id = ?) AND shared_with_user_id = ?',
+      [String(id), id, shareUserId]
+    );
+    notifyUserClients(shareUserId);
+    notifyTripCollaborators(id);
+
+    sendTripLeftEmails({
+      ownerUser,
+      leaverUser,
+      trip: access.trip,
+      removedByOwner: !isSelfLeaving
+    }).catch(err => console.warn('[Trip Share Leave Email] Error:', err.message));
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/trips/:id/clone', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const access = await getTripAccess(id, req.user.id);
+    if (!access.hasAccess || !access.trip) {
+      return res.status(403).json({ error: 'Unauthorized to clone this trip.' });
+    }
+
+    const srcTrip = access.trip;
+    const newTripId = crypto.randomUUID();
+    const strSrcTripId = String(srcTrip.id);
+
+    const srcItems = await db.all(
+      'SELECT * FROM itinerary_items WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ? ORDER BY date ASC, sequence_order ASC',
+      [strSrcTripId, srcTrip.id]
+    );
+    const srcNotes = await db.all(
+      'SELECT * FROM trip_notes WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?',
+      [strSrcTripId, srcTrip.id]
+    );
+    const srcRates = await db.all(
+      'SELECT * FROM trip_currency_rates WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?',
+      [strSrcTripId, srcTrip.id]
+    );
+    const srcReservations = await db.all(
+      'SELECT * FROM reservations WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?',
+      [strSrcTripId, srcTrip.id]
+    );
+
+    // Clone referenced locations & places if owned by someone else
+    const locIdMap = new Map();
+    const placeIdMap = new Map();
+
+    const refLocIds = new Set();
+    const refPlaceIds = new Set();
+    srcItems.forEach(it => {
+      if (it.location_id) refLocIds.add(String(it.location_id));
+      if (it.place_id) refPlaceIds.add(String(it.place_id));
+    });
+    try {
+      const parsedNotes = typeof srcTrip.notes === 'string' && srcTrip.notes ? JSON.parse(srcTrip.notes) : {};
+      if (Array.isArray(parsedNotes.locationIds)) parsedNotes.locationIds.forEach(lid => { if (lid) refLocIds.add(String(lid)); });
+      if (parsedNotes.dayLocations && typeof parsedNotes.dayLocations === 'object') {
+        Object.values(parsedNotes.dayLocations).forEach(lid => { if (lid) refLocIds.add(String(lid)); });
+      }
+    } catch (_) {}
+
+    if (refPlaceIds.size > 0) {
+      const pArr = Array.from(refPlaceIds);
+      const pRows = await db.all(`SELECT * FROM places WHERE CAST(id AS TEXT) IN (${pArr.map(() => '?').join(',')})`, pArr);
+      pRows.forEach(p => { if (p.location_id) refLocIds.add(String(p.location_id)); });
+    }
+
+    if (refLocIds.size > 0) {
+      const lArr = Array.from(refLocIds);
+      const lRows = await db.all(`SELECT * FROM locations WHERE CAST(id AS TEXT) IN (${lArr.map(() => '?').join(',')})`, lArr);
+      for (const loc of lRows) {
+        if (String(loc.user_id) === String(req.user.id)) {
+          locIdMap.set(String(loc.id), loc.id);
+        } else {
+          const existingOwnLoc = await db.get(
+            'SELECT id FROM locations WHERE user_id = ? AND LOWER(name) = LOWER(?)',
+            [req.user.id, loc.name]
+          );
+          if (existingOwnLoc) {
+            locIdMap.set(String(loc.id), existingOwnLoc.id);
+          } else {
+            const clonedLocId = crypto.randomUUID();
+            await db.run(
+              `INSERT INTO locations (id, user_id, name, state, country, latitude, longitude, visited, notes, local_file_data, photo_sync_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+              [clonedLocId, req.user.id, loc.name, loc.state || null, loc.country || null, loc.latitude || null, loc.longitude || null, loc.notes || '', loc.local_file_data || null, loc.photo_sync_status || 'completed']
+            );
+            locIdMap.set(String(loc.id), clonedLocId);
+          }
+        }
+      }
+    }
+
+    if (refPlaceIds.size > 0) {
+      const pArr = Array.from(refPlaceIds);
+      const pRows = await db.all(`SELECT * FROM places WHERE CAST(id AS TEXT) IN (${pArr.map(() => '?').join(',')})`, pArr);
+      for (const pl of pRows) {
+        if (String(pl.user_id) === String(req.user.id)) {
+          placeIdMap.set(String(pl.id), pl.id);
+        } else {
+          const targetLocId = locIdMap.get(String(pl.location_id)) || pl.location_id;
+          const existingOwnPlace = await db.get(
+            'SELECT id FROM places WHERE user_id = ? AND location_id = ? AND LOWER(name) = LOWER(?)',
+            [req.user.id, targetLocId, pl.name]
+          );
+          if (existingOwnPlace) {
+            placeIdMap.set(String(pl.id), existingOwnPlace.id);
+          } else {
+            const clonedPlaceId = crypto.randomUUID();
+            await db.run(
+              `INSERT INTO places (id, user_id, location_id, name, category, address, latitude, longitude, visited, notes, local_file_data, photo_sync_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+              [clonedPlaceId, req.user.id, targetLocId, pl.name, pl.category || 'Attraction', pl.address || '', pl.latitude || null, pl.longitude || null, pl.notes || '', pl.local_file_data || null, pl.photo_sync_status || 'completed']
+            );
+            placeIdMap.set(String(pl.id), clonedPlaceId);
+          }
+        }
+      }
+    }
+
+    let clonedNotesStr = srcTrip.notes || '';
+    try {
+      const parsedNotes = typeof srcTrip.notes === 'string' && srcTrip.notes ? JSON.parse(srcTrip.notes) : {};
+      if (Array.isArray(parsedNotes.locationIds)) {
+        parsedNotes.locationIds = parsedNotes.locationIds.map(lid => locIdMap.get(String(lid)) || lid);
+      }
+      if (parsedNotes.dayLocations && typeof parsedNotes.dayLocations === 'object') {
+        const mappedDayLocs = {};
+        for (const [k, v] of Object.entries(parsedNotes.dayLocations)) {
+          mappedDayLocs[k] = locIdMap.get(String(v)) || v;
+        }
+        parsedNotes.dayLocations = mappedDayLocs;
+      }
+      clonedNotesStr = JSON.stringify(parsedNotes);
+    } catch (_) {}
+
+    await db.run(
+      'INSERT INTO trips (id, user_id, name, start_date, end_date, length, visited, notes, companions) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)',
+      [newTripId, req.user.id, `${srcTrip.name} (Copy)`, srcTrip.start_date || null, srcTrip.end_date || null, srcTrip.length || 1, clonedNotesStr, JSON.stringify(['self'])]
+    );
+
+    for (const it of srcItems) {
+      await db.run(
+        `INSERT INTO itinerary_items (id, trip_id, date, place_id, location_id, notes, sequence_order, distance_from_prev, duration_from_prev, custom_name, custom_category, custom_lat, custom_lng)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          crypto.randomUUID(),
+          newTripId,
+          it.date,
+          it.place_id ? (placeIdMap.get(String(it.place_id)) || it.place_id) : null,
+          it.location_id ? (locIdMap.get(String(it.location_id)) || it.location_id) : null,
+          it.notes || null,
+          it.sequence_order || 0,
+          it.distance_from_prev ?? -1,
+          it.duration_from_prev ?? -1,
+          it.custom_name || null,
+          it.custom_category || null,
+          it.custom_lat || null,
+          it.custom_lng || null
+        ]
+      );
+    }
+
+    for (const nt of srcNotes) {
+      await db.run(
+        'INSERT INTO trip_notes (id, trip_id, title, content, category) VALUES (?, ?, ?, ?, ?)',
+        [crypto.randomUUID(), newTripId, nt.title || '', nt.content || '', nt.category || 'General']
+      );
+    }
+
+    for (const rt of srcRates) {
+      await db.run(
+        'INSERT INTO trip_currency_rates (id, trip_id, currency, rate) VALUES (?, ?, ?, ?)',
+        [crypto.randomUUID(), newTripId, rt.currency, rt.rate]
+      );
+    }
+
+    for (const rs of srcReservations) {
+      await db.run(
+        'INSERT INTO reservations (id, trip_id, type, title, details, file_path, completed) VALUES (?, ?, ?, ?, ?, ?, 0)',
+        [crypto.randomUUID(), newTripId, rs.type, rs.title, rs.details || '{}', rs.file_path || null]
+      );
+    }
+
+    notifyUserClients(req.user.id);
+    const createdTrip = await db.get('SELECT * FROM trips WHERE id = ?', [newTripId]);
+    const [enriched] = await enrichTripRowsForUser(createdTrip ? [createdTrip] : [], req.user.id);
+    res.json({ success: true, trip: enriched || createdTrip });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// Trip Email Summary & Settlement Endpoints
+// ==========================================
+app.post('/api/trips/:id/email-summary', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { to_emails, date_range, sections_html } = req.body || {};
+  try {
+    const access = await getTripAccess(id, req.user.id);
+    if (!access.hasAccess || !access.trip) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    if (!to_emails || !sections_html) {
+      return res.status(400).json({ error: 'Recipient email(s) and selected trip sections are required.' });
+    }
+    const sender = await db.get('SELECT username, display_name FROM users WHERE id = ?', [req.user.id]);
+    const result = await sendTripDetailsEmail({
+      toEmails: to_emails,
+      senderName: sender?.display_name || sender?.username || req.user.username,
+      tripName: access.trip.name,
+      dateRange: date_range || access.trip.start_date || '',
+      bodySectionsHtml: sections_html
+    });
+    res.json({ success: true, recipients: result.recipients });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/trips/:id/email-settlement', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { to_emails, currency, total_spent, member_balances, settlements } = req.body || {};
+  try {
+    const access = await getTripAccess(id, req.user.id);
+    if (!access.hasAccess || !access.trip) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    if (!to_emails) {
+      return res.status(400).json({ error: 'Please specify at least one recipient email address.' });
+    }
+    const sender = await db.get('SELECT username, display_name FROM users WHERE id = ?', [req.user.id]);
+    const result = await sendExpenseSettlementEmail({
+      toEmails: to_emails,
+      senderName: sender?.display_name || sender?.username || req.user.username,
+      tripName: access.trip.name,
+      currency: currency || 'USD',
+      totalSpent: total_spent || 0,
+      memberBalances: member_balances || [],
+      settlements: settlements || []
+    });
+    res.json({ success: true, recipients: result.recipients });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3713,6 +5075,8 @@ app.delete('/api/trips/:id', authenticateToken, async (req, res) => {
 // Trip Currency Rates
 app.get('/api/trips/:tripId/rates', authenticateToken, async (req, res) => {
   try {
+    const access = await getTripAccess(req.params.tripId, req.user.id);
+    if (!access.hasAccess) return res.json([]);
     const strTripId = String(req.params.tripId);
     const list = await db.all('SELECT * FROM trip_currency_rates WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ?', [strTripId, req.params.tripId]);
     res.json(list);
@@ -3724,6 +5088,8 @@ app.get('/api/trips/:tripId/rates', authenticateToken, async (req, res) => {
 // Trip Notes
 app.get('/api/trips/:tripId/notes', authenticateToken, async (req, res) => {
   try {
+    const access = await getTripAccess(req.params.tripId, req.user.id);
+    if (!access.hasAccess) return res.json([]);
     const strTripId = String(req.params.tripId);
     const list = await db.all('SELECT * FROM trip_notes WHERE CAST(trip_id AS TEXT) = ? OR trip_id = ? ORDER BY created_at ASC', [strTripId, req.params.tripId]);
     res.json(list);
@@ -3741,7 +5107,7 @@ async function autoPropagateVisited(tripId, userId) {
     [strTripId, tripId]
   );
   
-  const placeIds = items.map(i => i.place_id);
+  const placeIds = items.map(i => i.place_id).filter(Boolean);
 
   if (placeIds.length === 0) return;
 
@@ -3768,12 +5134,13 @@ async function autoPropagateVisited(tripId, userId) {
 // Trip Reservations
 app.get('/api/reservations/:tripId', authenticateToken, async (req, res) => {
   try {
+    const access = await getTripAccess(req.params.tripId, req.user.id);
+    if (!access.hasAccess) return res.json([]);
     const strTripId = String(req.params.tripId);
     const list = await db.all(
       `SELECT r.* FROM reservations r 
-       JOIN trips t ON CAST(r.trip_id AS TEXT) = CAST(t.id AS TEXT) 
-       WHERE (CAST(r.trip_id AS TEXT) = ? OR r.trip_id = ?) AND t.user_id = ?`,
-      [strTripId, req.params.tripId, req.user.id]
+       WHERE CAST(r.trip_id AS TEXT) = ? OR r.trip_id = ?`,
+      [strTripId, req.params.tripId]
     );
     res.json(list);
   } catch (err) {
@@ -3785,11 +5152,16 @@ app.post('/api/reservations', authenticateToken, async (req, res) => {
   const { id, trip_id, type, title, details, file_path } = req.body;
   const resId = id || crypto.randomUUID();
   try {
+    const access = await getTripAccess(trip_id, req.user.id);
+    if (!access.canEdit) {
+      return res.status(403).json({ error: 'You do not have edit permission for this trip.' });
+    }
     await db.run(
       'INSERT INTO reservations (id, trip_id, type, title, details, file_path) VALUES (?, ?, ?, ?, ?, ?)',
       [resId, trip_id, type, title, JSON.stringify(details || {}), file_path || null]
     );
     const result = await db.get('SELECT * FROM reservations WHERE id = ?', [resId]);
+    notifyTripCollaborators(trip_id);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3799,7 +5171,15 @@ app.post('/api/reservations', authenticateToken, async (req, res) => {
 app.delete('/api/reservations/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
+    const existing = await db.get('SELECT trip_id FROM reservations WHERE id = ?', [id]);
+    if (existing?.trip_id) {
+      const access = await getTripAccess(existing.trip_id, req.user.id);
+      if (!access.canEdit) {
+        return res.status(403).json({ error: 'You do not have edit permission for this trip.' });
+      }
+    }
     await db.run('DELETE FROM reservations WHERE id = ?', [id]);
+    if (existing?.trip_id) notifyTripCollaborators(existing.trip_id);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3809,13 +5189,14 @@ app.delete('/api/reservations/:id', authenticateToken, async (req, res) => {
 // Trip Itinerary Items
 app.get('/api/itineraries/:tripId', authenticateToken, async (req, res) => {
   try {
+    const access = await getTripAccess(req.params.tripId, req.user.id);
+    if (!access.hasAccess) return res.json([]);
     const strTripId = String(req.params.tripId);
     const list = await db.all(
       `SELECT i.* FROM itinerary_items i 
-       JOIN trips t ON CAST(i.trip_id AS TEXT) = CAST(t.id AS TEXT) 
-       WHERE (CAST(i.trip_id AS TEXT) = ? OR i.trip_id = ?) AND t.user_id = ?
+       WHERE CAST(i.trip_id AS TEXT) = ? OR i.trip_id = ?
        ORDER BY i.date ASC, i.sequence_order ASC`,
-      [strTripId, req.params.tripId, req.user.id]
+      [strTripId, req.params.tripId]
     );
     res.json(list);
   } catch (err) {
@@ -3827,11 +5208,16 @@ app.post('/api/itineraries', authenticateToken, async (req, res) => {
   const { id, trip_id, date, place_id, location_id, notes, sequence_order } = req.body;
   const itemId = id || crypto.randomUUID();
   try {
+    const access = await getTripAccess(trip_id, req.user.id);
+    if (!access.canEdit) {
+      return res.status(403).json({ error: 'You do not have edit permission for this trip.' });
+    }
     await db.run(
       'INSERT INTO itinerary_items (id, trip_id, date, place_id, location_id, notes, sequence_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [itemId, trip_id, date, place_id || null, location_id || null, notes || null, sequence_order || 0]
     );
     const result = await db.get('SELECT * FROM itinerary_items WHERE id = ?', [itemId]);
+    notifyTripCollaborators(trip_id);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3841,7 +5227,15 @@ app.post('/api/itineraries', authenticateToken, async (req, res) => {
 app.delete('/api/itineraries/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
+    const existing = await db.get('SELECT trip_id FROM itinerary_items WHERE id = ?', [id]);
+    if (existing?.trip_id) {
+      const access = await getTripAccess(existing.trip_id, req.user.id);
+      if (!access.canEdit) {
+        return res.status(403).json({ error: 'You do not have edit permission for this trip.' });
+      }
+    }
     await db.run('DELETE FROM itinerary_items WHERE id = ?', [id]);
+    if (existing?.trip_id) notifyTripCollaborators(existing.trip_id);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3851,13 +5245,14 @@ app.delete('/api/itineraries/:id', authenticateToken, async (req, res) => {
 // Trip Expenses & Budgets
 app.get('/api/expenses/:tripId', authenticateToken, async (req, res) => {
   try {
+    const access = await getTripAccess(req.params.tripId, req.user.id);
+    if (!access.hasAccess) return res.json([]);
     const strTripId = String(req.params.tripId);
     const list = await db.all(
       `SELECT e.* FROM expenses e 
-       JOIN trips t ON CAST(e.trip_id AS TEXT) = CAST(t.id AS TEXT) 
-       WHERE (CAST(e.trip_id AS TEXT) = ? OR e.trip_id = ?) AND t.user_id = ?
+       WHERE CAST(e.trip_id AS TEXT) = ? OR e.trip_id = ?
        ORDER BY e.date ASC`,
-      [strTripId, req.params.tripId, req.user.id]
+      [strTripId, req.params.tripId]
     );
     res.json(list);
   } catch (err) {
@@ -3869,6 +5264,10 @@ app.post('/api/expenses', authenticateToken, async (req, res) => {
   const { id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned, reservation_id, is_split, paid_by, for_member } = req.body;
   const expId = id || crypto.randomUUID();
   try {
+    const access = await getTripAccess(trip_id, req.user.id);
+    if (!access.canEdit) {
+      return res.status(403).json({ error: 'You do not have edit permission for this trip.' });
+    }
     await db.run(
       `INSERT INTO expenses (id, trip_id, date, amount, currency, category, notes, receipt_path, is_planned, reservation_id, is_split, paid_by, for_member) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -3889,6 +5288,7 @@ app.post('/api/expenses', authenticateToken, async (req, res) => {
       ]
     );
     const result = await db.get('SELECT * FROM expenses WHERE id = ?', [expId]);
+    notifyTripCollaborators(trip_id);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3898,7 +5298,15 @@ app.post('/api/expenses', authenticateToken, async (req, res) => {
 app.delete('/api/expenses/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
+    const existing = await db.get('SELECT trip_id FROM expenses WHERE id = ?', [id]);
+    if (existing?.trip_id) {
+      const access = await getTripAccess(existing.trip_id, req.user.id);
+      if (!access.canEdit) {
+        return res.status(403).json({ error: 'You do not have edit permission for this trip.' });
+      }
+    }
     await db.run('DELETE FROM expenses WHERE id = ?', [id]);
+    if (existing?.trip_id) notifyTripCollaborators(existing.trip_id);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3931,10 +5339,8 @@ app.get('/api/trips/:id/export', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   try {
     const strTripId = String(id);
-    const trip = await db.get(
-      'SELECT * FROM trips WHERE (CAST(id AS TEXT) = ? OR id = ?) AND user_id = ?',
-      [strTripId, id, userId]
-    );
+    const access = await getTripAccess(id, userId);
+    const trip = access.hasAccess ? access.trip : null;
     if (!trip) {
       return res.status(404).json({ error: 'Trip not found or unauthorized' });
     }
@@ -5360,6 +6766,7 @@ async function runBackgroundPhotoSyncRetry() {
   try {
     await initDatabase();
     await initTelemetry();
+    initTripReminderScheduler();
     JWT_SECRET = await resolveJwtSecret();
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`TravelBuff server is listening on port ${PORT}`);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, queueSyncAction, generateUUID, clearLocalDb, populateLocalDb } from '../clientDb.js';
-import { Plus, Trash2, Tag, Compass, Folder, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock, Users, Home, MapPin, Search, User, Edit2, ChevronDown, Archive, Map as MapIcon, Copy, Sliders, ShieldCheck, LogOut, AlertTriangle, Link, Unlink } from 'lucide-react';
+import { Plus, Trash2, Tag, Compass, Folder, Settings, Server, Key, DollarSign, X, RefreshCw, Sparkles, Check, MoreVertical, Clock, Users, Home, MapPin, Search, User, Edit2, ChevronDown, Archive, Map as MapIcon, Copy, Sliders, ShieldCheck, LogOut, AlertTriangle, Link, Unlink, Mail, Bell, MessageSquarePlus, Send } from 'lucide-react';
 import { APP_VERSION } from '../version.js';
 import ImmichLocationImportModal from './ImmichLocationImportModal.jsx';
 import { resetGoogleMapsAuthFailure } from '../utils/googleMapsLoader.js';
@@ -568,7 +568,7 @@ function RecorderTrackMapModal({ points = [], onClose }) {
   );
 }
 
-export default function SettingsComponent({ token, userId, username, displayName, immichPersonId, immichPersonName, profilePicture, onProfileUpdated, onLogout, onResumeMarkdown, onRestartTour, onShowChecklist, onNavigate, onOpenWhatsNew }) {
+export default function SettingsComponent({ token, userId, username, displayName, immichPersonId, immichPersonName, profilePicture, email: propEmail, emailNotificationsEnabled: propEmailNotifs, tripReminderDays: propReminderDays, smtpEnabled: propSmtpEnabled, onProfileUpdated, onLogout, onResumeMarkdown, onRestartTour, onShowChecklist, onNavigate, onOpenWhatsNew, onOpenFeedback }) {
   // Navigation & Search State
   const [activeSettingsTab, setActiveSettingsTab] = useState('general'); // 'general' | 'integrations' | 'taxonomy' | 'data' | 'account' | 'system'
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
@@ -583,6 +583,9 @@ export default function SettingsComponent({ token, userId, username, displayName
 
   // Account Profile Details state
   const [accountDisplayName, setAccountDisplayName] = useState(displayName || '');
+  const [accountEmail, setAccountEmail] = useState(propEmail || '');
+  const [accountEmailNotifs, setAccountEmailNotifs] = useState(propEmailNotifs !== undefined ? Number(propEmailNotifs) !== 0 : true);
+  const [accountReminderDays, setAccountReminderDays] = useState(propReminderDays !== undefined ? Number(propReminderDays) : 3);
   const [accountImmichPersonId, setAccountImmichPersonId] = useState(immichPersonId || null);
   const [accountImmichPersonName, setAccountImmichPersonName] = useState(immichPersonName || null);
   const [accountSaving, setAccountSaving] = useState(false);
@@ -596,9 +599,12 @@ export default function SettingsComponent({ token, userId, username, displayName
 
   useEffect(() => {
     if (displayName !== undefined) setAccountDisplayName(displayName || '');
+    if (propEmail !== undefined) setAccountEmail(propEmail || '');
+    if (propEmailNotifs !== undefined) setAccountEmailNotifs(Number(propEmailNotifs) !== 0);
+    if (propReminderDays !== undefined) setAccountReminderDays(Number(propReminderDays));
     if (immichPersonId !== undefined) setAccountImmichPersonId(immichPersonId || null);
     if (immichPersonName !== undefined) setAccountImmichPersonName(immichPersonName || null);
-  }, [displayName, immichPersonId, immichPersonName]);
+  }, [displayName, propEmail, propEmailNotifs, propReminderDays, immichPersonId, immichPersonName]);
 
   const handleProfileFileChange = (e) => {
     const selected = e.target.files[0];
@@ -660,6 +666,9 @@ export default function SettingsComponent({ token, userId, username, displayName
         },
         body: JSON.stringify({
           displayName: accountDisplayName.trim(),
+          email: accountEmail.trim(),
+          emailNotificationsEnabled: accountEmailNotifs ? 1 : 0,
+          tripReminderDays: Number(accountReminderDays),
           immichPersonId: accountImmichPersonId || null,
           immichPersonName: accountImmichPersonName || null
         })
@@ -674,6 +683,9 @@ export default function SettingsComponent({ token, userId, username, displayName
       if (onProfileUpdated) {
         onProfileUpdated({
           displayName: data.displayName,
+          email: data.email,
+          emailNotificationsEnabled: data.emailNotificationsEnabled,
+          tripReminderDays: data.tripReminderDays,
           immichPersonId: data.immichPersonId,
           immichPersonName: data.immichPersonName
         });
@@ -878,8 +890,36 @@ export default function SettingsComponent({ token, userId, username, displayName
   const [adminLoading, setAdminLoading] = useState(false);
   const [selectedResetUser, setSelectedResetUser] = useState(null);
   const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetSendEmail, setResetSendEmail] = useState(false);
+  const [selectedEmailUser, setSelectedEmailUser] = useState(null);
+  const [editUserEmailValue, setEditUserEmailValue] = useState('');
   const [selectedDeleteUser, setSelectedDeleteUser] = useState(null);
   const [adminActionLoading, setAdminActionLoading] = useState(false);
+  const [adminUserMsg, setAdminUserMsg] = useState(null); // { type: 'success' | 'error', text: '' }
+  const [showCreateUserForm, setShowCreateUserForm] = useState(false);
+  const [newAccountUsername, setNewAccountUsername] = useState('');
+  const [newAccountDisplayName, setNewAccountDisplayName] = useState('');
+  const [newAccountEmail, setNewAccountEmail] = useState('');
+  const [newAccountPassword, setNewAccountPassword] = useState('');
+  const [newAccountIsAdmin, setNewAccountIsAdmin] = useState(false);
+  const [newAccountSendEmail, setNewAccountSendEmail] = useState(true);
+
+  // Admin SMTP Settings State
+  const [smtpConfig, setSmtpConfig] = useState({
+    enabled: false,
+    host: '',
+    port: 587,
+    secure: 'starttls',
+    username: '',
+    password: '',
+    fromName: 'TravelBuff',
+    fromEmail: '',
+    appBaseUrl: typeof window !== 'undefined' ? window.location.origin : ''
+  });
+  const [smtpTestEmail, setSmtpTestEmail] = useState('');
+  const [smtpSaving, setSmtpSaving] = useState(false);
+  const [smtpTesting, setSmtpTesting] = useState(false);
+  const [smtpMsg, setSmtpMsg] = useState(null); // { type: 'success' | 'error', text: '' }
   
   // Telemetry Admin State
   const [telemetryStatus, setTelemetryStatus] = useState(null);
@@ -910,12 +950,13 @@ export default function SettingsComponent({ token, userId, username, displayName
     { id: 'section-backup', tab: 'data', title: 'Backup & Restore Data', icon: '💾', desc: 'Full JSON backup export, import and media sync' },
     { id: 'section-archive', tab: 'data', title: 'Archived Items & Data Retention', icon: '📦', desc: 'Manage archived locations, folders, and orphaned places' },
     { id: 'section-guides', tab: 'data', title: 'Saved Travel Guides & Markdowns', icon: '📖', desc: 'Saved markdown articles, itineraries & AI import resumes' },
-    { id: 'section-profile', tab: 'account', title: 'My Profile & Security', icon: '🔑', desc: 'Profile photo avatar upload & self-service password change' },
-    { id: 'section-admin', tab: 'account', title: 'User Management & Administration', icon: '👤', desc: 'Manage user accounts, roles, and password resets' },
+    { id: 'section-profile', tab: 'account', title: 'My Profile & Security', icon: '🔑', desc: 'Profile photo avatar upload, email notifications & self-service password change' },
+    { id: 'section-admin', tab: 'account', title: 'User Management & Administration', icon: '👤', desc: 'Manage user accounts, email addresses, roles, and password resets' },
+    { id: 'section-smtp', tab: 'system', title: 'Email & SMTP Settings', icon: '✉️', desc: 'Configure SMTP server for trip sharing invites, itinerary emails, and password resets' },
     { id: 'section-telemetry', tab: 'system', title: 'Privacy & Telemetry', icon: '🛡️', desc: 'Anonymous usage statistics and privacy controls' },
     { id: 'section-logs', tab: 'system', title: 'External API Usage Logs', icon: '📊', desc: '6-month call volume history for Google Maps, OSM & AI' },
     { id: 'section-maintenance', tab: 'system', title: 'Database Maintenance & Reset', icon: '⚠️', desc: 'Wipe local storage and database reset actions' },
-    { id: 'section-help', tab: 'system', title: 'Help & Guided Onboarding', icon: '💡', desc: 'Restart guided UI tour, checklist & What\'s New in v7.4.0' }
+    { id: 'section-help', tab: 'system', title: 'Help, Feedback & Guided Onboarding', icon: '💡', desc: 'Send feedback/bug reports, restart guided UI tour, checklist & What\'s New in v7.9.0' }
   ], []);
 
   const searchResults = useMemo(() => {
@@ -976,10 +1017,167 @@ export default function SettingsComponent({ token, userId, username, displayName
     }
   };
 
+  const fetchSmtpSettings = async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await fetch('/api/admin/smtp', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSmtpConfig(prev => ({
+          ...prev,
+          enabled: !!data.enabled,
+          host: data.host || '',
+          port: data.port || 587,
+          secure: data.secure || 'starttls',
+          username: data.username || '',
+          password: data.password || '',
+          fromName: data.fromName || 'TravelBuff',
+          fromEmail: data.fromEmail || '',
+          appBaseUrl: data.appBaseUrl || (typeof window !== 'undefined' ? window.location.origin : '')
+        }));
+      }
+    } catch (e) {
+      console.error('Failed to fetch SMTP settings:', e);
+    }
+  };
+
+  const handleSaveSmtp = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setSmtpSaving(true);
+    setSmtpMsg(null);
+    try {
+      const res = await fetch('/api/admin/smtp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(smtpConfig)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save SMTP settings');
+      setSmtpMsg({ type: 'success', text: 'SMTP settings saved successfully!' });
+    } catch (err) {
+      setSmtpMsg({ type: 'error', text: err.message });
+    } finally {
+      setSmtpSaving(false);
+    }
+  };
+
+  const handleTestSmtp = async () => {
+    const targetEmail = smtpTestEmail.trim() || accountEmail.trim() || smtpConfig.fromEmail.trim();
+    if (!targetEmail) {
+      setSmtpMsg({ type: 'error', text: 'Please enter a recipient email address for the test email.' });
+      return;
+    }
+    setSmtpTesting(true);
+    setSmtpMsg(null);
+    try {
+      // Save first so latest edits are tested
+      await fetch('/api/admin/smtp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(smtpConfig)
+      });
+      const res = await fetch('/api/admin/smtp/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          to_email: targetEmail,
+          toEmail: targetEmail,
+          settings: smtpConfig
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'SMTP test failed');
+      setSmtpMsg({ type: 'success', text: data.message || `Test email sent to ${targetEmail}!` });
+    } catch (err) {
+      setSmtpMsg({ type: 'error', text: err.message });
+    } finally {
+      setSmtpTesting(false);
+    }
+  };
+
+  const handleAdminCreateUser = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!newAccountUsername.trim() || !newAccountPassword) return;
+    setAdminActionLoading(true);
+    setAdminUserMsg(null);
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          username: newAccountUsername.trim(),
+          displayName: newAccountDisplayName.trim(),
+          email: newAccountEmail.trim(),
+          password: newAccountPassword,
+          isAdmin: newAccountIsAdmin,
+          sendEmail: newAccountSendEmail && Boolean(newAccountEmail.trim())
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to create user account');
+      setAdminUserMsg({
+        type: 'success',
+        text: data.message || `User "${newAccountUsername.trim()}" created successfully!`
+      });
+      setNewAccountUsername('');
+      setNewAccountDisplayName('');
+      setNewAccountEmail('');
+      setNewAccountPassword('');
+      setNewAccountIsAdmin(false);
+      setShowCreateUserForm(false);
+      fetchAdminUsers();
+    } catch (err) {
+      setAdminUserMsg({ type: 'error', text: err.message });
+    } finally {
+      setAdminActionLoading(false);
+    }
+  };
+
+  const handleAdminSaveUserEmail = async (e) => {
+    e.preventDefault();
+    if (!selectedEmailUser) return;
+    setAdminActionLoading(true);
+    setAdminUserMsg(null);
+    try {
+      const res = await fetch(`/api/admin/users/${selectedEmailUser.id}/email`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ email: editUserEmailValue.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update user email');
+      setAdminUserMsg({ type: 'success', text: `Email updated for "${selectedEmailUser.username}".` });
+      setSelectedEmailUser(null);
+      fetchAdminUsers();
+    } catch (err) {
+      setAdminUserMsg({ type: 'error', text: err.message });
+    } finally {
+      setAdminActionLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (isAdmin) {
       fetchAdminUsers();
       fetchTelemetryStatus();
+      fetchSmtpSettings();
     }
   }, [isAdmin, token]);
 
@@ -987,6 +1185,7 @@ export default function SettingsComponent({ token, userId, username, displayName
     e.preventDefault();
     if (!selectedResetUser || !resetNewPassword) return;
     setAdminActionLoading(true);
+    setAdminUserMsg(null);
     try {
       const res = await fetch(`/api/admin/users/${selectedResetUser.id}/reset-password`, {
         method: 'POST',
@@ -994,20 +1193,21 @@ export default function SettingsComponent({ token, userId, username, displayName
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ newPassword: resetNewPassword })
+        body: JSON.stringify({ newPassword: resetNewPassword, sendEmail: resetSendEmail })
       });
       if (res.ok) {
         const result = await res.json();
-        alert(result.message || 'Password updated successfully!');
+        setAdminUserMsg({ type: 'success', text: result.message || `Password updated for "${selectedResetUser.username}"!` });
         setSelectedResetUser(null);
         setResetNewPassword('');
+        setResetSendEmail(false);
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(`Reset failed: ${err.error || 'Unknown error'}`);
+        setAdminUserMsg({ type: 'error', text: `Reset failed: ${err.error || 'Unknown error'}` });
       }
     } catch (err) {
       console.error(err);
-      alert('Failed to reset password');
+      setAdminUserMsg({ type: 'error', text: 'Failed to reset password' });
     } finally {
       setAdminActionLoading(false);
     }
@@ -1016,6 +1216,7 @@ export default function SettingsComponent({ token, userId, username, displayName
   const handleAdminDeleteUser = async () => {
     if (!selectedDeleteUser) return;
     setAdminActionLoading(true);
+    setAdminUserMsg(null);
     try {
       const res = await fetch(`/api/admin/users/${selectedDeleteUser.id}`, {
         method: 'DELETE',
@@ -1023,16 +1224,16 @@ export default function SettingsComponent({ token, userId, username, displayName
       });
       if (res.ok) {
         const result = await res.json();
-        alert(result.message || 'User and all data deleted successfully!');
+        setAdminUserMsg({ type: 'success', text: result.message || 'User and all data deleted successfully!' });
         setSelectedDeleteUser(null);
         fetchAdminUsers();
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(`Delete failed: ${err.error || 'Unknown error'}`);
+        setAdminUserMsg({ type: 'error', text: `Delete failed: ${err.error || 'Unknown error'}` });
       }
     } catch (err) {
       console.error(err);
-      alert('Failed to delete user');
+      setAdminUserMsg({ type: 'error', text: 'Failed to delete user' });
     } finally {
       setAdminActionLoading(false);
     }
@@ -3729,6 +3930,61 @@ export default function SettingsComponent({ token, userId, username, displayName
                 </small>
               </div>
 
+              {/* Email & Notification Preferences inside Settings -> Account */}
+              <div style={{ background: 'rgba(6, 182, 212, 0.05)', border: '1px solid rgba(6, 182, 212, 0.2)', borderRadius: '10px', padding: '14px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Mail size={14} /> Email & Notification Preferences
+                  </span>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Email Address</label>
+                  <input
+                    type="email"
+                    className="form-control"
+                    placeholder="you@example.com"
+                    value={accountEmail}
+                    onChange={(e) => setAccountEmail(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem', margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={accountEmailNotifs}
+                      onChange={(e) => setAccountEmailNotifs(e.target.checked)}
+                    />
+                    Enable Email Notifications
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Bell size={14} style={{ color: 'var(--text-secondary)' }} />
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Upcoming Trip Digest:</span>
+                    <select
+                      className="form-control"
+                      value={accountReminderDays}
+                      onChange={(e) => setAccountReminderDays(Number(e.target.value))}
+                      style={{ width: 'auto', height: '30px', padding: '2px 8px', fontSize: '0.78rem' }}
+                    >
+                      <option value={0}>Off</option>
+                      <option value={1}>1 day before</option>
+                      <option value={3}>3 days before</option>
+                      <option value={7}>7 days before</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSaveAccountDetails}
+                    disabled={accountSaving}
+                    style={{ width: 'auto', padding: '6px 14px', fontSize: '0.8rem', height: '32px' }}
+                  >
+                    {accountSaving ? 'Saving...' : 'Save Profile & Email Settings'}
+                  </button>
+                </div>
+              </div>
+
               {accountSuccess && (
                 <div style={{ padding: '8px 12px', borderRadius: '6px', background: 'rgba(74, 222, 128, 0.15)', border: '1px solid #4ade80', color: '#4ade80', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '14px' }}>
                   <Check size={16} /> Account profile updated successfully!
@@ -3868,19 +4124,175 @@ export default function SettingsComponent({ token, userId, username, displayName
           {/* SECTION 4: ADMIN USER MANAGEMENT (Only for Admin users) */}
           {isAdmin && (
             <div id="section-admin" style={{ background: 'var(--bg-surface)', border: highlightedSectionId === 'section-admin' ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-glass)', boxShadow: highlightedSectionId === 'section-admin' ? '0 0 20px rgba(124, 58, 237, 0.4)' : undefined, transition: 'box-shadow 0.3s ease, border-color 0.3s ease', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <Users size={22} style={{ color: '#a855f7' }} />
                   <h3 style={{ margin: 0 }}>User Administration</h3>
+                  <span style={{ background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.4)', padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                    ★ Admin Only
+                  </span>
                 </div>
-                <span style={{ background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.4)', padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold' }}>
-                  ★ Admin Only
-                </span>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setShowCreateUserForm(prev => !prev);
+                    setAdminUserMsg(null);
+                  }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px', fontSize: '0.82rem' }}
+                >
+                  {showCreateUserForm ? <X size={15} /> : <Plus size={15} />}
+                  <span>{showCreateUserForm ? 'Close Form' : 'Create Account'}</span>
+                </button>
               </div>
 
               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                Manage registered user accounts, reset passwords, or permanently remove users and all their associated travel data from this server.
+                Create new local user accounts, manage email addresses, reset passwords, or permanently remove users and all their associated travel data from this server.
               </p>
+
+              {adminUserMsg && (
+                <div
+                  style={{
+                    marginBottom: '16px',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    fontSize: '0.83rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '10px',
+                    background: adminUserMsg.type === 'success' ? 'rgba(16, 185, 129, 0.14)' : 'rgba(239, 68, 68, 0.14)',
+                    border: `1px solid ${adminUserMsg.type === 'success' ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+                    color: adminUserMsg.type === 'success' ? '#34d399' : '#f87171'
+                  }}
+                >
+                  <span>{adminUserMsg.text}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAdminUserMsg(null)}
+                    style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '2px' }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {showCreateUserForm && (
+                <form
+                  onSubmit={handleAdminCreateUser}
+                  style={{
+                    marginBottom: '18px',
+                    padding: '16px',
+                    background: 'var(--bg-app)',
+                    border: '1px solid rgba(168, 85, 247, 0.35)',
+                    borderRadius: 'var(--radius-md)'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '8px', color: '#c084fc' }}>
+                      <Plus size={16} /> Create New Local User Account
+                    </h4>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        Username *
+                      </label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. alex"
+                        value={newAccountUsername}
+                        onChange={(e) => setNewAccountUsername(e.target.value)}
+                        required
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        Display Name
+                      </label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Alex Rivera"
+                        value={newAccountDisplayName}
+                        onChange={(e) => setNewAccountDisplayName(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        Email Address (Optional)
+                      </label>
+                      <input
+                        type="email"
+                        className="form-control"
+                        placeholder="alex@example.com"
+                        value={newAccountEmail}
+                        onChange={(e) => setNewAccountEmail(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        Password * (min 4 chars)
+                      </label>
+                      <input
+                        type="password"
+                        className="form-control"
+                        placeholder="Enter password"
+                        value={newAccountPassword}
+                        onChange={(e) => setNewAccountPassword(e.target.value)}
+                        required
+                        minLength={4}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={newAccountIsAdmin}
+                          onChange={(e) => setNewAccountIsAdmin(e.target.checked)}
+                        />
+                        <span>Grant Admin privileges</span>
+                      </label>
+
+                      {newAccountEmail.trim() && (
+                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={newAccountSendEmail}
+                            onChange={(e) => setNewAccountSendEmail(e.target.checked)}
+                          />
+                          <span>Send login credentials via email</span>
+                        </label>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setShowCreateUserForm(false)}
+                        style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={adminActionLoading}
+                        style={{ padding: '6px 14px', fontSize: '0.82rem' }}
+                      >
+                        {adminActionLoading ? 'Creating...' : 'Create User'}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
 
               {adminLoading ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem', padding: '12px 0' }}>
@@ -3888,11 +4300,12 @@ export default function SettingsComponent({ token, userId, username, displayName
                   <span>Loading user registry...</span>
                 </div>
               ) : (
-                <div style={{ border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                <div style={{ border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                     <thead>
                       <tr style={{ background: 'var(--bg-app)', borderBottom: '1px solid var(--border-glass)', textAlign: 'left', color: 'var(--text-secondary)' }}>
                         <th style={{ padding: '10px 14px' }}>User</th>
+                        <th style={{ padding: '10px 14px' }}>Email</th>
                         <th style={{ padding: '10px 14px' }}>Role</th>
                         <th style={{ padding: '10px 14px' }}>Joined Date</th>
                         <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
@@ -3901,151 +4314,235 @@ export default function SettingsComponent({ token, userId, username, displayName
                     <tbody>
                       {adminUsersList.map(u => {
                         const isCurrentAccount = (u.id === userId);
+                        const isResetOpen = selectedResetUser?.id === u.id;
+                        const isEmailOpen = selectedEmailUser?.id === u.id;
+                        const isDeleteOpen = selectedDeleteUser?.id === u.id;
                         return (
-                          <tr key={u.id} style={{ borderBottom: '1px solid var(--border-glass)', background: isCurrentAccount ? 'rgba(168, 85, 247, 0.05)' : 'transparent' }}>
-                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <User size={16} style={{ color: u.is_admin ? '#c084fc' : 'var(--text-secondary)' }} />
-                                <span>{u.username}</span>
-                                {isCurrentAccount && (
-                                  <span style={{ fontSize: '0.7rem', color: '#4ade80', background: 'rgba(74,222,128,0.15)', padding: '1px 6px', borderRadius: '4px' }}>
-                                    (You)
+                          <React.Fragment key={u.id}>
+                            <tr style={{ borderBottom: '1px solid var(--border-glass)', background: isCurrentAccount ? 'rgba(168, 85, 247, 0.05)' : 'transparent' }}>
+                              <td style={{ padding: '12px 14px', fontWeight: 600 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <User size={16} style={{ color: u.is_admin ? '#c084fc' : 'var(--text-secondary)' }} />
+                                  <div>
+                                    <div>{u.username}</div>
+                                    {u.display_name && (
+                                      <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', fontWeight: 400 }}>
+                                        {u.display_name}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isCurrentAccount && (
+                                    <span style={{ fontSize: '0.7rem', color: '#4ade80', background: 'rgba(74,222,128,0.15)', padding: '1px 6px', borderRadius: '4px' }}>
+                                      (You)
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span>{u.email || <em style={{ opacity: 0.5 }}>Not set</em>}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedResetUser(null);
+                                      setSelectedDeleteUser(null);
+                                      if (isEmailOpen) {
+                                        setSelectedEmailUser(null);
+                                      } else {
+                                        setSelectedEmailUser(u);
+                                        setEditUserEmailValue(u.email || '');
+                                      }
+                                    }}
+                                    style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', padding: '2px' }}
+                                    title="Edit user email"
+                                  >
+                                    <Edit2 size={12} />
+                                  </button>
+                                </div>
+                              </td>
+                              <td style={{ padding: '12px 14px' }}>
+                                {u.is_admin ? (
+                                  <span style={{ color: '#c084fc', fontWeight: 'bold', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    ★ Admin
                                   </span>
+                                ) : (
+                                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>Standard User</span>
                                 )}
-                              </div>
-                            </td>
-                            <td style={{ padding: '12px 14px' }}>
-                              {u.is_admin ? (
-                                <span style={{ color: '#c084fc', fontWeight: 'bold', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                  ★ Admin
-                                </span>
-                              ) : (
-                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>Standard User</span>
-                              )}
-                            </td>
-                            <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                              {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
-                            </td>
-                            <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
-                                <button
-                                  type="button"
-                                  className="btn-icon"
-                                  title="Reset Password"
-                                  onClick={() => { setSelectedResetUser(u); setResetNewPassword(''); }}
-                                  style={{ padding: '6px', color: '#c084fc', border: '1px solid rgba(192, 132, 252, 0.3)', background: 'rgba(192, 132, 252, 0.1)', borderRadius: '6px', cursor: 'pointer' }}
-                                >
-                                  <Key size={14} />
-                                </button>
-                                {!isCurrentAccount && (
+                              </td>
+                              <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
+                              </td>
+                              <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
                                   <button
                                     type="button"
                                     className="btn-icon"
-                                    title="Delete User"
-                                    onClick={() => setSelectedDeleteUser(u)}
-                                    style={{ padding: '6px', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '6px', cursor: 'pointer' }}
+                                    title="Reset Password"
+                                    onClick={() => {
+                                      setSelectedEmailUser(null);
+                                      setSelectedDeleteUser(null);
+                                      if (isResetOpen) {
+                                        setSelectedResetUser(null);
+                                      } else {
+                                        setSelectedResetUser(u);
+                                        setResetNewPassword('');
+                                        setResetSendEmail(Boolean(u.email));
+                                      }
+                                    }}
+                                    style={{
+                                      padding: '6px',
+                                      color: '#c084fc',
+                                      border: isResetOpen ? '1.5px solid #c084fc' : '1px solid rgba(192, 132, 252, 0.3)',
+                                      background: isResetOpen ? 'rgba(192, 132, 252, 0.25)' : 'rgba(192, 132, 252, 0.1)',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer'
+                                    }}
                                   >
-                                    <Trash2 size={14} />
+                                    <Key size={14} />
                                   </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
+                                  {!isCurrentAccount && (
+                                    <button
+                                      type="button"
+                                      className="btn-icon"
+                                      title="Delete User"
+                                      onClick={() => {
+                                        setSelectedResetUser(null);
+                                        setSelectedEmailUser(null);
+                                        setSelectedDeleteUser(isDeleteOpen ? null : u);
+                                      }}
+                                      style={{
+                                        padding: '6px',
+                                        color: '#f87171',
+                                        border: isDeleteOpen ? '1.5px solid #ef4444' : '1px solid rgba(239, 68, 68, 0.3)',
+                                        background: isDeleteOpen ? 'rgba(239, 68, 68, 0.25)' : 'rgba(239, 68, 68, 0.1)',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+
+                            {/* INLINE EDIT EMAIL PANEL DIRECTLY BELOW ROW */}
+                            {isEmailOpen && (
+                              <tr style={{ background: 'rgba(59, 130, 246, 0.06)', borderBottom: '1px solid var(--border-glass)' }}>
+                                <td colSpan={5} style={{ padding: '14px 16px' }}>
+                                  <form onSubmit={handleAdminSaveUserEmail} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 260px' }}>
+                                      <Mail size={16} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                                      <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Email for "{u.username}":</span>
+                                      <input
+                                        type="email"
+                                        className="form-control"
+                                        placeholder="user@example.com"
+                                        value={editUserEmailValue}
+                                        onChange={(e) => setEditUserEmailValue(e.target.value)}
+                                        style={{ maxWidth: '280px', padding: '6px 10px', fontSize: '0.82rem' }}
+                                        autoFocus
+                                      />
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                      <button type="button" className="btn btn-secondary" onClick={() => setSelectedEmailUser(null)} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                                        Cancel
+                                      </button>
+                                      <button type="submit" className="btn btn-primary" disabled={adminActionLoading} style={{ padding: '6px 14px', fontSize: '0.8rem' }}>
+                                        {adminActionLoading ? 'Saving...' : 'Save Email'}
+                                      </button>
+                                    </div>
+                                  </form>
+                                </td>
+                              </tr>
+                            )}
+
+                            {/* INLINE RESET PASSWORD PANEL DIRECTLY BELOW ROW */}
+                            {isResetOpen && (
+                              <tr style={{ background: 'rgba(168, 85, 247, 0.08)', borderBottom: '1px solid var(--border-glass)' }}>
+                                <td colSpan={5} style={{ padding: '14px 16px' }}>
+                                  <form onSubmit={handleAdminResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 280px' }}>
+                                        <Key size={16} style={{ color: '#c084fc', flexShrink: 0 }} />
+                                        <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Reset password for "{u.username}":</span>
+                                        <input
+                                          type="password"
+                                          className="form-control"
+                                          placeholder="New password (min 4 chars)"
+                                          value={resetNewPassword}
+                                          onChange={(e) => setResetNewPassword(e.target.value)}
+                                          required
+                                          minLength={4}
+                                          style={{ maxWidth: '240px', padding: '6px 10px', fontSize: '0.82rem' }}
+                                          autoFocus
+                                        />
+                                      </div>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <button type="button" className="btn btn-secondary" onClick={() => setSelectedResetUser(null)} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                                          Cancel
+                                        </button>
+                                        <button type="submit" className="btn btn-primary" disabled={adminActionLoading} style={{ padding: '6px 14px', fontSize: '0.8rem' }}>
+                                          {adminActionLoading ? 'Updating...' : 'Save New Password'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {u.email && (
+                                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={resetSendEmail}
+                                          onChange={(e) => setResetSendEmail(e.target.checked)}
+                                        />
+                                        <span>Send new password via email ({u.email})</span>
+                                      </label>
+                                    )}
+                                  </form>
+                                </td>
+                              </tr>
+                            )}
+
+                            {/* INLINE DELETE USER CONFIRMATION DIRECTLY BELOW ROW */}
+                            {isDeleteOpen && (
+                              <tr style={{ background: 'rgba(239, 68, 68, 0.1)', borderBottom: '1px solid rgba(239, 68, 68, 0.35)' }}>
+                                <td colSpan={5} style={{ padding: '16px' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                      <strong style={{ color: '#f87171', fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <Trash2 size={16} /> Permanent Data Deletion Warning — "{u.username}"
+                                      </strong>
+                                      <button type="button" className="btn-icon" onClick={() => setSelectedDeleteUser(null)} style={{ color: 'var(--text-secondary)' }}>
+                                        <X size={16} />
+                                      </button>
+                                    </div>
+                                    <p style={{ margin: 0, fontSize: '0.82rem', color: '#fca5a5', lineHeight: 1.45 }}>
+                                      Are you sure you want to permanently delete user account <strong>"{u.username}"</strong>? This will permanently wipe all of their locations, places, trips, itineraries, reservations, expenses, companions, and uploaded attachments. <strong>This cannot be undone.</strong>
+                                    </p>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '4px' }}>
+                                      <button type="button" className="btn btn-secondary" onClick={() => setSelectedDeleteUser(null)} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                                        Cancel
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-danger"
+                                        onClick={handleAdminDeleteUser}
+                                        disabled={adminActionLoading}
+                                        style={{ background: '#ef4444', color: '#fff', padding: '6px 14px', fontSize: '0.8rem', border: 'none' }}
+                                      >
+                                        {adminActionLoading ? 'Deleting Data...' : '🔴 Delete User & Wipe All Data'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>
                   </table>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* ADMIN RESET PASSWORD MODAL */}
-          {selectedResetUser && (
-            <div className="modal-overlay" style={{ zIndex: 1000 }}>
-              <div className="modal-container" style={{ maxWidth: '420px', padding: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem' }}>
-                    <Key size={18} style={{ color: '#c084fc' }} /> Reset Password for "{selectedResetUser.username}"
-                  </h3>
-                  <button type="button" className="btn-icon" onClick={() => setSelectedResetUser(null)}>
-                    <X size={18} />
-                  </button>
-                </div>
-
-                <form onSubmit={handleAdminResetPassword}>
-                  <div className="form-group" style={{ marginBottom: '20px' }}>
-                    <label style={{ fontSize: '0.85rem', marginBottom: '6px', display: 'block' }}>New Password</label>
-                    <input
-                      type="password"
-                      className="form-control"
-                      placeholder="Enter new password (min 4 chars)"
-                      value={resetNewPassword}
-                      onChange={(e) => setResetNewPassword(e.target.value)}
-                      required
-                      minLength={4}
-                      autoFocus
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                    <button type="button" className="btn btn-secondary" onClick={() => setSelectedResetUser(null)}>
-                      Cancel
-                    </button>
-                    <button type="submit" className="btn btn-primary" disabled={adminActionLoading}>
-                      {adminActionLoading ? 'Updating...' : 'Save New Password'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* PERMANENT DATA DELETION WARNING MODAL */}
-          {selectedDeleteUser && (
-            <div className="modal-overlay" style={{ zIndex: 1000 }}>
-              <div className="modal-container" style={{ maxWidth: '480px', padding: '24px', border: '1px solid rgba(239, 68, 68, 0.5)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h3 style={{ margin: 0, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem' }}>
-                    <Trash2 size={20} /> Permanent Data Deletion Warning
-                  </h3>
-                  <button type="button" className="btn-icon" onClick={() => setSelectedDeleteUser(null)}>
-                    <X size={18} />
-                  </button>
-                </div>
-
-                <div style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '14px', borderRadius: '6px', color: '#f87171', fontSize: '0.85rem', marginBottom: '20px' }}>
-                  <strong>⚠️ CAUTION: Irreversible Action</strong>
-                  <p style={{ margin: '8px 0 0 0', lineHeight: '1.4' }}>
-                    Are you sure you want to permanently delete user account <strong>"{selectedDeleteUser.username}"</strong>?
-                  </p>
-                  <ul style={{ margin: '8px 0 0 16px', padding: 0 }}>
-                    <li>All saved locations, places & custom folders</li>
-                    <li>All trips, daily itineraries, reservations & expenses</li>
-                    <li>All travel guides, saved markdowns & AI imports</li>
-                    <li>All companion profiles, home addresses & settings</li>
-                    <li>All uploaded photos, receipts & document attachments</li>
-                  </ul>
-                  <p style={{ margin: '8px 0 0 0', fontWeight: 'bold' }}>
-                    This operation will delete all database records and disk files. It CANNOT be undone!
-                  </p>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                  <button type="button" className="btn btn-secondary" onClick={() => setSelectedDeleteUser(null)}>
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={handleAdminDeleteUser}
-                    disabled={adminActionLoading}
-                    style={{ background: '#ef4444', color: '#fff' }}
-                  >
-                    {adminActionLoading ? 'Deleting Data...' : '🔴 Delete User & Wipe All Data'}
-                  </button>
-                </div>
-              </div>
             </div>
           )}
 
@@ -4125,8 +4622,187 @@ export default function SettingsComponent({ token, userId, username, displayName
                 <Sparkles size={16} style={{ color: 'var(--accent-primary-hover)' }} />
                 <span>What's New in {APP_VERSION}</span>
               </button>
+              {onOpenFeedback && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={onOpenFeedback}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', width: 'auto' }}
+                >
+                  <MessageSquarePlus size={16} />
+                  <span>Share Feedback / Report a Bug</span>
+                </button>
+              )}
             </div>
           </div>
+
+          {/* EMAIL & SMTP SETTINGS CARD (Admin Only) */}
+          {isAdmin && (
+            <div id="section-smtp" style={{ background: 'var(--bg-surface)', border: highlightedSectionId === 'section-smtp' ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-glass)', boxShadow: highlightedSectionId === 'section-smtp' ? '0 0 20px rgba(124, 58, 237, 0.4)' : undefined, transition: 'box-shadow 0.3s ease, border-color 0.3s ease', borderRadius: 'var(--radius-lg)', padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Mail size={22} style={{ color: 'var(--accent-secondary)' }} />
+                  <h3 style={{ margin: 0 }}>Email & SMTP Settings</h3>
+                </div>
+                <span style={{ background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.4)', padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                  ★ Admin Only
+                </span>
+              </div>
+
+              <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                Configure an outbound SMTP server to send trip sharing invitations, emailed trip itineraries, expense split summaries, upcoming trip reminders, and password reset codes.
+              </p>
+
+              <form onSubmit={handleSaveSmtp} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.88rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={smtpConfig.enabled}
+                    onChange={(e) => setSmtpConfig({ ...smtpConfig, enabled: e.target.checked })}
+                    style={{ width: '17px', height: '17px', accentColor: 'var(--accent-primary)' }}
+                  />
+                  Enable Outbound Email Notifications (SMTP)
+                </label>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: '0.75rem' }}>SMTP Host</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="smtp.gmail.com"
+                      value={smtpConfig.host}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, host: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: '0.75rem' }}>Port</label>
+                    <input
+                      type="number"
+                      className="form-control"
+                      placeholder="587"
+                      value={smtpConfig.port}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, port: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: '0.75rem' }}>Encryption</label>
+                    <select
+                      className="form-control"
+                      value={smtpConfig.secure}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, secure: e.target.value })}
+                    >
+                      <option value="starttls">STARTTLS (587)</option>
+                      <option value="tls">Implicit SSL/TLS (465)</option>
+                      <option value="none">None (25)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: '0.75rem' }}>SMTP Username</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="username or email"
+                      value={smtpConfig.username}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, username: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: '0.75rem' }}>SMTP Password / App Password</label>
+                    <input
+                      type="password"
+                      className="form-control"
+                      placeholder="••••••••"
+                      value={smtpConfig.password}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, password: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: '0.75rem' }}>Sender Name</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="TravelBuff"
+                      value={smtpConfig.fromName}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, fromName: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: '0.75rem' }}>Sender Email (From)</label>
+                    <input
+                      type="email"
+                      className="form-control"
+                      placeholder="noreply@yourdomain.com"
+                      value={smtpConfig.fromEmail}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, fromEmail: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ fontSize: '0.75rem' }}>Public Instance URL (for email links)</label>
+                  <input
+                    type="url"
+                    className="form-control"
+                    placeholder="https://travel.yourdomain.com"
+                    value={smtpConfig.appBaseUrl}
+                    onChange={(e) => setSmtpConfig({ ...smtpConfig, appBaseUrl: e.target.value })}
+                  />
+                </div>
+
+                {smtpMsg && (
+                  <div style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    fontSize: '0.8rem',
+                    background: smtpMsg.type === 'success' ? 'rgba(74, 222, 128, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                    border: `1px solid ${smtpMsg.type === 'success' ? 'rgba(74, 222, 128, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
+                    color: smtpMsg.type === 'success' ? '#4ade80' : '#f87171'
+                  }}>
+                    {smtpMsg.text}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={smtpSaving}
+                    style={{ width: 'auto', padding: '8px 18px' }}
+                  >
+                    {smtpSaving ? 'Saving...' : 'Save SMTP Settings'}
+                  </button>
+
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="email"
+                      className="form-control"
+                      placeholder={accountEmail || 'Test recipient email...'}
+                      value={smtpTestEmail}
+                      onChange={(e) => setSmtpTestEmail(e.target.value)}
+                      style={{ width: '210px', height: '36px', fontSize: '0.8rem' }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={handleTestSmtp}
+                      disabled={smtpTesting}
+                      style={{ width: 'auto', padding: '8px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
+                    >
+                      <Send size={14} />
+                      {smtpTesting ? 'Testing...' : 'Send Test Email'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          )}
 
           
           {/* PRIVACY & TELEMETRY CARD (Admin Only) */}

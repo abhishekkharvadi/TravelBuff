@@ -1135,9 +1135,9 @@ export default function Collections({ selectedCol, setSelectedCol, onNavigateToL
   // Dexie query
   const collections = useLiveQuery(() => db.collections.toArray()) || [];
   const allLocationsRaw = useLiveQuery(() => db.locations.toArray()) || [];
-  const locations = allLocationsRaw.filter(l => Number(l.is_archived) !== 1);
+  const locations = allLocationsRaw.filter(l => Number(l.is_archived) !== 1 && Number(l.is_shared_external) !== 1);
   const allPlacesRaw = useLiveQuery(() => db.places.toArray()) || [];
-  const places = allPlacesRaw.filter(p => Number(p.is_archived) !== 1);
+  const places = allPlacesRaw.filter(p => Number(p.is_archived) !== 1 && Number(p.is_shared_external) !== 1);
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const entityTags = useLiveQuery(() => db.entity_tags.toArray()) || [];
   const customCategories = useLiveQuery(() => db.custom_categories.toArray()) || [];

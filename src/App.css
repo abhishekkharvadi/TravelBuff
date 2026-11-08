@@ -1407,7 +1407,9 @@ body.light-theme .leaflet-control-attribution a {
     border-radius: var(--radius-sm) !important;
   }
   .trip-sticky-top-bar {
-    top: 48px !important;
+    position: static !important;
+    top: auto !important;
+    box-shadow: none !important;
     border-radius: var(--radius-sm) var(--radius-sm) 0 0 !important;
   }
 }
@@ -1457,6 +1459,30 @@ body.light-theme {
   --shadow-panel: 0 10px 30px rgba(0, 0, 0, 0.06);
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+}
+
+.modal-container,
+.modal-content {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
 /* Light Theme Component & UI Polishes */
 body.light-theme h1,
 body.light-theme h2,
@@ -1472,7 +1498,8 @@ body.light-theme .login-header h2 {
 }
 
 body.light-theme .login-card,
-body.light-theme .modal-overlay,
+body.light-theme .modal-container,
+body.light-theme .modal-content,
 body.light-theme .modal,
 body.light-theme .account-modal-content,
 body.light-theme .user-menu-dropdown,
@@ -1480,9 +1507,11 @@ body.light-theme .mobile-user-dropdown {
   background: var(--bg-surface) !important;
   color: var(--text-primary) !important;
   border: 1px solid var(--border-glass) !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12) !important;
 }
 
-body.light-theme .modal-backdrop {
+body.light-theme .modal-backdrop,
+body.light-theme .modal-overlay {
   background: rgba(0, 0, 0, 0.6) !important;
 }
 

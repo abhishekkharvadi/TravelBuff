@@ -310,11 +310,59 @@ export async function initDatabase() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS trip_shares (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      shared_with_user_id TEXT NOT NULL,
+      permission TEXT NOT NULL DEFAULT 'view',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (shared_with_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(trip_id, shared_with_user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS feedback_submissions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      title TEXT,
+      content_hash TEXT NOT NULL,
+      remote_feedback_id TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      used INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS trip_email_reminders (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      trip_start_date TEXT NOT NULL,
+      sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(trip_id, user_id, trip_start_date)
+    );
   `;
 
   await db.exec(schema);
 
   // Safely add state & country columns if they don't exist in older databases
+  await db.run('ALTER TABLE users ADD COLUMN email TEXT').catch(() => {});
+  await db.run('ALTER TABLE users ADD COLUMN email_notifications_enabled INTEGER DEFAULT 1').catch(() => {});
+  await db.run('ALTER TABLE users ADD COLUMN trip_reminder_days INTEGER DEFAULT 3').catch(() => {});
   await db.run('ALTER TABLE saved_markdowns ADD COLUMN status TEXT DEFAULT "pending"').catch(() => {});
   await db.run('ALTER TABLE saved_markdowns ADD COLUMN parsed_items_state TEXT').catch(() => {});
   await db.run('ALTER TABLE saved_markdowns ADD COLUMN import_context TEXT').catch(() => {});
@@ -398,6 +446,66 @@ export async function initDatabase() {
     console.error('Error normalizing duplicate featured flags:', err);
   }
 
+  // Prune dangling local /uploads/... photo pointers where the underlying file no longer exists on disk
+  try {
+    const uploadsDir = path.join(DB_DIR, 'uploads');
+    const isMissingLocalUpload = (fileUrl) => {
+      if (!fileUrl || typeof fileUrl !== 'string') return false;
+      const trimmed = fileUrl.trim();
+      if (!trimmed.startsWith('/uploads/') && !trimmed.startsWith('uploads/')) return false;
+      const cleanName = path.basename(trimmed.split('?')[0]);
+      if (!cleanName) return true;
+      return !fs.existsSync(path.join(uploadsDir, cleanName));
+    };
+
+    const photoRows = await db.all(
+      `SELECT id, file_path FROM entity_photos WHERE file_path LIKE '/uploads/%' OR file_path LIKE 'uploads/%'`
+    );
+    let prunedPhotos = 0;
+    for (const row of photoRows) {
+      if (isMissingLocalUpload(row.file_path)) {
+        await db.run(`DELETE FROM entity_photos WHERE id = ?`, [row.id]);
+        prunedPhotos++;
+      }
+    }
+
+    const locRows = await db.all(
+      `SELECT id, local_file_data FROM locations WHERE local_file_data LIKE '/uploads/%' OR local_file_data LIKE 'uploads/%'`
+    );
+    let prunedLocs = 0;
+    for (const row of locRows) {
+      if (isMissingLocalUpload(row.local_file_data)) {
+        await db.run(
+          `UPDATE locations SET local_file_data = NULL, photo_sync_status = 'pending', photo_sync_retry_count = 0 WHERE id = ?`,
+          [row.id]
+        );
+        prunedLocs++;
+      }
+    }
+
+    const placeRows = await db.all(
+      `SELECT id, local_file_data FROM places WHERE local_file_data LIKE '/uploads/%' OR local_file_data LIKE 'uploads/%'`
+    );
+    let prunedPlaces = 0;
+    for (const row of placeRows) {
+      if (isMissingLocalUpload(row.local_file_data)) {
+        await db.run(
+          `UPDATE places SET local_file_data = NULL, photo_sync_status = 'pending', photo_sync_retry_count = 0 WHERE id = ?`,
+          [row.id]
+        );
+        prunedPlaces++;
+      }
+    }
+
+    if (prunedPhotos > 0 || prunedLocs > 0 || prunedPlaces > 0) {
+      console.log(
+        `[Integrity] Pruned missing local upload pointers: ${prunedPhotos} entity_photos, ${prunedLocs} locations, ${prunedPlaces} places.`
+      );
+    }
+  } catch (err) {
+    console.error('Error pruning missing local upload pointers:', err);
+  }
+
   // One-Time Safe Migration: Backfill locations and places local_file_data from existing entity_photos
   try {
     const locRes = await db.run(`
@@ -407,7 +515,8 @@ export async function initDatabase() {
         WHERE entity_photos.entity_id = locations.id 
         ORDER BY is_featured DESC, created_at DESC LIMIT 1
       ) 
-      WHERE local_file_data IS NULL OR local_file_data = ''
+      WHERE (local_file_data IS NULL OR local_file_data = '')
+        AND EXISTS (SELECT 1 FROM entity_photos WHERE entity_photos.entity_id = locations.id)
     `);
     const placeRes = await db.run(`
       UPDATE places 
@@ -416,7 +525,8 @@ export async function initDatabase() {
         WHERE entity_photos.entity_id = places.id 
         ORDER BY is_featured DESC, created_at DESC LIMIT 1
       ) 
-      WHERE local_file_data IS NULL OR local_file_data = ''
+      WHERE (local_file_data IS NULL OR local_file_data = '')
+        AND EXISTS (SELECT 1 FROM entity_photos WHERE entity_photos.entity_id = places.id)
     `);
     if (locRes.changes > 0 || placeRes.changes > 0) {
       console.log(`[Migration] Auto-populated cover photo links: ${locRes.changes} locations, ${placeRes.changes} places.`);

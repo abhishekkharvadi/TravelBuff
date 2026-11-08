@@ -1,7 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { X, Upload, Key, ShieldCheck, Loader, User, Link, Unlink, RefreshCw, Check } from 'lucide-react';
+import { X, Upload, Key, ShieldCheck, Loader, User, Link, Unlink, RefreshCw, Check, Mail, Bell } from 'lucide-react';
 
-export default function AccountModal({ token, profilePicture, username, onClose, onProfileUpdated }) {
+export default function AccountModal({
+  token,
+  profilePicture,
+  username,
+  email: initialEmail = '',
+  emailNotificationsEnabled: initialEmailNotifications = 1,
+  tripReminderDays: initialReminderDays = 3,
+  smtpEnabled = false,
+  onClose,
+  onProfileUpdated
+}) {
   // Profile picture upload state
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(profilePicture);
@@ -11,6 +21,9 @@ export default function AccountModal({ token, profilePicture, username, onClose,
 
   // Account details state
   const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState(initialEmail || '');
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(initialEmailNotifications !== undefined ? Number(initialEmailNotifications) !== 0 : true);
+  const [tripReminderDays, setTripReminderDays] = useState(initialReminderDays !== undefined ? Number(initialReminderDays) : 3);
   const [immichPersonId, setImmichPersonId] = useState(null);
   const [immichPersonName, setImmichPersonName] = useState(null);
   const [detailsSaving, setDetailsSaving] = useState(false);
@@ -43,6 +56,9 @@ export default function AccountModal({ token, profilePicture, username, onClose,
           const data = await res.json();
           if (isMounted) {
             if (data.displayName !== undefined) setDisplayName(data.displayName || '');
+            if (data.email !== undefined) setEmail(data.email || '');
+            if (data.emailNotificationsEnabled !== undefined) setEmailNotificationsEnabled(Number(data.emailNotificationsEnabled) !== 0);
+            if (data.tripReminderDays !== undefined) setTripReminderDays(Number(data.tripReminderDays));
             if (data.immichPersonId !== undefined) setImmichPersonId(data.immichPersonId || null);
             if (data.immichPersonName !== undefined) setImmichPersonName(data.immichPersonName || null);
             if (data.profilePicture) setPreview(data.profilePicture);
@@ -121,6 +137,9 @@ export default function AccountModal({ token, profilePicture, username, onClose,
         },
         body: JSON.stringify({
           displayName: displayName.trim(),
+          email: email.trim(),
+          emailNotificationsEnabled: emailNotificationsEnabled ? 1 : 0,
+          tripReminderDays: Number(tripReminderDays),
           immichPersonId: immichPersonId || null,
           immichPersonName: immichPersonName || null
         })
@@ -136,6 +155,9 @@ export default function AccountModal({ token, profilePicture, username, onClose,
         onProfileUpdated({
           profilePicture: preview,
           displayName: data.displayName,
+          email: data.email,
+          emailNotificationsEnabled: data.emailNotificationsEnabled,
+          tripReminderDays: data.tripReminderDays,
           immichPersonId: data.immichPersonId,
           immichPersonName: data.immichPersonName
         });
@@ -292,27 +314,84 @@ export default function AccountModal({ token, profilePicture, username, onClose,
           <form onSubmit={handleSaveDetails} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div className="form-group" style={{ margin: 0 }}>
               <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Full / Display Name</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder={username || 'Your display name'}
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  style={{ height: '36px', fontSize: '0.85rem' }}
-                />
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={detailsSaving}
-                  style={{ width: 'auto', padding: '6px 14px', fontSize: '0.82rem', height: '36px' }}
-                >
-                  {detailsSaving ? <RefreshCw size={14} className="sync-spinner" /> : 'Save'}
-                </button>
-              </div>
+              <input
+                type="text"
+                className="form-control"
+                placeholder={username || 'Your display name'}
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                style={{ height: '36px', fontSize: '0.85rem' }}
+              />
               <small style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
                 Used as your traveler name on trip plans and expense splits.
               </small>
+            </div>
+
+            {/* Email & Notification Preferences */}
+            <div style={{ padding: '10px 12px', background: 'rgba(6, 182, 212, 0.05)', borderRadius: '8px', border: '1px solid rgba(6, 182, 212, 0.2)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Mail size={14} /> Email & Notification Preferences
+                </span>
+                {!smtpEnabled && (
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                    (Admin SMTP not yet enabled)
+                  </span>
+                )}
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Email Address</label>
+                <input
+                  type="email"
+                  className="form-control"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  style={{ height: '34px', fontSize: '0.82rem' }}
+                />
+                <small style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '3px', display: 'block' }}>
+                  Used for shared trip invites, password recovery, and emailed trip summaries.
+                </small>
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--text-primary)', margin: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={emailNotificationsEnabled}
+                    onChange={(e) => setEmailNotificationsEnabled(e.target.checked)}
+                  />
+                  Receive Email Notifications
+                </label>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Bell size={13} style={{ color: 'var(--text-secondary)' }} />
+                  <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Trip Reminder:</span>
+                  <select
+                    className="form-control"
+                    value={tripReminderDays}
+                    onChange={(e) => setTripReminderDays(Number(e.target.value))}
+                    style={{ width: 'auto', height: '28px', padding: '2px 8px', fontSize: '0.75rem' }}
+                  >
+                    <option value={0}>Off</option>
+                    <option value={1}>1 day before</option>
+                    <option value={3}>3 days before</option>
+                    <option value={7}>7 days before</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={detailsSaving}
+                style={{ width: 'auto', padding: '6px 16px', fontSize: '0.82rem', height: '34px' }}
+              >
+                {detailsSaving ? <><RefreshCw size={14} className="sync-spinner" /> Saving...</> : 'Save Profile & Email Settings'}
+              </button>
             </div>
 
             {/* Immich Profile Link Sub-card */}

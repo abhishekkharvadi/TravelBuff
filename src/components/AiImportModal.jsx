@@ -1869,7 +1869,7 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
 
   if (step === 0) {
     return (
-      <div className="modal-backdrop" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+      <div className="modal-backdrop" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <div className="modal-content" style={{ maxWidth: '540px', width: '90%', margin: '0 auto' }}>
           <div className="dialog-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1881,158 +1881,160 @@ export default function AiImportModal({ token, onClose, initialMode = 'url', res
             </button>
           </div>
 
-          {/* Import Mode Tabs */}
-          <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px', marginBottom: '16px' }}>
-            <button
-              type="button"
-              className={`btn ${importType === 'url' ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ flex: 1, padding: '8px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-              onClick={() => setImportType('url')}
-            >
-              🌐 Import Trip
-            </button>
-            <button
-              type="button"
-              className={`btn ${importType === 'document' ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ flex: 1, padding: '8px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-              onClick={() => setImportType('document')}
-            >
-              📄 Import Document
-            </button>
-          </div>
+          <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Import Mode Tabs */}
+            <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px' }}>
+              <button
+                type="button"
+                className={`btn ${importType === 'url' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ flex: 1, padding: '9px 12px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                onClick={() => setImportType('url')}
+              >
+                🌐 Import Trip
+              </button>
+              <button
+                type="button"
+                className={`btn ${importType === 'document' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ flex: 1, padding: '9px 12px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                onClick={() => setImportType('document')}
+              >
+                📄 Import Document
+              </button>
+            </div>
 
-          {importType === 'url' ? (
-            <form onSubmit={handleFetchMarkdown} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
-                Enter the URL of a travel website or blog post to import its locations.
-              </p>
-              
-              <div className="form-group">
-                <label>Source URL</label>
-                <input
-                  type="url"
-                  className="form-control"
-                  placeholder="https://example.com/best-places"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Import Scraper Service</label>
-                <select className="form-control" value={scraper} onChange={(e) => setScraper(e.target.value)}>
-                  <option value="jina">Jina Reader (Markdown conversion)</option>
-                  <option value="cheerio">Cheerio Parser (Fast HTML parser)</option>
-                  <option value="playwright">Playwright (Headless JS browser)</option>
-                  <option value="firecrawl">Firecrawl (Advanced scraper API)</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Image Association Direction</label>
-                <select className="form-control" value={imageDirection} onChange={(e) => setImageDirection(e.target.value)}>
-                  <option value="below">Below Headings (Default)</option>
-                  <option value="above">Above Headings</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Guide Name (Optional)</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="My travel itinerary name"
-                  value={guideName}
-                  onChange={(e) => setGuideName(e.target.value)}
-                />
-              </div>
-
-              {error && <div style={{ color: 'var(--error)', fontSize: '0.85rem' }}>{error}</div>}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={loading || !url}>
-                  {loading ? (
-                    <><Loader size={16} className="sync-spinner" /> Fetching...</>
-                  ) : (
-                    'Import Trip'
-                  )}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <form onSubmit={handleDocumentImport} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
-                Upload a travel document (<strong>.md, .pdf, .docx, .html, .txt</strong>) to convert to Markdown and extract location pictures.
-              </p>
-
-              <div className="form-group">
-                <label>Select Document File</label>
-                <input
-                  type="file"
-                  className="form-control"
-                  accept=".md,.markdown,.pdf,.docx,.doc,.html,.htm,.txt"
-                  onChange={(e) => setDocFile(e.target.files[0] || null)}
-                  required
-                  style={{ padding: '6px' }}
-                />
-                {docFile && (
-                  <span style={{ fontSize: '0.75rem', color: 'var(--success)', marginTop: '4px', display: 'block' }}>
-                    Selected: {docFile.name} ({(docFile.size / 1024).toFixed(1)} KB)
-                  </span>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label style={{ marginBottom: '6px', display: 'block' }}>Parser Engine</label>
-                <div style={{ display: 'flex', gap: '16px', background: 'var(--bg-app)', padding: '10px 12px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer', margin: 0 }}>
-                    <input
-                      type="radio"
-                      name="parserEngine"
-                      checked={parserEngine === 'local'}
-                      onChange={() => setParserEngine('local')}
-                    />
-                    ⚡ Fast Local Parser (pdf2md / mammoth / turndown)
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer', margin: 0 }}>
-                    <input
-                      type="radio"
-                      name="parserEngine"
-                      checked={parserEngine === 'ai'}
-                      onChange={() => setParserEngine('ai')}
-                    />
-                    🤖 AI Document Vision Parser
-                  </label>
+            {importType === 'url' ? (
+              <form onSubmit={handleFetchMarkdown} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+                  Enter the URL of a travel website or blog post to import its locations.
+                </p>
+                
+                <div className="form-group">
+                  <label>Source URL</label>
+                  <input
+                    type="url"
+                    className="form-control"
+                    placeholder="https://example.com/best-places"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    required
+                  />
                 </div>
-              </div>
 
-              <div className="form-group">
-                <label>Guide / Itinerary Title (Optional)</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="e.g. Europe Trip 2026"
-                  value={guideName}
-                  onChange={(e) => setGuideName(e.target.value)}
-                />
-              </div>
+                <div className="form-group">
+                  <label>Import Scraper Service</label>
+                  <select className="form-control" value={scraper} onChange={(e) => setScraper(e.target.value)}>
+                    <option value="jina">Jina Reader (Markdown conversion)</option>
+                    <option value="cheerio">Cheerio Parser (Fast HTML parser)</option>
+                    <option value="playwright">Playwright (Headless JS browser)</option>
+                    <option value="firecrawl">Firecrawl (Advanced scraper API)</option>
+                  </select>
+                </div>
 
-              {error && <div style={{ color: 'var(--error)', fontSize: '0.85rem' }}>{error}</div>}
+                <div className="form-group">
+                  <label>Image Association Direction</label>
+                  <select className="form-control" value={imageDirection} onChange={(e) => setImageDirection(e.target.value)}>
+                    <option value="below">Below Headings (Default)</option>
+                    <option value="above">Above Headings</option>
+                  </select>
+                </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={loading || !docFile}>
-                  {loading ? (
-                    <><Loader size={16} className="sync-spinner" /> Processing Document...</>
-                  ) : (
-                    'Import Document'
+                <div className="form-group">
+                  <label>Guide Name (Optional)</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="My travel itinerary name"
+                    value={guideName}
+                    onChange={(e) => setGuideName(e.target.value)}
+                  />
+                </div>
+
+                {error && <div style={{ color: 'var(--error)', fontSize: '0.85rem' }}>{error}</div>}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                  <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={loading || !url}>
+                    {loading ? (
+                      <><Loader size={16} className="sync-spinner" /> Fetching...</>
+                    ) : (
+                      'Import Trip'
+                    )}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleDocumentImport} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+                  Upload a travel document (<strong>.md, .pdf, .docx, .html, .txt</strong>) to convert to Markdown and extract location pictures.
+                </p>
+
+                <div className="form-group">
+                  <label>Select Document File</label>
+                  <input
+                    type="file"
+                    className="form-control"
+                    accept=".md,.markdown,.pdf,.docx,.doc,.html,.htm,.txt"
+                    onChange={(e) => setDocFile(e.target.files[0] || null)}
+                    required
+                    style={{ padding: '6px' }}
+                  />
+                  {docFile && (
+                    <span style={{ fontSize: '0.78rem', color: 'var(--accent-secondary)', fontWeight: 500, marginTop: '4px', display: 'block' }}>
+                      Selected: {docFile.name} ({(docFile.size / 1024).toFixed(1)} KB)
+                    </span>
                   )}
-                </button>
-              </div>
-            </form>
-          )}
+                </div>
+
+                <div className="form-group">
+                  <label style={{ marginBottom: '6px', display: 'block' }}>Parser Engine</label>
+                  <div style={{ display: 'flex', gap: '16px', background: 'var(--bg-app)', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-glass)', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: 'var(--text-primary)', cursor: 'pointer', margin: 0 }}>
+                      <input
+                        type="radio"
+                        name="parserEngine"
+                        checked={parserEngine === 'local'}
+                        onChange={() => setParserEngine('local')}
+                      />
+                      ⚡ Fast Local Parser (pdf2md / mammoth / turndown)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: 'var(--text-primary)', cursor: 'pointer', margin: 0 }}>
+                      <input
+                        type="radio"
+                        name="parserEngine"
+                        checked={parserEngine === 'ai'}
+                        onChange={() => setParserEngine('ai')}
+                      />
+                      🤖 AI Document Vision Parser
+                    </label>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Guide / Itinerary Title (Optional)</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Europe Trip 2026"
+                    value={guideName}
+                    onChange={(e) => setGuideName(e.target.value)}
+                  />
+                </div>
+
+                {error && <div style={{ color: 'var(--error)', fontSize: '0.85rem' }}>{error}</div>}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                  <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={loading || !docFile}>
+                    {loading ? (
+                      <><Loader size={16} className="sync-spinner" /> Processing Document...</>
+                    ) : (
+                      'Import Document'
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         </div>
       </div>
     );

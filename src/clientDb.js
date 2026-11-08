@@ -71,6 +71,13 @@ db.version(12).stores({
   expenses: 'id, trip_id, date, category, is_planned, is_split, paid_by, for_member'
 });
 
+db.version(13).stores({
+  trips: 'id, name, start_date, length, visited, shared_permission, owner_user_id',
+  locations: 'id, name, visited, immich_album_id, source_urls, parent_id, is_folder, is_archived, is_shared_external',
+  places: 'id, location_id, name, category, visited, address, is_archived, is_shared_external',
+  people: 'id, user_id, name, relation, immich_person_id, is_shared_external'
+});
+
 // Safe UUID generator supporting non-secure contexts
 export function generateUUID() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -308,7 +315,12 @@ export async function queueSyncAction(table, action, data) {
 
   // Queue changes for the server
   const syncData = JSON.parse(JSON.stringify(data));
-  if (syncData && typeof syncData === 'object' && 'local_file_data' in syncData) {
+  if (
+    syncData &&
+    typeof syncData === 'object' &&
+    'local_file_data' in syncData &&
+    (table === 'reservations' || String(syncData.local_file_data || '').startsWith('data:'))
+  ) {
     delete syncData.local_file_data;
   }
 
@@ -370,6 +382,7 @@ export async function populateLocalDb(token) {
     { url: '/api/trips', table: 'trips' },
     { url: '/api/places', table: 'places' },
     { url: '/api/locations', table: 'locations' },
+    { url: '/api/photos', table: 'entity_photos' },
     { url: '/api/tags', table: 'tags' },
     { url: '/api/entity-tags', table: 'entity_tags' },
     { url: '/api/categories', table: 'custom_categories' },

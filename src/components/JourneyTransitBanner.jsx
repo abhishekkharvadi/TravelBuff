@@ -11,7 +11,8 @@ export default function JourneyTransitBanner({
   firstDayStayName,
   lastDayStayName,
   type = 'both', // 'outbound' | 'return' | 'both'
-  title
+  title,
+  readOnly = false
 }) {
   const [editingLeg, setEditingLeg] = useState(null); // 'outbound' | 'return' | null
 
@@ -98,8 +99,9 @@ export default function JourneyTransitBanner({
           tripDate={firstDayDate}
           onEdit={() => setEditingLeg('outbound')}
           formatDateString={formatDateString}
+          readOnly={readOnly}
         />
-        {editingLeg && (
+        {!readOnly && editingLeg && (
           <JourneyEditModal
             legType={editingLeg}
             currentConfig={editingLeg === 'outbound' ? outbound : returnLeg}
@@ -129,8 +131,9 @@ export default function JourneyTransitBanner({
           tripDate={lastDayDate}
           onEdit={() => setEditingLeg('return')}
           formatDateString={formatDateString}
+          readOnly={readOnly}
         />
-        {editingLeg && (
+        {!readOnly && editingLeg && (
           <JourneyEditModal
             legType={editingLeg}
             currentConfig={editingLeg === 'outbound' ? outbound : returnLeg}
@@ -174,6 +177,7 @@ export default function JourneyTransitBanner({
           tripDate={firstDayDate}
           onEdit={() => setEditingLeg('outbound')}
           formatDateString={formatDateString}
+          readOnly={readOnly}
         />
 
         {/* Return Journey Card */}
@@ -187,11 +191,12 @@ export default function JourneyTransitBanner({
           tripDate={lastDayDate}
           onEdit={() => setEditingLeg('return')}
           formatDateString={formatDateString}
+          readOnly={readOnly}
         />
       </div>
 
       {/* Interactive Edit Modal */}
-      {editingLeg && (
+      {!readOnly && editingLeg && (
         <JourneyEditModal
           legType={editingLeg}
           currentConfig={editingLeg === 'outbound' ? outbound : returnLeg}
@@ -219,7 +224,8 @@ function JourneyCard({
   stayName,
   tripDate,
   onEdit,
-  formatDateString
+  formatDateString,
+  readOnly = false
 }) {
   const mode = config?.mode || 'drive';
 
@@ -291,27 +297,29 @@ function JourneyCard({
             {title}
           </h4>
         </div>
-        <button
-          type="button"
-          onClick={onEdit}
-          style={{
-            background: 'var(--bg-app, #12121a)',
-            border: '1px solid var(--border-glass, rgba(255, 255, 255, 0.15))',
-            borderRadius: '4px',
-            color: 'var(--text-primary)',
-            fontSize: '0.72rem',
-            padding: '2px 8px',
-            cursor: 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '4px',
-            transition: 'all 0.15s ease'
-          }}
-          title={`Edit ${title}`}
-        >
-          <span>✏️</span>
-          <span>Edit</span>
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={onEdit}
+            style={{
+              background: 'var(--bg-app, #12121a)',
+              border: '1px solid var(--border-glass, rgba(255, 255, 255, 0.15))',
+              borderRadius: '4px',
+              color: 'var(--text-primary)',
+              fontSize: '0.72rem',
+              padding: '2px 8px',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              transition: 'all 0.15s ease'
+            }}
+            title={`Edit ${title}`}
+          >
+            <span>✏️</span>
+            <span>Edit</span>
+          </button>
+        )}
       </div>
 
       {/* Mode: Drive */}
